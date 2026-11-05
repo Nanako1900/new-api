@@ -27,6 +27,8 @@ import type {
 import { getCurrencyDisplay } from '@/lib/currency'
 import { formatChartTime, type TimeGranularity } from '@/lib/time'
 
+import { meowModelColorRange } from './meow-model-colors'
+
 type TFunction = (key: string) => string
 type TooltipLineItem = {
   key: string
@@ -71,7 +73,9 @@ export function processChartData(
   data: QuotaDataItem[],
   timeGranularity: TimeGranularity = 'day',
   t?: TFunction,
-  chartCornerRadius?: number
+  chartCornerRadius?: number,
+  // MeowAPI: the model colours differ between light and dark.
+  isDark?: boolean
 ): ProcessedChartData {
   const tt: TFunction = t ?? ((x) => x)
   const otherLabel = tt('Other')
@@ -270,7 +274,12 @@ export function processChartData(
     .map(([time]) => time)
   const sortedModels = [...allModels].sort()
   const modelColorDomain = [...new Set([...sortedModels, otherLabel])]
-  const modelColorRange = getDashboardChartColors(modelColorDomain.length)
+  // MeowAPI: models coloured by vendor and tier.
+  const modelColorRange = meowModelColorRange(
+    modelColorDomain,
+    otherLabel,
+    isDark
+  )
   const otherColor = modelColorRange[modelColorDomain.indexOf(otherLabel)]
   const otherTooltipColor =
     typeof otherColor === 'string' ? otherColor : '#FF8A00'

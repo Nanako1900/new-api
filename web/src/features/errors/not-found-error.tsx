@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useNavigate, useRouter } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
+import { PawPrint } from '@/components/cat-art'
 import { Button } from '@/components/ui/button'
 
 export function NotFoundError() {
@@ -28,7 +29,12 @@ export function NotFoundError() {
   return (
     <div className='h-svh'>
       <div className='m-auto flex h-full w-full flex-col items-center justify-center gap-2'>
-        <h1 className='text-[7rem] leading-tight font-bold'>404</h1>
+        <h1
+          aria-label='404'
+          className='flex items-center text-[7rem] leading-tight font-bold'
+        >
+          4<PawPrint className='text-primary mx-2 size-[0.72em]' />4
+        </h1>
         <span className='font-medium'>{t('Oops! Page Not Found!')}</span>
         <p className='text-muted-foreground text-center'>
           {t("It seems like the page you're looking for")} <br />

@@ -102,9 +102,10 @@ export function ModelCharts(props: ModelChartsProps) {
         props.loading ? [] : props.data,
         timeGranularity,
         t,
-        chartRadius
+        chartRadius,
+        resolvedTheme === 'dark' // MeowAPI: theme-aware model colours
       ),
-    [props.data, props.loading, timeGranularity, t, chartRadius]
+    [props.data, props.loading, timeGranularity, t, chartRadius, resolvedTheme]
   )
 
   const spec = chartData[CHART_SPEC_KEYS[activeTab]]

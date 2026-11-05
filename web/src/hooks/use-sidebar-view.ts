@@ -27,6 +27,7 @@ import type {
   SidebarBadges,
 } from '@/components/layout/types'
 import { useModelPricingIssueBadge } from '@/features/system-settings/models/pricing-issues'
+import { moveAdminOnlyItems } from '@/lib/meow-sidebar'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -56,7 +57,10 @@ export function useSidebarView(): ResolvedSidebarView {
   const modelPricingBadge = useModelPricingIssueBadge()
   const badges: SidebarBadges = { modelPricing: modelPricingBadge }
   const rootSidebarData = useSidebarData(badges)
-  const configFilteredRoot = useSidebarConfig(rootSidebarData.navGroups)
+  // MeowAPI: admin-only entries live in the Admin group.
+  const configFilteredRoot = useSidebarConfig(
+    moveAdminOnlyItems(rootSidebarData.navGroups)
+  )
 
   const rootNavGroups = useMemo<NavGroup[]>(() => {
     const role = userRole ?? ROLE.GUEST

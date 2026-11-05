@@ -26,7 +26,14 @@ import { useTheme } from '@/context/theme-provider'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { CTA, Features, Hero, HowItWorks, Stats } from './components'
+import {
+  MeowClosing,
+  MeowHero,
+  MeowModels,
+  MeowStatus,
+  MeowSteps,
+  MeowTools,
+} from './components/meow'
 import { useHomePageContent } from './hooks'
 
 export function Home() {
@@ -122,11 +129,12 @@ export function Home() {
 
   return (
     <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
+      <MeowHero isAuthenticated={isAuthenticated} />
+      <MeowStatus />
+      <MeowModels />
+      <MeowTools />
+      <MeowSteps />
+      <MeowClosing isAuthenticated={isAuthenticated} />
       <Footer />
     </PublicLayout>
   )

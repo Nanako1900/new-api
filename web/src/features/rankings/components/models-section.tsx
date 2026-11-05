@@ -21,6 +21,7 @@ import { BarChart3, Trophy } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { modelColorMap } from '@/features/dashboard/lib/meow-model-colors'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
 
@@ -85,6 +86,13 @@ export function ModelsSection(props: ModelsSectionProps) {
       xField: 'label',
       yField: 'tokens',
       seriesField: 'model',
+      // MeowAPI: each model in its own hue, grouped by vendor.
+      color: {
+        specified: modelColorMap(
+          props.history.models.map((m) => m.name),
+          resolvedTheme === 'dark'
+        ),
+      },
       stack: true,
       legends: { visible: false },
       axes: [
@@ -161,7 +169,14 @@ export function ModelsSection(props: ModelsSectionProps) {
       },
       animationAppear: { duration: 500 },
     }
-  }, [chartGridColor, chartTextColor, orderedPoints, t])
+  }, [
+    chartGridColor,
+    chartTextColor,
+    orderedPoints,
+    props.history,
+    resolvedTheme,
+    t,
+  ])
 
   return (
     <section className='bg-card overflow-hidden rounded-lg border'>

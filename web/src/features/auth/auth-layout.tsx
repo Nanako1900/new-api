@@ -22,6 +22,9 @@ import { useTranslation } from 'react-i18next'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useSystemConfig } from '@/hooks/use-system-config'
 
+// MeowAPI: calico glows behind the auth forms.
+import { MeowAuthBackdrop } from './components/meow-auth-backdrop'
+
 type AuthLayoutProps = {
   children: React.ReactNode
 }
@@ -31,7 +34,8 @@ export function AuthLayout({ children }: AuthLayoutProps) {
   const { systemName, logo, loading } = useSystemConfig()
 
   return (
-    <div className='relative grid h-svh max-w-none'>
+    <div className='meow-auth relative grid h-svh max-w-none'>
+      <MeowAuthBackdrop />
       <Link
         to='/'
         className='absolute top-4 left-4 z-10 flex items-center gap-2 transition-opacity hover:opacity-80 sm:top-8 sm:left-8'

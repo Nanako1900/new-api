@@ -19,7 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute } from '@tanstack/react-router'
 import z from 'zod'
 
-import { ApiKeys } from '@/features/keys'
+// MeowAPI: the API key page renders the MeowAPI list.
+import { MeowApiKeys as ApiKeys } from '@/features/keys/components/meow-keys/meow-keys-page'
 import { API_KEY_STATUS_OPTIONS } from '@/features/keys/constants'
 
 const apiKeySearchSchema = z.object({

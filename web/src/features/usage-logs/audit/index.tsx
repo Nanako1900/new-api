@@ -20,7 +20,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { SectionPageLayout } from '@/components/layout'
+// MeowAPI: console page look (large title).
+import { MeowSectionLayout as SectionPageLayout } from '@/components/meow-section-layout'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getUserProfile } from '@/features/profile/api'
 import {

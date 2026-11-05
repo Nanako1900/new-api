@@ -31,6 +31,8 @@ import { readCachedStatus, statusQueryOptions } from '@/lib/status-query'
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
+import { installMeowPreview, isMeowPreviewEnabled } from './dev/meow-preview'
+import { cleanUpDrawerAppearance } from './lib/meow-theme'
 import './i18n/config'
 // Generated Routes
 import { routeTree } from './routeTree.gen'
@@ -42,6 +44,14 @@ import './styles/index.css'
 // VChart theme is driven by our ThemeProvider (html.light/html.dark) via per-chart `theme` prop.
 initializeFrontendCache()
 installBuildMetadata()
+
+// MeowAPI: clear old theme drawer settings that change the MeowAPI look.
+cleanUpDrawerAppearance()
+
+// MeowAPI local preview mode: sample signed-in data, development only.
+if (import.meta.env.MODE === 'development' && isMeowPreviewEnabled()) {
+  installMeowPreview()
+}
 
 const queryClient = createAppQueryClient(() => {
   void router.navigate({ to: '/500' })
