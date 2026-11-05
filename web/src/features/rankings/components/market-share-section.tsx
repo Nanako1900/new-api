@@ -21,6 +21,7 @@ import { PieChart } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { vendorColorMap } from '@/features/dashboard/lib/meow-model-colors'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { VCHART_OPTION } from '@/lib/vchart'
 
@@ -113,8 +114,13 @@ export function MarketShareSection(props: MarketShareSectionProps) {
       : 'rgba(15, 23, 42, 0.12)'
 
   const colourMap = useMemo(
-    () => buildVendorColourMap(props.history.vendors.map((v) => v.name)),
-    [props.history]
+    // MeowAPI: vendors recoloured to the MeowAPI chart palette.
+    () =>
+      vendorColorMap(
+        buildVendorColourMap(props.history.vendors.map((v) => v.name)),
+        resolvedTheme === 'dark'
+      ),
+    [props.history, resolvedTheme]
   )
 
   const orderedPoints = useMemo(() => {

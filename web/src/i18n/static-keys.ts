@@ -906,4 +906,15 @@ export const STATIC_I18N_KEYS = [
   'Channel priorities changed. Refresh and try again.',
   'Invalid channel priority move',
   'Channel priority is outside the sortable range',
+  // MeowAPI home page steps (features/home/components/meow/meow-steps.tsx).
+  'Sign up and top up',
+  'Register by email, then top up or redeem a code.',
+  'Create an API key',
+  'Set its quota and allowed models separately.',
+  'Swap the Base URL',
+  "Paste it into your client and you're ready.",
+  // MeowAPI console overview greetings (dashboard/components/meow-overview).
+  'Good morning, {{name}}',
+  'Good afternoon, {{name}}',
+  'Good evening, {{name}}',
 ] as const

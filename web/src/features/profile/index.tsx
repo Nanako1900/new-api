@@ -26,7 +26,8 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { CheckinCalendarCard } from './components/checkin-calendar-card'
 import { LanguagePreferencesCard } from './components/language-preferences-card'
-import { ProfileHeader } from './components/profile-header'
+// MeowAPI: account on the dark calico tile.
+import { MeowProfileHeader as ProfileHeader } from './components/meow-profile-header'
 import { ProfileSettingsCard } from './components/profile-settings-card'
 import { SidebarModulesCard } from './components/sidebar-modules-card'
 import { useProfile } from './hooks'

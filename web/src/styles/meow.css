@@ -1,0 +1,971 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+/*
+ * MeowAPI site palette: the calico cat's white, black and orange.
+ *
+ * Overrides the base tokens from ./theme.css so the site's default look is
+ * the MeowAPI brand while every preset in ./theme-presets.css keeps working
+ * (presets set their variables on <body>, which wins over :root).
+ *
+ * Kept in its own file so upstream changes merge cleanly: the look changes
+ * through tokens and a few unlayered overrides here, not by editing upstream
+ * components.
+ *
+ * Contrast (WCAG AA): primary buttons are bright orange #ee8a3c with ink
+ * text (7.3:1). Bright orange is too light for small text, so plain
+ * `text-primary` is remapped to deep orange #a94c16 (5.3:1 on the cream
+ * canvas) in light mode.
+ */
+
+@theme inline {
+  --color-meow-orange: var(--meow-orange);
+  --color-meow-ink: var(--meow-ink);
+  --color-meow-accent-text: var(--meow-accent-text);
+  --color-meow-heading: var(--meow-heading);
+  --color-meow-code: var(--meow-code);
+  --color-meow-code-line: var(--meow-code-line);
+  --color-meow-code-fg: var(--meow-code-fg);
+  --color-meow-code-muted: var(--meow-code-muted);
+  --color-meow-code-accent: var(--meow-code-accent);
+  --color-meow-code-string: var(--meow-code-string);
+  --color-meow-code-key: var(--meow-code-key);
+  --color-meow-code-flag: var(--meow-code-flag);
+  --color-meow-code-number: var(--meow-code-number);
+  --color-meow-syn-key: var(--meow-syn-key);
+  --color-meow-syn-string: var(--meow-syn-string);
+  --color-meow-syn-number: var(--meow-syn-number);
+  --color-meow-syn-flag: var(--meow-syn-flag);
+  --color-meow-syn-muted: var(--meow-syn-muted);
+}
+
+:root {
+  --radius: 0.875rem;
+  --font-ui-sans:
+    'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+
+  /* Brand constants. */
+  --meow-orange: #ee8a3c;
+  --meow-ink: #1e1b17;
+  /* Orange for small text and links on light surfaces. */
+  --meow-accent-text: #a94c16;
+  /* Orange for large headline keywords (3:1 is enough at that size). */
+  --meow-heading: #d9701f;
+
+  /*
+   * Surfaces, no pure white: cream page, ivory cards (and sidebar,
+   * popovers), one beige for boxes inside cards, the ink tile as accent.
+   */
+  --background: #f6eee2;
+  --foreground: #1e1b17;
+  --card: #fffbf5;
+  --card-foreground: #1e1b17;
+  --popover: #fffbf5;
+  --popover-foreground: #1e1b17;
+  --primary: #ee8a3c;
+  --primary-foreground: #1e1b17;
+  --secondary: #f1e9dc;
+  --secondary-foreground: #1e1b17;
+  --muted: #f1e9dc;
+  --muted-foreground: #6a645b;
+  --accent: #fcede1;
+  --accent-foreground: #1e1b17;
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+  --success: #4f6b34;
+  --success-foreground: #ffffff;
+  --warning: #8f5e0e;
+  --warning-foreground: #ffffff;
+  --info: #3a6a8a;
+  --info-foreground: #ffffff;
+  --neutral: #6a645b;
+  --neutral-foreground: #ffffff;
+  --border: #e6daca;
+  --input: #d3cbbf;
+  --ring: #ee8a3c;
+  /*
+   * Decorative tones (icon badges, tags): calico family only. All keep
+   * >= 4.5:1 as text on the ivory card.
+   */
+  --chart-1: #d9701f;
+  --chart-2: #1e1b17;
+  --chart-3: #a94c16;
+  --chart-4: #6a645b;
+  --chart-5: #8c6e54;
+  --overview-accent-1: #d9701f;
+  --overview-accent-2: #1e1b17;
+  --overview-accent-3: #a94c16;
+  /* Tables: explicit warm values (the upstream mix renders pink here). */
+  --table-header: #f1e9dc;
+  --table-header-hover: #ece2d3;
+  --table-disabled: #f3ece2;
+  --table-disabled-hover: #eee5d8;
+  --table-disabled-border: #d9cdbc;
+  --sidebar: #fffbf5;
+  --sidebar-foreground: #1e1b17;
+  --sidebar-primary: #ee8a3c;
+  --sidebar-primary-foreground: #1e1b17;
+  --sidebar-accent: #fcede1;
+  --sidebar-accent-foreground: #a94c16;
+  --sidebar-border: #e6daca;
+  --sidebar-ring: #ee8a3c;
+  --skeleton-base: #f1e9dc;
+  --skeleton-highlight: #f8f2e8;
+
+  /* Dark code surfaces with warm syntax colors. */
+  --meow-code: #1e1b17;
+  --meow-code-line: rgb(255 255 255 / 8%);
+  --meow-code-fg: #ece6dd;
+  --meow-code-muted: #a39b90;
+  --meow-code-accent: #f0954f;
+  --meow-code-string: #e9c38a;
+  --meow-code-key: #f2cfa6;
+  --meow-code-flag: #d9b8a3;
+  --meow-code-number: #b7d39a;
+
+  /* Syntax colors for code on light glass (all >= 4.5:1 on white). */
+  --meow-syn-key: #a94c16;
+  --meow-syn-string: #4f6b34;
+  --meow-syn-number: #8f5e0e;
+  --meow-syn-flag: #3a6a8a;
+  --meow-syn-muted: #6a645b;
+}
+
+.dark {
+  --meow-accent-text: #f0954f;
+  --meow-heading: #f0954f;
+
+  --background: #15130f;
+  --foreground: #f3efe8;
+  --card: #1e1b17;
+  --card-foreground: #f3efe8;
+  --popover: #26221d;
+  --popover-foreground: #f3efe8;
+  --primary: #f0954f;
+  --primary-foreground: #1e1b17;
+  --secondary: #26221d;
+  --secondary-foreground: #f3efe8;
+  --muted: #26221d;
+  --muted-foreground: #a8a097;
+  --accent: color-mix(in oklch, var(--primary) 16%, var(--background));
+  --accent-foreground: #f3efe8;
+  --destructive: #f07a6e;
+  --destructive-foreground: #1e1b17;
+  --success: #a9c98a;
+  --success-foreground: #1e1b17;
+  --warning: #e9b85c;
+  --warning-foreground: #1e1b17;
+  --info: #8cbbdb;
+  --info-foreground: #1e1b17;
+  --neutral: #a8a097;
+  --neutral-foreground: #1e1b17;
+  --border: #34302a;
+  --input: #48423a;
+  --ring: #f0954f;
+  --chart-1: #f0954f;
+  --chart-2: #e9e3da;
+  --chart-3: #e8a06a;
+  --chart-4: #b5ada1;
+  --chart-5: #d4b896;
+  --overview-accent-1: #f0954f;
+  --overview-accent-2: #e9e3da;
+  --overview-accent-3: #e8a06a;
+  --table-header: #221f1a;
+  --table-header-hover: #2a2620;
+  --table-disabled: #1b1915;
+  --table-disabled-hover: #211e19;
+  --table-disabled-border: #3a352e;
+  --sidebar: #181612;
+  --sidebar-foreground: #f3efe8;
+  --sidebar-primary: #f0954f;
+  --sidebar-primary-foreground: #1e1b17;
+  --sidebar-accent: color-mix(in oklch, var(--primary) 16%, var(--background));
+  --sidebar-accent-foreground: #f3efe8;
+  --sidebar-border: #2e2a25;
+  --sidebar-ring: #f0954f;
+  --skeleton-base: #26221d;
+  --skeleton-highlight: #34302a;
+
+  --meow-code: #0e0c0a;
+  --meow-code-line: rgb(255 255 255 / 9%);
+
+  --meow-syn-key: #f2cfa6;
+  --meow-syn-string: #b7d39a;
+  --meow-syn-number: #e9c38a;
+  --meow-syn-flag: #8cbbdb;
+  --meow-syn-muted: #a39b90;
+}
+
+/*
+ * Bright orange is a fill color. Where upstream components use the primary
+ * color for text, swap in the deep orange so small text stays readable.
+ * Unlayered rules win over Tailwind's utilities layer, so this needs no
+ * component edits. Only the default (non-preset) light theme is affected.
+ */
+:root:not(.dark) body:not([data-theme-preset]) .text-primary,
+:root:not(.dark) body:not([data-theme-preset]) .text-primary\/60,
+:root:not(.dark) body:not([data-theme-preset]) .hover\:text-primary:hover,
+:root:not(.dark) body:not([data-theme-preset]) .hover\:text-primary\/80:hover,
+:root:not(.dark)
+  body:not([data-theme-preset])
+  .group:hover
+  .group-hover\:text-primary,
+:root:not(.dark)
+  body:not([data-theme-preset])
+  [data-slot='button']:is(.text-primary) {
+  color: var(--meow-accent-text);
+}
+
+/*
+ * Active console sidebar item: two small dots after the label, the logo's
+ * one-black-one-white eyes. Pure CSS on the shared sidebar button.
+ */
+body:not([data-theme-preset])
+  [data-sidebar='menu-button'][data-active]:not([data-active='false'])::after {
+  content: '';
+  flex-shrink: 0;
+  width: 17px;
+  height: 9px;
+  margin-left: auto;
+  background:
+    radial-gradient(
+      ellipse 3px 4px at 3.5px 4.5px,
+      var(--meow-ink) 98%,
+      transparent
+    ),
+    radial-gradient(
+      ellipse 3px 4px at 12.5px 4.5px,
+      #fff 55%,
+      var(--meow-ink) 60% 98%,
+      transparent
+    );
+}
+.dark
+  body:not([data-theme-preset])
+  [data-sidebar='menu-button'][data-active]:not([data-active='false'])::after {
+  background:
+    radial-gradient(ellipse 3px 4px at 3.5px 4.5px, #f3efe8 98%, transparent),
+    radial-gradient(
+      ellipse 3px 4px at 12.5px 4.5px,
+      var(--meow-ink) 55%,
+      #f3efe8 60% 98%,
+      transparent
+    );
+}
+[data-collapsible='icon'] [data-sidebar='menu-button']::after {
+  display: none;
+}
+
+/*
+ * Slow drift for the calico glows behind glass cards. Two paths so the
+ * orange and dark glows never move in lockstep.
+ */
+@keyframes meow-drift-a {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(28px, 20px) scale(1.08);
+  }
+  100% {
+    transform: translate(-12px, 34px) scale(0.96);
+  }
+}
+@keyframes meow-drift-b {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-26px, -18px) scale(1.06);
+  }
+  100% {
+    transform: translate(14px, -30px) scale(0.95);
+  }
+}
+.meow-drift-a {
+  animation: meow-drift-a 16s ease-in-out infinite alternate;
+}
+.meow-drift-b {
+  animation: meow-drift-b 19s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .meow-drift-a,
+  .meow-drift-b {
+    animation: none;
+  }
+}
+
+/*
+ * Brand in the public header (upstream public-header.tsx): a larger logo
+ * tile and a bolder site name. The upstream image is round; the MeowAPI
+ * logo is a rounded square, so the clip is relaxed.
+ */
+[class~='@container/system-brand'] > a {
+  gap: 0.7rem;
+}
+[class~='@container/system-brand'] > a > div:first-child {
+  width: 2.375rem;
+  height: 2.375rem;
+}
+[class~='@container/system-brand'] > a > div:first-child > img {
+  width: 100%;
+  height: 100%;
+  border-radius: 0.6rem;
+}
+[class~='@container/system-brand'] > a > span {
+  max-width: 16rem;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/*
+ * Public header bar on desktop (upstream public-header.tsx): taller, with
+ * a larger brand, links, icon buttons and avatar. The floating bar shown
+ * after scrolling (max-w-[52rem] / h-12 upstream) is wider and taller to
+ * fit them. Phones keep the upstream sizes.
+ */
+@media (min-width: 64rem) {
+  [class~='@container/system-brand'] > a > div:first-child {
+    width: 2.625rem;
+    height: 2.625rem;
+  }
+  [class~='@container/system-brand'] > a > span {
+    font-size: 1.375rem;
+  }
+  header.pointer-events-none.fixed > div.max-w-\[52rem\] {
+    max-width: 64rem;
+  }
+  header.pointer-events-none.fixed nav.h-16 {
+    height: 4.75rem;
+  }
+  header.pointer-events-none.fixed nav.h-12 {
+    height: 3.75rem;
+    padding-left: 1.25rem;
+  }
+  header.pointer-events-none.fixed nav .lg\:flex {
+    gap: 0.25rem;
+  }
+  header.pointer-events-none.fixed nav .lg\:flex > a {
+    padding: 0.5rem 0.875rem;
+    font-size: 1rem;
+  }
+  header.pointer-events-none.fixed
+    nav
+    .lg\:flex
+    > button:not(:has([data-slot='avatar'])) {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+  header.pointer-events-none.fixed nav .lg\:flex > button svg {
+    width: 1.3rem;
+    height: 1.3rem;
+  }
+  header.pointer-events-none.fixed
+    nav
+    .lg\:flex
+    button:has(> [data-slot='avatar']),
+  header.pointer-events-none.fixed nav .lg\:flex button > [data-slot='avatar'] {
+    width: 2.125rem;
+    height: 2.125rem;
+  }
+  header.pointer-events-none.fixed nav .lg\:flex button > [data-slot='avatar'] {
+    font-size: 0.875rem;
+  }
+  header.pointer-events-none.fixed nav .lg\:flex > .h-4.w-px {
+    height: 1.25rem;
+  }
+}
+
+/*
+ * Console sidebar (upstream ui/sidebar.tsx): wider, with larger labels and
+ * icons. The width is set inline on the wrapper, hence !important. The
+ * collapsed icon rail keeps the upstream sizes.
+ */
+[data-slot='sidebar-wrapper'] {
+  --sidebar-width: 15rem !important;
+}
+:is(
+    [data-slot='sidebar'][data-state='expanded'],
+    [data-slot='sidebar'][data-mobile='true']
+  )
+  [data-sidebar='menu-button']:not([data-size='sm'], [data-size='lg']) {
+  height: 2.5rem;
+  gap: 0.75rem;
+  padding-inline: 0.75rem;
+  font-size: calc(var(--text-sm) * 15 / 14);
+}
+:is(
+    [data-slot='sidebar'][data-state='expanded'],
+    [data-slot='sidebar'][data-mobile='true']
+  )
+  [data-sidebar='menu-button']
+  svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
+:is(
+    [data-slot='sidebar'][data-state='expanded'],
+    [data-slot='sidebar'][data-mobile='true']
+  )
+  [data-sidebar='menu-sub-button'] {
+  height: 2.25rem;
+  font-size: var(--text-sm);
+}
+:is(
+    [data-slot='sidebar'][data-state='expanded'],
+    [data-slot='sidebar'][data-mobile='true']
+  )
+  [data-sidebar='group-label'] {
+  padding-inline: 0.75rem;
+  font-size: calc(var(--text-xs) * 13 / 12);
+}
+
+/*
+ * Brand in the console header (upstream SystemBrand, variant "inline").
+ */
+header a[href='/']:has(> div > img[alt]) {
+  height: 2.25rem;
+  gap: 0.55rem;
+  font-size: 1.0625rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+header a[href='/']:has(> div > img[alt]) > div:first-child {
+  width: 1.875rem;
+  height: 1.875rem;
+}
+header a[href='/']:has(> div > img[alt]) > div:first-child > img {
+  border-radius: 0.5rem;
+}
+
+/*
+ * Console header bar on desktop (upstream app-header.tsx, header.tsx,
+ * top-nav.tsx): taller, with a larger brand, links, search, icon buttons
+ * and avatar. The sidebar sits below the header through
+ * --app-header-height, so it moves down with it. Phones and tablets keep
+ * the upstream sizes.
+ */
+@media (min-width: 64rem) {
+  :root {
+    --app-header-height: 3.75rem;
+  }
+  header.sticky.top-0 [data-sidebar='trigger'] {
+    width: 2.375rem;
+    height: 2.375rem;
+  }
+  header.sticky.top-0 [data-sidebar='trigger'] svg {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  header.sticky.top-0 a[href='/']:has(> div > img[alt]) {
+    height: 2.5rem;
+    gap: 0.65rem;
+    font-size: 1.25rem;
+  }
+  header.sticky.top-0 a[href='/']:has(> div > img[alt]) > div:first-child {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+  header.sticky.top-0
+    a[href='/']:has(> div > img[alt])
+    > div:first-child
+    > img {
+    border-radius: 0.6rem;
+  }
+  header.sticky.top-0 nav > a {
+    font-size: 1rem;
+  }
+  header.sticky.top-0 .ms-auto > button:has(> kbd) {
+    height: 2.5rem;
+    font-size: 0.9375rem;
+  }
+  header.sticky.top-0 .ms-auto > button:has(> kbd) > svg {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
+  header.sticky.top-0
+    .ms-auto
+    > button:not(:has(> kbd), :has([data-slot='avatar'])) {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+  header.sticky.top-0
+    .ms-auto
+    > button:not(:has(> kbd), :has([data-slot='avatar']))
+    svg {
+    width: 1.3rem;
+    height: 1.3rem;
+  }
+  header.sticky.top-0 .ms-auto button:has(> [data-slot='avatar']),
+  header.sticky.top-0 .ms-auto button > [data-slot='avatar'] {
+    width: 2.125rem;
+    height: 2.125rem;
+  }
+  header.sticky.top-0 .ms-auto button > [data-slot='avatar'] {
+    font-size: 0.875rem;
+  }
+}
+/* Narrow desktops: a shorter search box leaves room for the brand. */
+@media (min-width: 64rem) and (max-width: 79.99rem) {
+  header.sticky.top-0 .ms-auto > button:has(> kbd) {
+    width: 10rem;
+  }
+}
+
+/*
+ * Playground (MeowPlayground wraps the upstream chat in .meow-playground).
+ * A frosted-glass composer over the calico glows, and ink user bubbles.
+ * Selectors only reach inside the wrapper, so other chat UIs are untouched.
+ */
+.meow-playground [data-slot='input-group'] {
+  border-color: rgb(255 255 255 / 0.85);
+  background: rgb(255 255 255 / 0.62);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 20px 40px -26px rgb(30 27 23 / 0.35);
+  backdrop-filter: blur(22px) saturate(1.2);
+}
+.dark .meow-playground [data-slot='input-group'] {
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.05);
+  box-shadow: none;
+}
+.meow-playground .is-user [class~='group-[.is-user]:bg-muted/70'] {
+  border-color: transparent;
+  background: var(--color-meow-ink);
+  color: #fff;
+}
+.dark .meow-playground .is-user [class~='group-[.is-user]:bg-muted/70'] {
+  background: #2e2924;
+}
+
+/*
+ * Sign-in, sign-up and other auth pages (upstream AuthLayout carries
+ * .meow-auth): the form sits on a frosted-glass card over the calico
+ * glows, and the brand in the corner uses the square logo tile.
+ */
+.meow-auth {
+  isolation: isolate;
+}
+.meow-auth > .container > div {
+  margin-block: 1.5rem;
+  border: 1px solid rgb(255 255 255 / 0.85);
+  border-radius: 1.5rem;
+  background: rgb(255 255 255 / 0.66);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 30px 60px -36px rgb(30 27 23 / 0.35);
+  backdrop-filter: blur(22px) saturate(1.2);
+}
+.dark .meow-auth > .container > div {
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.05);
+  box-shadow: none;
+}
+@media (max-width: 639px) {
+  .meow-auth > .container > div {
+    width: auto;
+    margin-inline: 1rem;
+  }
+}
+.meow-auth > a > div:first-child,
+.meow-auth > a > div:first-child > img {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.6rem;
+}
+.meow-auth > a h1 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/*
+ * Raw Tailwind palette colours used by upstream components (log tints,
+ * stream/timing colours, status text...) remapped to warm, low-saturation
+ * families so they sit with the calico palette. Meaning is kept: green
+ * is still success, red still failure, amber still warning.
+ * Generated; edit the families, not the lines.
+ */
+:root {
+  --color-emerald-50: #f2f5ec;
+  --color-emerald-100: #e3eadb;
+  --color-emerald-200: #c9d7b6;
+  --color-emerald-300: #a8bf8b;
+  --color-emerald-400: #84a062;
+  --color-emerald-500: #688749;
+  --color-emerald-600: #4f6b34;
+  --color-emerald-700: #40572a;
+  --color-emerald-800: #334521;
+  --color-emerald-900: #29371b;
+  --color-emerald-950: #1a2311;
+  --color-green-50: #f2f5ec;
+  --color-green-100: #e3eadb;
+  --color-green-200: #c9d7b6;
+  --color-green-300: #a8bf8b;
+  --color-green-400: #84a062;
+  --color-green-500: #688749;
+  --color-green-600: #4f6b34;
+  --color-green-700: #40572a;
+  --color-green-800: #334521;
+  --color-green-900: #29371b;
+  --color-green-950: #1a2311;
+  --color-lime-50: #f2f5ec;
+  --color-lime-100: #e3eadb;
+  --color-lime-200: #c9d7b6;
+  --color-lime-300: #a8bf8b;
+  --color-lime-400: #84a062;
+  --color-lime-500: #688749;
+  --color-lime-600: #4f6b34;
+  --color-lime-700: #40572a;
+  --color-lime-800: #334521;
+  --color-lime-900: #29371b;
+  --color-lime-950: #1a2311;
+  --color-teal-50: #f2f5ec;
+  --color-teal-100: #e3eadb;
+  --color-teal-200: #c9d7b6;
+  --color-teal-300: #a8bf8b;
+  --color-teal-400: #84a062;
+  --color-teal-500: #688749;
+  --color-teal-600: #4f6b34;
+  --color-teal-700: #40572a;
+  --color-teal-800: #334521;
+  --color-teal-900: #29371b;
+  --color-teal-950: #1a2311;
+  --color-blue-50: #eef3f7;
+  --color-blue-100: #dde8f0;
+  --color-blue-200: #bdd1df;
+  --color-blue-300: #96b5cb;
+  --color-blue-400: #6c95b2;
+  --color-blue-500: #4f7d9c;
+  --color-blue-600: #3a6a8a;
+  --color-blue-700: #2f5671;
+  --color-blue-800: #27465b;
+  --color-blue-900: #1f3749;
+  --color-blue-950: #142430;
+  --color-sky-50: #eef3f7;
+  --color-sky-100: #dde8f0;
+  --color-sky-200: #bdd1df;
+  --color-sky-300: #96b5cb;
+  --color-sky-400: #6c95b2;
+  --color-sky-500: #4f7d9c;
+  --color-sky-600: #3a6a8a;
+  --color-sky-700: #2f5671;
+  --color-sky-800: #27465b;
+  --color-sky-900: #1f3749;
+  --color-sky-950: #142430;
+  --color-cyan-50: #eef3f7;
+  --color-cyan-100: #dde8f0;
+  --color-cyan-200: #bdd1df;
+  --color-cyan-300: #96b5cb;
+  --color-cyan-400: #6c95b2;
+  --color-cyan-500: #4f7d9c;
+  --color-cyan-600: #3a6a8a;
+  --color-cyan-700: #2f5671;
+  --color-cyan-800: #27465b;
+  --color-cyan-900: #1f3749;
+  --color-cyan-950: #142430;
+  --color-indigo-50: #eef3f7;
+  --color-indigo-100: #dde8f0;
+  --color-indigo-200: #bdd1df;
+  --color-indigo-300: #96b5cb;
+  --color-indigo-400: #6c95b2;
+  --color-indigo-500: #4f7d9c;
+  --color-indigo-600: #3a6a8a;
+  --color-indigo-700: #2f5671;
+  --color-indigo-800: #27465b;
+  --color-indigo-900: #1f3749;
+  --color-indigo-950: #142430;
+  --color-violet-50: #f5f1ec;
+  --color-violet-100: #ebe4db;
+  --color-violet-200: #d8cdc0;
+  --color-violet-300: #bfb0a0;
+  --color-violet-400: #a08f7d;
+  --color-violet-500: #857463;
+  --color-violet-600: #6d5e50;
+  --color-violet-700: #594c41;
+  --color-violet-800: #463c33;
+  --color-violet-900: #372f28;
+  --color-violet-950: #231e1a;
+  --color-purple-50: #f5f1ec;
+  --color-purple-100: #ebe4db;
+  --color-purple-200: #d8cdc0;
+  --color-purple-300: #bfb0a0;
+  --color-purple-400: #a08f7d;
+  --color-purple-500: #857463;
+  --color-purple-600: #6d5e50;
+  --color-purple-700: #594c41;
+  --color-purple-800: #463c33;
+  --color-purple-900: #372f28;
+  --color-purple-950: #231e1a;
+  --color-pink-50: #f5f1ec;
+  --color-pink-100: #ebe4db;
+  --color-pink-200: #d8cdc0;
+  --color-pink-300: #bfb0a0;
+  --color-pink-400: #a08f7d;
+  --color-pink-500: #857463;
+  --color-pink-600: #6d5e50;
+  --color-pink-700: #594c41;
+  --color-pink-800: #463c33;
+  --color-pink-900: #372f28;
+  --color-pink-950: #231e1a;
+  --color-fuchsia-50: #f5f1ec;
+  --color-fuchsia-100: #ebe4db;
+  --color-fuchsia-200: #d8cdc0;
+  --color-fuchsia-300: #bfb0a0;
+  --color-fuchsia-400: #a08f7d;
+  --color-fuchsia-500: #857463;
+  --color-fuchsia-600: #6d5e50;
+  --color-fuchsia-700: #594c41;
+  --color-fuchsia-800: #463c33;
+  --color-fuchsia-900: #372f28;
+  --color-fuchsia-950: #231e1a;
+  --color-amber-50: #fbf4e6;
+  --color-amber-100: #f6e6c8;
+  --color-amber-200: #eecf96;
+  --color-amber-300: #e3b463;
+  --color-amber-400: #d6993d;
+  --color-amber-500: #bd7f24;
+  --color-amber-600: #8f5e0e;
+  --color-amber-700: #74490b;
+  --color-amber-800: #5c3a09;
+  --color-amber-900: #482e08;
+  --color-amber-950: #2e1d05;
+  --color-yellow-50: #fbf4e6;
+  --color-yellow-100: #f6e6c8;
+  --color-yellow-200: #eecf96;
+  --color-yellow-300: #e3b463;
+  --color-yellow-400: #d6993d;
+  --color-yellow-500: #bd7f24;
+  --color-yellow-600: #8f5e0e;
+  --color-yellow-700: #74490b;
+  --color-yellow-800: #5c3a09;
+  --color-yellow-900: #482e08;
+  --color-yellow-950: #2e1d05;
+  --color-orange-50: #fdf2e8;
+  --color-orange-100: #fbe1cc;
+  --color-orange-200: #f6c49c;
+  --color-orange-300: #f1a56b;
+  --color-orange-400: #ee8a3c;
+  --color-orange-500: #d9701f;
+  --color-orange-600: #b95e18;
+  --color-orange-700: #a94c16;
+  --color-orange-800: #7a3510;
+  --color-orange-900: #5c290d;
+  --color-orange-950: #3a1a08;
+  --color-red-50: #fbefed;
+  --color-red-100: #f6dbd7;
+  --color-red-200: #edb6af;
+  --color-red-300: #e18b80;
+  --color-red-400: #d26254;
+  --color-red-500: #c1412f;
+  --color-red-600: #b3261e;
+  --color-red-700: #922019;
+  --color-red-800: #741a14;
+  --color-red-900: #5a1510;
+  --color-red-950: #3a0e0b;
+  --color-rose-50: #fbefed;
+  --color-rose-100: #f6dbd7;
+  --color-rose-200: #edb6af;
+  --color-rose-300: #e18b80;
+  --color-rose-400: #d26254;
+  --color-rose-500: #c1412f;
+  --color-rose-600: #b3261e;
+  --color-rose-700: #922019;
+  --color-rose-800: #741a14;
+  --color-rose-900: #5a1510;
+  --color-rose-950: #3a0e0b;
+}
+
+/*
+ * Surfaces and shapes, one system across MeowAPI and upstream pages.
+ */
+
+/* Cards share the console corner radius. */
+[data-slot='card'] {
+  border-radius: 1.25rem;
+}
+
+/*
+ * Inside the MeowAPI page layout, upstream panels drawn as a bare border
+ * (data dashboard charts and stat strips) or a half-transparent card (log
+ * tables) become proper ivory cards like the rest of the console.
+ */
+[data-meow-page] .overflow-hidden.rounded-lg.border:not([class*='bg-']),
+[data-meow-page] .bg-card\/50 {
+  border-radius: 1.25rem;
+  background-color: var(--card);
+}
+
+/*
+ * Upstream tints boxes with five opacities of the muted beige. Two steps
+ * are enough: a subtle inset and the full muted beige.
+ */
+.bg-muted\/10,
+.bg-muted\/20,
+.bg-muted\/25,
+.bg-muted\/30 {
+  background-color: color-mix(in oklab, var(--muted) 45%, var(--card));
+}
+.bg-muted\/40,
+.bg-muted\/50,
+.bg-muted\/60,
+.bg-muted\/70,
+.bg-muted\/80 {
+  background-color: var(--muted);
+}
+
+/*
+ * Decorative icon badges (an icon alone in a tinted square) use the
+ * orange tint whatever tone upstream picked; status chips with text keep
+ * their colours.
+ */
+:is(
+  .bg-success\/10.text-success,
+  .bg-info\/10.text-info,
+  .bg-warning\/10.text-warning,
+  .bg-chart-3\/10.text-chart-3,
+  .bg-chart-4\/10.text-chart-4,
+  .bg-chart-5\/10.text-chart-5
+):has(> svg:only-child) {
+  background-color: var(--accent);
+  color: var(--meow-accent-text);
+}
+
+/*
+ * Frosted glass with the calico glows (orange top-left, ink right; white in
+ * dark mode) for two upstream panels: the wallet "Add funds" card and the
+ * data dashboard stat strip (the only panel whose grid has 7 columns).
+ * Same recipe as the MeowAPI glass cards.
+ */
+:is(
+  #wallet-add-funds > [data-slot='card'],
+  [data-meow-page] .overflow-hidden.rounded-lg.border:has(> .lg\:grid-cols-7)
+) {
+  border-color: rgb(255 255 255 / 0.85);
+  border-radius: 1.25rem;
+  background-color: rgb(255 251 245 / 0.6);
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.85),
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 24px 48px -30px rgb(30 27 23 / 0.3);
+  backdrop-filter: blur(22px) saturate(1.2);
+}
+.dark
+  :is(
+    #wallet-add-funds > [data-slot='card'],
+    [data-meow-page] .overflow-hidden.rounded-lg.border:has(> .lg\:grid-cols-7)
+  ) {
+  border-color: rgb(255 255 255 / 0.1);
+  background-color: rgb(255 255 255 / 0.05);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.08);
+}
+
+/* The glow hosts: the panels' wrappers, so the glows are not clipped. */
+:is(
+  #wallet-add-funds,
+  [data-meow-page] :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+) {
+  position: relative;
+  isolation: isolate;
+}
+:is(
+  #wallet-add-funds,
+  [data-meow-page] :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+)::before,
+:is(
+  #wallet-add-funds,
+  [data-meow-page] :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+)::after {
+  position: absolute;
+  z-index: -1;
+  border-radius: 9999px;
+  content: '';
+  pointer-events: none;
+}
+:is(
+  #wallet-add-funds,
+  [data-meow-page] :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+)::before {
+  top: -1.5rem;
+  left: -1rem;
+  width: 15rem;
+  height: 10rem;
+  background: var(--meow-orange);
+  opacity: 0.5;
+  filter: blur(50px);
+  animation: meow-drift-a 16s ease-in-out infinite alternate;
+}
+:is(
+  #wallet-add-funds,
+  [data-meow-page] :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+)::after {
+  top: 20%;
+  right: 2rem;
+  width: 11rem;
+  height: 9rem;
+  background: var(--meow-ink);
+  opacity: 0.22;
+  filter: blur(54px);
+  animation: meow-drift-b 19s ease-in-out infinite alternate;
+}
+.dark
+  :is(
+    #wallet-add-funds,
+    [data-meow-page]
+      :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+  )::after {
+  background: #fff;
+  opacity: 0.08;
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(
+    #wallet-add-funds,
+    [data-meow-page]
+      :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+  )::before,
+  :is(
+    #wallet-add-funds,
+    [data-meow-page]
+      :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+  )::after {
+    animation: none;
+  }
+}
+
+/*
+ * Dark mode: the orange glows become a calm ambient light. A deeper amber
+ * at low opacity with a wide blur, so there is no visible edge and the
+ * light fades into the dark surfaces. Light mode keeps its own values.
+ */
+.dark .meow-drift-a.bg-meow-orange {
+  background-color: #b8642a;
+  opacity: 0.2;
+  filter: blur(90px);
+}
+.dark
+  :is(
+    #wallet-add-funds,
+    [data-meow-page]
+      :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
+  )::before {
+  background: #b8642a;
+  opacity: 0.2;
+  filter: blur(90px);
+}

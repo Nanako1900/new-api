@@ -20,7 +20,8 @@ import { Link2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { SectionPageLayout } from '@/components/layout/components/section-page-layout'
+// MeowAPI: console page look (large title).
+import { MeowSectionLayout as SectionPageLayout } from '@/components/meow-section-layout'
 import { Button } from '@/components/ui/button'
 import {
   Empty,

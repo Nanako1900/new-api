@@ -25,9 +25,10 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const THEME_PRESETS = [
   {
+    // MeowAPI calico orange on a cream canvas (see styles/meow.css).
     value: 'default',
     name: 'Default',
-    swatches: ['oklch(0.72 0.18 250)', 'oklch(0.7 0.12 280)'],
+    swatches: ['oklch(0.965 0.017 80)', 'oklch(0.74 0.15 55)'],
   },
   {
     // Inspired by Anthropic's official brand language: warm cream canvas

@@ -26,8 +26,11 @@ For commercial licensing, please contact support@quantumnous.com
  * that activates it. Loaded globally so font-switching is instantaneous
  * with no FOUT once the variable is fetched. */
 @import '@fontsource-variable/lora';
+/* UI face for the MeowAPI palette (see ./meow.css). */
+@import '@fontsource-variable/plus-jakarta-sans';
 
 @import './theme.css';
+@import './meow.css';
 @import './theme-presets.css';
 
 @layer base {

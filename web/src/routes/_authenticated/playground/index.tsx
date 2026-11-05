@@ -19,7 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
 import { Main } from '@/components/layout'
-import { Playground } from '@/features/playground'
+// MeowAPI: the playground with the MeowAPI title and composer look.
+import { MeowPlayground as Playground } from '@/features/playground/components/meow-playground/meow-playground'
 import { isSidebarModuleEnabled } from '@/lib/nav-modules'
 
 export const Route = createFileRoute('/_authenticated/playground/')({
