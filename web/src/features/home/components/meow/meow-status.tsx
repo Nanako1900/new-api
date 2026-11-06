@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { SleepingCat } from '@/components/cat-art'
 import {
   formatLatency,
   formatUptimePct,
@@ -57,7 +58,12 @@ export function MeowStatus() {
       aria-label={t('Live status')}
       className='relative mx-auto max-w-6xl px-4 pb-14 sm:px-8'
     >
-      <div className='relative flex flex-wrap items-center gap-x-10 gap-y-3 rounded-2xl border border-white/75 bg-white/30 px-6 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_20px_40px_-28px_rgba(30,27,23,0.28)] backdrop-blur-xl backdrop-saturate-125 dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none'>
+      <div className='relative flex flex-wrap items-center gap-x-10 gap-y-3 rounded-2xl border border-white/75 bg-white/30 py-4 pr-16 pl-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_20px_40px_-28px_rgba(30,27,23,0.28)] backdrop-blur-xl backdrop-saturate-125 dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none'>
+        {/*
+          Asleep on the bar's top edge, tail hanging over the front. The
+          bar's wider right padding keeps the text out from under the tail.
+        */}
+        <SleepingCat className='absolute right-10 bottom-full w-[150px] translate-y-[34.4%] lg:right-6 lg:w-[208px]' />
         <span className='flex items-center gap-2 text-sm font-extrabold'>
           <span className='relative flex size-2'>
             <span className='bg-success absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:animate-none' />

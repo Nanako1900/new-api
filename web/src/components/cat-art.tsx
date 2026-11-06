@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import sleepingCatBody from '@/assets/meow/sleeping-cat-body.webp'
+import sleepingCatTail from '@/assets/meow/sleeping-cat-tail.webp'
 import { cn } from '@/lib/utils'
 
 // Decorative MeowAPI artwork. Every piece is aria-hidden: the cat touches are
@@ -53,6 +55,42 @@ export function CatEyes(props: ArtProps) {
     >
       <span className='bg-meow-ink h-[11px] w-[9px] rounded-full dark:bg-white' />
       <span className='border-meow-ink h-[11px] w-[9px] rounded-full border-[2.5px] bg-white dark:border-white dark:bg-transparent' />
+    </span>
+  )
+}
+
+/**
+ * The calico cat asleep on a ledge, its tail hanging over the front edge
+ * and swaying (styles in meow.css). Two hand-drawn layers: the tail sits
+ * behind the body so its root stays hidden while it swings.
+ *
+ * 150px wide by default (pass a width class to resize; the height follows).
+ * The belly line is 34.4% of the height above the bottom, so to lay the cat
+ * on an element use `absolute bottom-full translate-y-[34.4%]` inside it.
+ */
+export function SleepingCat(props: ArtProps) {
+  return (
+    <span
+      aria-hidden='true'
+      className={cn(
+        'pointer-events-none relative block w-[150px] shrink-0 select-none',
+        props.className
+      )}
+    >
+      <img
+        src={sleepingCatTail}
+        alt=''
+        draggable={false}
+        className='meow-cat-tail absolute inset-0 size-full'
+      />
+      <img
+        src={sleepingCatBody}
+        alt=''
+        width={450}
+        height={283}
+        draggable={false}
+        className='relative block h-auto w-full'
+      />
     </span>
   )
 }

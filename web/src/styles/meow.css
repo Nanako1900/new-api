@@ -312,6 +312,54 @@ body:not([data-theme-preset])
 }
 
 /*
+ * Sleeping cat (components/cat-art.tsx): the tail layer swings from the
+ * point where it comes out from behind the cat's rear (percentages of the
+ * drawing, so it holds at any size).
+ */
+.meow-cat-tail {
+  transform-origin: 94.14% 51.59%;
+  animation: meow-cat-sway 4.4s ease-in-out infinite;
+}
+@keyframes meow-cat-sway {
+  0%,
+  100% {
+    transform: rotate(-6deg);
+  }
+  50% {
+    transform: rotate(6deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .meow-cat-tail {
+    animation: none;
+  }
+}
+
+/*
+ * Console panel (upstream SidebarInset, inset variant): end it higher than
+ * upstream's 0.5rem margin, so the console cat (meow-console-cat.tsx) can
+ * lie on its bottom edge with its tail hanging below.
+ */
+@media (min-width: 48rem) {
+  .peer[data-variant='inset'] ~ [data-slot='sidebar-inset'] {
+    margin-bottom: 3rem;
+    /* Top margin stays upstream's m-2, which follows the text-size scale. */
+    height: calc(
+      100svh - var(--app-header-height, 0px) - var(--spacing) * 2 - 3rem
+    );
+  }
+}
+
+/*
+ * Upstream SidebarRail: the strip on the sidebar's edge draws a line and a
+ * "Toggle Sidebar" tooltip on hover. Hidden; the header button (and Ctrl+B)
+ * still toggle the sidebar.
+ */
+[data-slot='sidebar-rail'] {
+  display: none;
+}
+
+/*
  * Brand in the public header (upstream public-header.tsx): a larger logo
  * tile and a bolder site name. The upstream image is round; the MeowAPI
  * logo is a rounded square, so the clip is relaxed.
