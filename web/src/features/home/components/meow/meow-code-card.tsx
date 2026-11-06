@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 
 import {
   API_DEMOS,
+  type ApiDemo,
   type ApiDemoId,
   type CodeTokenKind,
   keyLines,
@@ -54,6 +55,33 @@ function CodeLines(props: { lines: string[] }) {
         </span>
       ))}
     </code>
+  )
+}
+
+/**
+ * Every demo shares one grid cell and only the selected one is shown, so the
+ * block keeps the tallest demo's height at any width and switching tabs does
+ * not shift the hero.
+ */
+function DemoStack(props: {
+  selectedId: ApiDemoId
+  linesOf: (demo: ApiDemo) => string[]
+}) {
+  return (
+    <div className='grid'>
+      {API_DEMOS.map((item) => {
+        const selected = item.id === props.selectedId
+        return (
+          <div
+            key={item.id}
+            aria-hidden={selected ? undefined : true}
+            className={cn('col-start-1 row-start-1', !selected && 'invisible')}
+          >
+            <CodeLines lines={props.linesOf(item)} />
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -133,15 +161,18 @@ export function MeowCodeCard(props: MeowCodeCardProps) {
         </div>
 
         {/* Request */}
-        <div className='flex min-h-[262px] flex-col gap-2 px-5 py-4'>
+        <div className='flex flex-col gap-2 px-5 py-4'>
           <SectionLabel>Request</SectionLabel>
-          <CodeLines lines={request} />
+          <DemoStack
+            selectedId={demo.id}
+            linesOf={(item) => renderDemoRequest(item, apiRoot)}
+          />
         </div>
 
         {/* Response */}
         <div className='flex flex-col gap-2 border-t border-black/5 bg-white/35 px-5 py-4 dark:border-white/10 dark:bg-black/20'>
           <SectionLabel>Response</SectionLabel>
-          <CodeLines lines={demo.response} />
+          <DemoStack selectedId={demo.id} linesOf={(item) => item.response} />
         </div>
 
         {/* Metrics */}

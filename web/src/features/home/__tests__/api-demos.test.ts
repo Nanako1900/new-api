@@ -61,6 +61,14 @@ test('every demo request targets the given site root', () => {
   }
 })
 
+test('every demo request declares a JSON body so the copied command runs', () => {
+  for (const demo of API_DEMOS) {
+    expect(demo.request.join('\n')).toMatch(
+      /-H "Content-Type: application\/json"/
+    )
+  }
+})
+
 test('line keys stay unique even when lines repeat', () => {
   const keys = keyLines(['{', '}', '{', '}']).map((l) => l.offset)
   expect(new Set(keys).size).toBe(4)
