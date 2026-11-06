@@ -38,6 +38,7 @@ export const API_DEMOS: ApiDemo[] = [
       'curl -X POST "{root}/v1/messages" \\',
       '  -H "x-api-key: sk-••••" \\',
       '  -H "anthropic-version: 2023-06-01" \\',
+      '  -H "Content-Type: application/json" \\',
       "  -d '{",
       '    "model": "your-model",',
       '    "max_tokens": 1024,',
@@ -62,6 +63,7 @@ export const API_DEMOS: ApiDemo[] = [
     request: [
       'curl -X POST "{root}/v1/chat/completions" \\',
       '  -H "Authorization: Bearer sk-••••" \\',
+      '  -H "Content-Type: application/json" \\',
       "  -d '{",
       '    "model": "your-model",',
       '    "messages": [',
@@ -85,6 +87,7 @@ export const API_DEMOS: ApiDemo[] = [
     request: [
       'curl -X POST "{root}/v1/responses" \\',
       '  -H "Authorization: Bearer sk-••••" \\',
+      '  -H "Content-Type: application/json" \\',
       "  -d '{",
       '    "model": "your-model",',
       '    "input": "..."',

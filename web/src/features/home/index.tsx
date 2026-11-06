@@ -129,12 +129,14 @@ export function Home() {
 
   return (
     <PublicLayout showMainContainer={false}>
-      <MeowHero isAuthenticated={isAuthenticated} />
-      <MeowStatus />
-      <MeowModels />
-      <MeowTools />
-      <MeowSteps />
-      <MeowClosing isAuthenticated={isAuthenticated} />
+      <main>
+        <MeowHero isAuthenticated={isAuthenticated} />
+        <MeowStatus />
+        <MeowModels />
+        <MeowTools />
+        <MeowSteps />
+        <MeowClosing isAuthenticated={isAuthenticated} />
+      </main>
       <Footer />
     </PublicLayout>
   )
