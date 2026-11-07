@@ -238,6 +238,20 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 	username := gjson.Get(bodyStr, p.config.UsernameField).String()
 	displayName := gjson.Get(bodyStr, p.config.DisplayNameField).String()
 	email := gjson.Get(bodyStr, p.config.EmailField).String()
+	// The email counts as verified only when the OIDC email_verified claim sits
+	// in the same object as the configured email field and asserts true. Only a
+	// plain dotted field path names that object, so gjson syntax fails closed.
+	emailVerified := false
+	plainEmailField := !strings.ContainsFunc(p.config.EmailField, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' && r != '-' && r != '.'
+	})
+	if email != "" && plainEmailField {
+		emailVerifiedField := "email_verified"
+		if index := strings.LastIndex(p.config.EmailField, "."); index >= 0 {
+			emailVerifiedField = p.config.EmailField[:index+1] + emailVerifiedField
+		}
+		emailVerified = isTrueClaim(gjsonResultToValue(gjson.Get(bodyStr, emailVerifiedField)))
+	}
 
 	// If user ID field returns a number, convert it
 	if userId == "" {
@@ -279,6 +293,7 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 		Username:       username,
 		DisplayName:    displayName,
 		Email:          email,
+		EmailVerified:  emailVerified,
 		Extra: map[string]any{
 			"provider": p.config.Slug,
 		},

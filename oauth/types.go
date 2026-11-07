@@ -23,6 +23,10 @@ type OAuthUser struct {
 	DisplayName string
 	// Email is the email from the OAuth provider
 	Email string
+	// EmailVerified reports that the provider asserted, in the same response,
+	// that it has confirmed Email for this account. Sign-up stores Email only
+	// when it is verified, here or through VerifiedEmailProvider.
+	EmailVerified bool
 	// Extra contains any additional provider-specific data
 	Extra map[string]any
 }

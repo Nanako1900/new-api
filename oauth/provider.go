@@ -43,7 +43,8 @@ type Provider interface {
 
 // VerifiedEmailProvider is implemented by providers that can list the email
 // addresses they have confirmed for the signed-in account. The login flow uses
-// it to match a provider account against an existing account's email.
+// it to match a provider account against an existing account's email, and
+// sign-up uses it to confirm the profile email before storing it.
 type VerifiedEmailProvider interface {
 	GetVerifiedEmails(ctx context.Context, token *OAuthToken) ([]string, error)
 }
