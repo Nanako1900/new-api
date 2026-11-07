@@ -28,6 +28,8 @@ import type { UserPermissions } from '@/stores/auth-store'
 export interface ApiResponse<T = unknown> {
   success: boolean
   message?: string
+  /** Stable error code, such as `CAPTCHA_REQUIRED` */
+  code?: string
   data?: T
 }
 

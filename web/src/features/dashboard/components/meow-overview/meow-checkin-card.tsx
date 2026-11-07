@@ -22,11 +22,13 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
-import { Turnstile } from '@/components/turnstile'
+import { GeetestCaptcha } from '@/components/geetest-captcha'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getCheckinStatus, performCheckin } from '@/features/profile/api'
+import { useCaptcha } from '@/hooks/use-captcha'
 import { getSelf } from '@/lib/api'
+import { isCaptchaRejection } from '@/lib/captcha'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
@@ -49,11 +51,6 @@ const CHECKIN_VIEWS: { id: CheckinView; label: string }[] = [
   { id: 'month', label: 'Month' },
 ]
 
-type MeowCheckinCardProps = {
-  turnstileEnabled: boolean
-  turnstileSiteKey: string
-}
-
 /**
  * Month check-in records. Shares the query key with the profile page's
  * calendar card, so both read the same cache.
@@ -74,15 +71,16 @@ function useCheckinMonth(month: string, enabled: boolean) {
 
 /**
  * Daily check-in: the last seven days as paws or the month calendar, the
- * current streak and one button. Check-in and the Turnstile retry follow
- * the profile calendar card.
+ * current streak and one button. Check-in and the human verification retry
+ * follow the profile calendar card.
  */
-export function MeowCheckinCard(props: MeowCheckinCardProps) {
+export function MeowCheckinCard() {
   const { t } = useTranslation()
+  const { captchaId } = useCaptcha()
   const setUser = useAuthStore((state) => state.auth.setUser)
   const [checkinLoading, setCheckinLoading] = useState(false)
-  const [turnstileOpen, setTurnstileOpen] = useState(false)
-  const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
+  const [captchaOpen, setCaptchaOpen] = useState(false)
+  const [captchaWidgetKey, setCaptchaWidgetKey] = useState(0)
 
   const today = useMemo(() => new Date(), [])
   const week = useMemo(() => lastSevenDays(today), [today])
@@ -136,33 +134,37 @@ export function MeowCheckinCard(props: MeowCheckinCardProps) {
           toast.success(
             `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
           )
-          setTurnstileOpen(false)
+          setCaptchaOpen(false)
           void queryClient.invalidateQueries({ queryKey: ['checkin-status'] })
           // Refresh the balance shown on the overview.
           const self = await getSelf().catch(() => null)
           if (self?.success && self.data) setUser(self.data)
           return
         }
-        const needsTurnstile =
-          props.turnstileEnabled &&
-          (typeof res.message !== 'string' || res.message.includes('Turnstile'))
-        if (!token && needsTurnstile) {
-          if (!props.turnstileSiteKey) {
-            toast.error(t('Turnstile is enabled but site key is empty.'))
+        const captchaRejected = isCaptchaRejection(res)
+        if (!token && captchaRejected) {
+          if (!captchaId) {
+            toast.error(t('GeeTest is enabled but the captcha ID is empty.'))
             return
           }
-          setTurnstileOpen(true)
+          setCaptchaOpen(true)
           return
         }
-        if (token && needsTurnstile) setTurnstileWidgetKey((v) => v + 1)
+        if (token) {
+          // The result is spent: retry with a fresh challenge, or close the
+          // check when verification was not what failed.
+          setCaptchaWidgetKey((v) => v + 1)
+          if (!captchaRejected) setCaptchaOpen(false)
+        }
         handleServerError(res, t('Check-in failed'))
       } catch (error) {
+        if (token) setCaptchaWidgetKey((v) => v + 1)
         handleServerError(error, t('Check-in failed'))
       } finally {
         setCheckinLoading(false)
       }
     },
-    [props.turnstileEnabled, props.turnstileSiteKey, queryClient, setUser, t]
+    [captchaId, queryClient, setUser, t]
   )
 
   const todayKey = toDateKey(today)
@@ -174,10 +176,10 @@ export function MeowCheckinCard(props: MeowCheckinCardProps) {
   return (
     <div className='bg-card border-border flex flex-col gap-4 rounded-[22px] border p-5'>
       <Dialog
-        open={turnstileOpen}
+        open={captchaOpen}
         onOpenChange={(open) => {
-          setTurnstileOpen(open)
-          if (!open) setTurnstileWidgetKey((v) => v + 1)
+          setCaptchaOpen(open)
+          if (!open) setCaptchaWidgetKey((v) => v + 1)
         }}
         title={t('Security Check')}
         contentClassName='sm:max-w-md'
@@ -188,13 +190,12 @@ export function MeowCheckinCard(props: MeowCheckinCardProps) {
           {t('Please complete the security check to continue.')}
         </div>
         <div className='flex justify-center py-4'>
-          <Turnstile
-            key={turnstileWidgetKey}
-            siteKey={props.turnstileSiteKey}
+          <GeetestCaptcha
+            key={captchaWidgetKey}
+            captchaId={captchaId}
             onVerify={(token) => {
               void doCheckin(token)
             }}
-            onExpire={() => setTurnstileWidgetKey((v) => v + 1)}
           />
         </div>
       </Dialog>

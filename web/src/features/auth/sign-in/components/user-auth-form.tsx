@@ -26,8 +26,8 @@ import { toast } from 'sonner'
 import type { z } from 'zod'
 
 import { Dialog } from '@/components/dialog'
+import { GeetestCaptcha } from '@/components/geetest-captcha'
 import { PasswordInput } from '@/components/password-input'
-import { Turnstile } from '@/components/turnstile'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -44,7 +44,6 @@ import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { loginFormSchema } from '@/features/auth/constants'
 import { useAuthRedirect } from '@/features/auth/hooks/use-auth-redirect'
-import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
 import { beginPasskeyLogin, finishPasskeyLogin } from '@/features/auth/passkey'
 import {
   requestPasskeyAssertion,
@@ -53,6 +52,7 @@ import {
 } from '@/features/auth/passkey/assertion'
 import { PasskeyDomainSelector } from '@/features/auth/passkey/components/passkey-domain-selector'
 import type { AuthFormProps } from '@/features/auth/types'
+import { useCaptcha } from '@/hooks/use-captcha'
 import { useStatus } from '@/hooks/use-status'
 import { handleServerError } from '@/lib/handle-server-error'
 import { isPasskeySupported as detectPasskeySupport } from '@/lib/passkey'
@@ -79,7 +79,7 @@ export function UserAuthForm({
   useEffect(() => () => passkeyOperation.current?.abort(), [])
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
-  const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
+  const [captchaWidgetKey, setCaptchaWidgetKey] = useState(0)
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
   const loginFailedMessage = t('Login failed')
 
@@ -96,12 +96,12 @@ export function UserAuthForm({
       status?.data?.password_login_encryption_enabled ??
       false) === true
   const {
-    isTurnstileEnabled,
-    turnstileSiteKey,
-    turnstileToken,
-    setTurnstileToken,
-    validateTurnstile,
-  } = useTurnstile()
+    isCaptchaEnabled,
+    captchaId,
+    captchaToken,
+    setCaptchaToken,
+    validateCaptcha,
+  } = useCaptcha()
   const { handleLoginResult } = useAuthRedirect()
 
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
@@ -165,12 +165,13 @@ export function UserAuthForm({
       return
     }
 
-    if (!validateTurnstile()) return
+    if (!validateCaptcha()) return
 
-    const submittedTurnstileToken = turnstileToken
-    if (isTurnstileEnabled) {
-      setTurnstileToken('')
-      setTurnstileWidgetKey((current) => current + 1)
+    // A GeeTest result is single-use: start a fresh attempt for any retry.
+    const submittedCaptchaToken = captchaToken
+    if (isCaptchaEnabled) {
+      setCaptchaToken('')
+      setCaptchaWidgetKey((current) => current + 1)
     }
 
     setIsLoading(true)
@@ -178,7 +179,7 @@ export function UserAuthForm({
       const res = await login({
         username: data.username,
         password: data.password,
-        turnstile: submittedTurnstileToken,
+        captcha: submittedCaptchaToken,
         passwordEncryptionEnabled: passwordLoginEncryptionEnabled,
       })
 
@@ -405,16 +406,14 @@ export function UserAuthForm({
               {t('Sign in')}
             </Button>
 
-            {/* Turnstile */}
-            {isTurnstileEnabled && (
-              <div className='mt-2'>
-                <Turnstile
-                  key={turnstileWidgetKey}
-                  siteKey={turnstileSiteKey}
-                  onVerify={setTurnstileToken}
-                  onExpire={() => setTurnstileToken('')}
-                />
-              </div>
+            {isCaptchaEnabled && (
+              <GeetestCaptcha
+                key={captchaWidgetKey}
+                className='mt-2'
+                captchaId={captchaId}
+                onVerify={setCaptchaToken}
+                onError={() => setCaptchaToken('')}
+              />
             )}
           </>
         )}

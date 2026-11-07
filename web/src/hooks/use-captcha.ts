@@ -23,35 +23,30 @@ import { toast } from 'sonner'
 import { useStatus } from '@/hooks/use-status'
 
 /**
- * Hook for managing Turnstile verification
+ * GeeTest human verification state for a form: whether the site requires it,
+ * the public captcha ID, and the result token of the current attempt.
  */
-export function useTurnstile() {
+export function useCaptcha() {
   const { status } = useStatus()
-  const [turnstileToken, setTurnstileToken] = useState('')
+  const [captchaToken, setCaptchaToken] = useState('')
 
-  const isTurnstileEnabled = !!(
-    status?.turnstile_check && status?.turnstile_site_key
-  )
-  const turnstileSiteKey = status?.turnstile_site_key || ''
+  const captchaId = status?.geetest_captcha_id || ''
+  const isCaptchaEnabled = Boolean(status?.geetest_check && captchaId)
 
-  /**
-   * Validate if turnstile is ready when required
-   */
-  const validateTurnstile = (): boolean => {
-    if (isTurnstileEnabled && !turnstileToken) {
-      toast.info(
-        i18next.t('Please wait a moment, human check is initializing...')
-      )
+  /** Whether the form may submit: verification is off or already passed. */
+  const validateCaptcha = (): boolean => {
+    if (isCaptchaEnabled && !captchaToken) {
+      toast.info(i18next.t('Please complete the human verification first'))
       return false
     }
     return true
   }
 
   return {
-    isTurnstileEnabled,
-    turnstileSiteKey,
-    turnstileToken,
-    setTurnstileToken,
-    validateTurnstile,
+    isCaptchaEnabled,
+    captchaId,
+    captchaToken,
+    setCaptchaToken,
+    validateCaptcha,
   }
 }

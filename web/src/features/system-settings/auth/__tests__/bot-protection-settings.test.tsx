@@ -38,9 +38,9 @@ import type { UpdateOptionRequest } from '../../types'
 import { BotProtectionSection } from '../bot-protection-section'
 
 const defaults = {
-  TurnstileCheckEnabled: false,
-  TurnstileSiteKey: '',
-  TurnstileSecretKey: '',
+  GeetestCheckEnabled: false,
+  GeetestCaptchaId: '',
+  GeetestCaptchaKey: '',
 }
 
 let testI18n: i18n
@@ -85,7 +85,7 @@ beforeEach(async () => {
 })
 
 describe('Bot Protection settings saves', () => {
-  it('saves both keys before enabling Turnstile in one save', async () => {
+  it('saves the captcha ID and key before enabling GeeTest in one save', async () => {
     const savedOptions: Record<string, string | number | boolean> = {}
     const put = vi.spyOn(api, 'put').mockImplementation(async (_url, body) => {
       const request = body as UpdateOptionRequest
@@ -95,25 +95,21 @@ describe('Bot Protection settings saves', () => {
     const user = userEvent.setup()
     await renderSettings()
     await user.type(
-      screen.getByRole('textbox', { name: 'Site Key' }),
-      'site-key'
+      screen.getByRole('textbox', { name: 'Captcha ID' }),
+      'captcha-id'
     )
-    await user.type(screen.getByLabelText('Secret Key'), 'secret-key')
-    await user.click(screen.getByRole('switch', { name: 'Enable Turnstile' }))
+    await user.type(screen.getByLabelText('Captcha Key'), 'captcha-key')
+    await user.click(screen.getByRole('switch', { name: 'Enable GeeTest' }))
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => expect(put).toHaveBeenCalledTimes(3))
     expect(
       put.mock.calls.map(([, body]) => (body as UpdateOptionRequest).key)
-    ).toEqual([
-      'TurnstileSiteKey',
-      'TurnstileSecretKey',
-      'TurnstileCheckEnabled',
-    ])
+    ).toEqual(['GeetestCaptchaId', 'GeetestCaptchaKey', 'GeetestCheckEnabled'])
     expect(savedOptions).toEqual({
-      TurnstileSiteKey: 'site-key',
-      TurnstileSecretKey: 'secret-key',
-      TurnstileCheckEnabled: true,
+      GeetestCaptchaId: 'captcha-id',
+      GeetestCaptchaKey: 'captcha-key',
+      GeetestCheckEnabled: true,
     })
   })
 })

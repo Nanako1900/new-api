@@ -24,7 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 
-import { Turnstile } from '@/components/turnstile'
+import { GeetestCaptcha } from '@/components/geetest-captcha'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -40,7 +40,7 @@ import {
   forgotPasswordFormSchema,
   PASSWORD_RESET_COUNTDOWN,
 } from '@/features/auth/constants'
-import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
+import { useCaptcha } from '@/hooks/use-captcha'
 import { useCountdown } from '@/hooks/use-countdown'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
@@ -53,14 +53,15 @@ export function ForgotPasswordForm({
 }: React.HTMLAttributes<HTMLFormElement>) {
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
+  const [captchaWidgetKey, setCaptchaWidgetKey] = useState(0)
 
   const {
-    isTurnstileEnabled,
-    turnstileSiteKey,
-    turnstileToken,
-    setTurnstileToken,
-    validateTurnstile,
-  } = useTurnstile()
+    isCaptchaEnabled,
+    captchaId,
+    captchaToken,
+    setCaptchaToken,
+    validateCaptcha,
+  } = useCaptcha()
   const {
     secondsLeft,
     isActive,
@@ -71,14 +72,24 @@ export function ForgotPasswordForm({
     resolver: zodResolver(forgotPasswordFormSchema),
     defaultValues: { email: '' },
   })
-  const turnstileReady = !isTurnstileEnabled || Boolean(turnstileToken)
+  const captchaReady = !isCaptchaEnabled || Boolean(captchaToken)
 
   async function onSubmit(data: z.infer<typeof forgotPasswordFormSchema>) {
-    if (!validateTurnstile()) return
+    if (!validateCaptcha()) return
+
+    // A GeeTest result is single-use: start a fresh attempt for any retry.
+    const submittedCaptchaToken = captchaToken
+    if (isCaptchaEnabled) {
+      setCaptchaToken('')
+      setCaptchaWidgetKey((current) => current + 1)
+    }
 
     setIsLoading(true)
     try {
-      const res = await sendPasswordResetEmail(data.email, turnstileToken)
+      const res = await sendPasswordResetEmail(
+        data.email,
+        submittedCaptchaToken
+      )
       if (res?.success) {
         form.reset()
         startCountdown()
@@ -121,7 +132,7 @@ export function ForgotPasswordForm({
         <Button
           type='submit'
           className='mt-2'
-          disabled={isLoading || isActive || !turnstileReady}
+          disabled={isLoading || isActive || !captchaReady}
         >
           {isActive
             ? t('Resend ({{seconds}}s)', { seconds: secondsLeft })
@@ -129,13 +140,14 @@ export function ForgotPasswordForm({
           {isLoading ? <Loader2 className='animate-spin' /> : <ArrowRight />}
         </Button>
 
-        {isTurnstileEnabled && (
-          <div className='mt-2'>
-            <Turnstile
-              siteKey={turnstileSiteKey}
-              onVerify={setTurnstileToken}
-            />
-          </div>
+        {isCaptchaEnabled && (
+          <GeetestCaptcha
+            key={captchaWidgetKey}
+            className='mt-2'
+            captchaId={captchaId}
+            onVerify={setCaptchaToken}
+            onError={() => setCaptchaToken('')}
+          />
         )}
       </form>
     </Form>

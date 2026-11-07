@@ -2,8 +2,10 @@ package model
 
 import (
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -46,7 +48,7 @@ func InitOptionMap() {
 	common.OptionMap["LinuxDOOAuthEnabled"] = strconv.FormatBool(common.LinuxDOOAuthEnabled)
 	common.OptionMap["TelegramOAuthEnabled"] = strconv.FormatBool(common.TelegramOAuthEnabled)
 	common.OptionMap["WeChatAuthEnabled"] = strconv.FormatBool(common.WeChatAuthEnabled)
-	common.OptionMap["TurnstileCheckEnabled"] = strconv.FormatBool(common.TurnstileCheckEnabled)
+	common.OptionMap["GeetestCheckEnabled"] = strconv.FormatBool(common.GeetestCheckEnabled)
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
@@ -141,8 +143,8 @@ func InitOptionMap() {
 	common.OptionMap["WeChatServerAddress"] = ""
 	common.OptionMap["WeChatServerToken"] = ""
 	common.OptionMap["WeChatAccountQRCodeImageURL"] = ""
-	common.OptionMap["TurnstileSiteKey"] = ""
-	common.OptionMap["TurnstileSecretKey"] = ""
+	common.OptionMap["GeetestCaptchaId"] = ""
+	common.OptionMap["GeetestCaptchaKey"] = ""
 	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
 	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
 	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
@@ -198,6 +200,12 @@ func InitOptionMap() {
 	loadOptionsFromDatabase()
 }
 
+// retiredTurnstileOptionKeys are the Cloudflare Turnstile settings GeeTest
+// replaced. Their rows stay in the database but are no longer read.
+var retiredTurnstileOptionKeys = []string{"TurnstileCheckEnabled", "TurnstileSiteKey", "TurnstileSecretKey"}
+
+var warnTurnstileRetired sync.Once
+
 func loadOptionsFromDatabase() {
 	requestPolicyOptionMutex.Lock()
 	defer requestPolicyOptionMutex.Unlock()
@@ -210,7 +218,11 @@ func loadOptionsFromDatabase() {
 	defer passkeyOptionMutex.Unlock()
 	options, _ := AllOption()
 	passkeyOptions := make(map[string]string)
+	turnstileWasEnabled := false
 	for _, option := range options {
+		if option.Key == "TurnstileCheckEnabled" && option.Value == "true" {
+			turnstileWasEnabled = true
+		}
 		if IsPasskeyDomainOption(option.Key) {
 			passkeyOptions[option.Key] = option.Value
 			continue
@@ -221,6 +233,13 @@ func loadOptionsFromDatabase() {
 		}
 	}
 	applyPasskeyDomainOptions(passkeyOptions)
+	// An upgraded site that relied on Turnstile is unprotected until an
+	// administrator configures GeeTest.
+	if turnstileWasEnabled && !common.GeetestCheckEnabled {
+		warnTurnstileRetired.Do(func() {
+			common.SysError(common.LogText("Cloudflare Turnstile was enabled but has been replaced by GeeTest; login and registration have no human verification until GeeTest is enabled in the Bot Protection settings"))
+		})
+	}
 }
 
 func SyncOptions(frequency int) {
@@ -371,7 +390,7 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
-	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey {
+	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey || slices.Contains(retiredTurnstileOptionKeys, key) {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()
@@ -417,8 +436,8 @@ func updateOptionMap(key string, value string) (err error) {
 			common.WeChatAuthEnabled = boolValue
 		case "TelegramOAuthEnabled":
 			common.TelegramOAuthEnabled = boolValue
-		case "TurnstileCheckEnabled":
-			common.TurnstileCheckEnabled = boolValue
+		case "GeetestCheckEnabled":
+			common.GeetestCheckEnabled = boolValue
 		case "RegisterEnabled":
 			common.RegisterEnabled = boolValue
 		case "EmailDomainRestrictionEnabled":
@@ -631,10 +650,10 @@ func updateOptionMap(key string, value string) (err error) {
 		common.TelegramBotToken = value
 	case "TelegramBotName":
 		common.TelegramBotName = value
-	case "TurnstileSiteKey":
-		common.TurnstileSiteKey = value
-	case "TurnstileSecretKey":
-		common.TurnstileSecretKey = value
+	case "GeetestCaptchaId":
+		common.GeetestCaptchaId = value
+	case "GeetestCaptchaKey":
+		common.GeetestCaptchaKey = value
 	case "QuotaForNewUser":
 		common.QuotaForNewUser, _ = strconv.Atoi(value)
 	case "QuotaForInviter":

@@ -108,9 +108,9 @@ const AUTH_SECTIONS = [
     build: (settings: AuthSettings) => (
       <BotProtectionSection
         defaultValues={{
-          TurnstileCheckEnabled: settings.TurnstileCheckEnabled,
-          TurnstileSiteKey: settings.TurnstileSiteKey,
-          TurnstileSecretKey: settings.TurnstileSecretKey,
+          GeetestCheckEnabled: settings.GeetestCheckEnabled,
+          GeetestCaptchaId: settings.GeetestCaptchaId,
+          GeetestCaptchaKey: settings.GeetestCaptchaKey,
         }}
       />
     ),
