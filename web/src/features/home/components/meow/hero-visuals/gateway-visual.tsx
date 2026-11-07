@@ -97,8 +97,9 @@ const EDGES = [
   })),
 ]
 
+// No backdrop-filter, as with HERO_GLASS: it makes Firefox scrolling stutter.
 const NODE_GLASS =
-  'border border-white/80 bg-white/75 shadow-[0_10px_24px_-14px_rgba(30,27,23,0.35)] backdrop-blur-md dark:border-white/10 dark:bg-white/[0.08] dark:shadow-none'
+  'isolate border border-white/80 bg-white/75 shadow-[0_10px_24px_-14px_rgba(30,27,23,0.35)] dark:border-white/10 dark:bg-white/[0.08] dark:shadow-none'
 
 type GatewayVisualProps = {
   className?: string

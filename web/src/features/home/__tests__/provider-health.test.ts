@@ -18,7 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { expect, test } from 'vitest'
 
-import { summarizeProviderHealth } from '../lib/provider-health'
+import {
+  canShowLiveStatus,
+  summarizeProviderHealth,
+} from '../lib/provider-health'
 
 test('a provider with no measured models reports null', () => {
   const health = summarizeProviderHealth(
@@ -69,4 +72,28 @@ test('missing latency does not drag the latency average to zero', () => {
     []
   )
   expect(health.claude?.avgLatencyMs).toBe(1200)
+})
+
+test('live status shows when every provider is at or above 95%', () => {
+  const health = {
+    claude: { successRate: 95, avgLatencyMs: 5000 },
+    gpt: { successRate: 99.5, avgLatencyMs: 9000 },
+  }
+  expect(canShowLiveStatus(health)).toBe(true)
+})
+
+test('live status hides when any provider is below 95%', () => {
+  const health = {
+    claude: { successRate: 99, avgLatencyMs: 5000 },
+    gpt: { successRate: 94.99, avgLatencyMs: 9000 },
+  }
+  expect(canShowLiveStatus(health)).toBe(false)
+})
+
+test('live status hides when a provider has no measurements', () => {
+  const health = {
+    claude: { successRate: 99, avgLatencyMs: 5000 },
+    gpt: null,
+  }
+  expect(canShowLiveStatus(health)).toBe(false)
 })

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -114,25 +114,18 @@ function StatCard(props: { label: string; value: string; accent?: boolean }) {
   )
 }
 
-/** Spend and request count over the last 24 hours. */
+/**
+ * Spend and request count over the last 24 hours. Fetched again, up to the
+ * current time, whenever the live balance shows new spend.
+ */
 function useUsage24h() {
-  const timeRange = useMemo(() => computeTimeRange(1), [])
+  const usedQuota = useAuthStore((state) => state.auth.user?.used_quota)
   const usageQuery = useQuery({
-    queryKey: [
-      'dashboard',
-      'overview',
-      'usage-24h',
-      timeRange.start_timestamp,
-      timeRange.end_timestamp,
-    ],
+    queryKey: ['dashboard', 'overview', 'usage-24h', usedQuota],
     queryFn: async () =>
-      requireServerSuccess(
-        await getUserQuotaDates({
-          start_timestamp: timeRange.start_timestamp,
-          end_timestamp: timeRange.end_timestamp,
-        })
-      ),
+      requireServerSuccess(await getUserQuotaDates(computeTimeRange(1))),
     staleTime: 60 * 1000,
+    placeholderData: keepPreviousData,
   })
 
   const usage = useMemo(() => {

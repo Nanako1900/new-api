@@ -67,7 +67,7 @@ export function MeowTools() {
             return (
               <li
                 key={tool.name}
-                className='flex min-w-0 items-center gap-2.5 rounded-2xl border border-white/75 bg-white/30 px-3.5 py-3 text-sm font-bold whitespace-nowrap shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_14px_28px_-20px_rgba(30,27,23,0.28)] backdrop-blur-xl backdrop-saturate-125 dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none'
+                className='flex min-w-0 items-center gap-2.5 rounded-2xl border border-white/75 bg-white/30 px-3.5 py-3 text-sm font-bold whitespace-nowrap shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_14px_28px_-20px_rgba(30,27,23,0.28)] dark:border-white/10 dark:bg-white/[0.04] dark:shadow-none'
               >
                 <span className='flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-white/60 dark:bg-white/10'>
                   {Icon ? (

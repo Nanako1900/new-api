@@ -273,42 +273,30 @@ body:not([data-theme-preset])
 }
 
 /*
- * Slow drift for the calico glows behind glass cards. Two paths so the
- * orange and dark glows never move in lockstep.
+ * Smooth scrolling, Firefox especially.
+ *
+ * The calico glows behind glass cards (`.meow-drift-a` orange, `.meow-drift-b`
+ * dark) stay still. They used to drift, too slowly to notice, and a moving
+ * blur has to be blurred again on every frame. The class names are kept as
+ * markers for the glows (the dark-mode rule further down uses them).
+ *
+ * Nothing uses backdrop-filter: behind the glass is flat page or these
+ * already-blurred glows, so it changes nothing you can see. In Firefox a
+ * backdrop-filter can turn off WebRender picture caching, worst of all on
+ * a fixed element like the header (bugs 1732817, 1779085), and then the
+ * page is redrawn on every scroll frame. The upstream public header, the
+ * footer and the playground's input toolbar still ask for one, so it is
+ * switched off here. The header pill
+ * gets a solid fill instead: without the blur, even a few percent of see-
+ * through leaves headings scrolling under it legible as a ghost.
  */
-@keyframes meow-drift-a {
-  0% {
-    transform: translate(0, 0) scale(1);
-  }
-  50% {
-    transform: translate(28px, 20px) scale(1.08);
-  }
-  100% {
-    transform: translate(-12px, 34px) scale(0.96);
-  }
+header nav.backdrop-blur-2xl,
+footer .backdrop-blur-sm,
+.meow-playground [data-slot='input-group-addon'] {
+  backdrop-filter: none;
 }
-@keyframes meow-drift-b {
-  0% {
-    transform: translate(0, 0) scale(1);
-  }
-  50% {
-    transform: translate(-26px, -18px) scale(1.06);
-  }
-  100% {
-    transform: translate(14px, -30px) scale(0.95);
-  }
-}
-.meow-drift-a {
-  animation: meow-drift-a 16s ease-in-out infinite alternate;
-}
-.meow-drift-b {
-  animation: meow-drift-b 19s ease-in-out infinite alternate;
-}
-@media (prefers-reduced-motion: reduce) {
-  .meow-drift-a,
-  .meow-drift-b {
-    animation: none;
-  }
+header nav.backdrop-blur-2xl {
+  background-color: var(--background);
 }
 
 /*
@@ -583,12 +571,12 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
  * Selectors only reach inside the wrapper, so other chat UIs are untouched.
  */
 .meow-playground [data-slot='input-group'] {
+  isolation: isolate;
   border-color: rgb(255 255 255 / 0.85);
   background: rgb(255 255 255 / 0.62);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.9),
     0 20px 40px -26px rgb(30 27 23 / 0.35);
-  backdrop-filter: blur(22px) saturate(1.2);
 }
 .dark .meow-playground [data-slot='input-group'] {
   border-color: rgb(255 255 255 / 0.1);
@@ -614,12 +602,12 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
   isolation: isolate;
 }
 .meow-auth :is([data-slot='auth-card'], [data-slot='auth-brand-ledge']) {
+  isolation: isolate;
   border: 1px solid rgb(255 255 255 / 0.85);
   background: rgb(255 255 255 / 0.66);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.9),
     0 30px 60px -36px rgb(30 27 23 / 0.35);
-  backdrop-filter: blur(22px) saturate(1.2);
 }
 .meow-auth [data-slot='auth-card'] {
   border-radius: 1.5rem;
@@ -903,6 +891,7 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
   #wallet-add-funds > [data-slot='card'],
   [data-meow-page] .overflow-hidden.rounded-lg.border:has(> .lg\:grid-cols-7)
 ) {
+  isolation: isolate;
   border-color: rgb(255 255 255 / 0.85);
   border-radius: 1.25rem;
   background-color: rgb(255 251 245 / 0.6);
@@ -910,7 +899,6 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
     0 0 0 1px rgb(255 255 255 / 0.85),
     inset 0 1px 0 rgb(255 255 255 / 0.9),
     0 24px 48px -30px rgb(30 27 23 / 0.3);
-  backdrop-filter: blur(22px) saturate(1.2);
 }
 .dark
   :is(
@@ -955,7 +943,6 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
   background: var(--meow-orange);
   opacity: 0.5;
   filter: blur(50px);
-  animation: meow-drift-a 16s ease-in-out infinite alternate;
 }
 :is(
   #wallet-add-funds,
@@ -968,7 +955,6 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
   background: var(--meow-ink);
   opacity: 0.22;
   filter: blur(54px);
-  animation: meow-drift-b 19s ease-in-out infinite alternate;
 }
 .dark
   :is(
@@ -978,20 +964,6 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
   )::after {
   background: #fff;
   opacity: 0.08;
-}
-@media (prefers-reduced-motion: reduce) {
-  :is(
-    #wallet-add-funds,
-    [data-meow-page]
-      :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
-  )::before,
-  :is(
-    #wallet-add-funds,
-    [data-meow-page]
-      :has(> .overflow-hidden.rounded-lg.border > .lg\:grid-cols-7)
-  )::after {
-    animation: none;
-  }
 }
 
 /*
