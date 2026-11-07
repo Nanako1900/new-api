@@ -60,11 +60,16 @@ const (
 	MsgEmailVerificationCode     = "email.verification.code"
 	MsgEmailVerificationValidity = "email.verification.validity"
 
+	MsgEmailRegistrationNoticeSubject = "email.registration_notice.subject"
+	MsgEmailRegistrationNoticeAttempt = "email.registration_notice.attempt"
+	MsgEmailRegistrationNoticeAdvice  = "email.registration_notice.advice"
+
 	MsgEmailPasswordResetSubject      = "email.password_reset.subject"
 	MsgEmailPasswordResetGreeting     = "email.password_reset.greeting"
-	MsgEmailPasswordResetLink         = "email.password_reset.link"
+	MsgEmailPasswordResetAction       = "email.password_reset.action"
 	MsgEmailPasswordResetLinkFallback = "email.password_reset.link_fallback"
 	MsgEmailPasswordResetValidity     = "email.password_reset.validity"
+	MsgEmailPasswordResetIgnore       = "email.password_reset.ignore"
 
 	MsgEmailBindingSubject     = "email.binding.subject"
 	MsgEmailBindingNewIntro    = "email.binding.new_intro"

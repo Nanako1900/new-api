@@ -24,8 +24,9 @@ import { api } from '@/lib/api'
 import {
   login,
   register,
-  sendEmailVerification,
   sendPasswordResetEmail,
+  startRegistrationEmail,
+  verifyRegistrationEmail,
 } from '../api'
 
 const captchaToken = JSON.stringify({
@@ -73,33 +74,56 @@ describe('captcha-guarded auth requests', () => {
     expect(sent[0].headers.get('X-Captcha-Token')).toBe(captchaToken)
   })
 
-  it('register sends the captcha token in a header and keeps it out of the body', async () => {
-    await register({
-      username: 'alice',
-      password: 'secret',
-      captcha: captchaToken,
-    })
+  it('starting the sign-up email check sends the captcha token only in a header', async () => {
+    await startRegistrationEmail('alice@example.com', captchaToken)
 
-    expect(sentUrl(sent[0])).toBe('/api/user/register')
+    expect(sentUrl(sent[0])).toBe('/api/user/register/email/start')
+    expect(sent[0].method).toBe('post')
     expect(sent[0].headers.get('X-Captcha-Token')).toBe(captchaToken)
     expect(JSON.parse(sent[0].data as string)).toEqual({
-      username: 'alice',
-      password: 'secret',
+      email: 'alice@example.com',
     })
   })
 
-  it.each([
-    ['email verification', sendEmailVerification, '/api/verification'],
-    ['password reset', sendPasswordResetEmail, '/api/reset_password'],
-  ])(
-    '%s sends the captcha token in a header and only the email in the URL',
-    async (_name, send, path) => {
-      await send('alice@example.com', captchaToken)
+  it('verifying the sign-up code sends the flow token and code without a captcha', async () => {
+    await verifyRegistrationEmail('flow-1', '123456')
 
-      expect(sentUrl(sent[0])).toBe(`${path}?email=alice%40example.com`)
-      expect(sent[0].headers.get('X-Captcha-Token')).toBe(captchaToken)
-    }
-  )
+    expect(sentUrl(sent[0])).toBe('/api/user/register/email/verify')
+    expect(sent[0].headers.has('X-Captcha-Token')).toBe(false)
+    expect(JSON.parse(sent[0].data as string)).toEqual({
+      flow_token: 'flow-1',
+      code: '123456',
+    })
+  })
+
+  it('register sends the registration token and no captcha', async () => {
+    await register({
+      username: 'alice',
+      password: 'Correct-Horse-9',
+      registration_token: 'flow-1',
+      aff_code: 'INVITE',
+    })
+
+    expect(sentUrl(sent[0])).toBe('/api/user/register')
+    expect(sent[0].headers.has('X-Captcha-Token')).toBe(false)
+    expect(JSON.parse(sent[0].data as string)).toEqual({
+      username: 'alice',
+      password: 'Correct-Horse-9',
+      registration_token: 'flow-1',
+      aff_code: 'INVITE',
+    })
+  })
+
+  it('asking for a password reset link posts the email as JSON and the captcha token only in a header', async () => {
+    await sendPasswordResetEmail('alice@example.com', captchaToken)
+
+    expect(sentUrl(sent[0])).toBe('/api/user/password-reset/start')
+    expect(sent[0].method).toBe('post')
+    expect(sent[0].headers.get('X-Captcha-Token')).toBe(captchaToken)
+    expect(JSON.parse(sent[0].data as string)).toEqual({
+      email: 'alice@example.com',
+    })
+  })
 
   it('without a captcha token, sends no captcha header', async () => {
     await sendPasswordResetEmail('alice@example.com')

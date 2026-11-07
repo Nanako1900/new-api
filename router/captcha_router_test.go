@@ -58,17 +58,27 @@ func TestAnonymousAccountRoutesRequireGeetest(t *testing.T) {
 		method string
 		target string
 	}{
-		{method: http.MethodGet, target: "/api/verification?email=alice%40example.com"},
-		{method: http.MethodGet, target: "/api/reset_password?email=alice%40example.com"},
-		{method: http.MethodPost, target: "/api/user/register"},
+		{method: http.MethodPost, target: "/api/user/register/email/start"},
+		{method: http.MethodPost, target: "/api/user/password-reset/start"},
 		{method: http.MethodPost, target: "/api/user/login"},
 	}
 	for _, test := range tests {
 		t.Run(test.method+" "+test.target, func(t *testing.T) {
-			reply := serveCaptchaRouteRequest(t, engine, test.method, test.target, `{"username":"alice","password":"secret-password"}`)
+			reply := serveCaptchaRouteRequest(t, engine, test.method, test.target, `{"username":"alice","password":"secret-password","email":"alice@example.com"}`)
 
 			assert.False(t, reply.Success)
 			assert.Equal(t, "CAPTCHA_REQUIRED", reply.Code)
+		})
+	}
+
+	// Registration, email verification and password reset completion spend a
+	// token that already passed the captcha when its email was requested.
+	for _, target := range []string{"/api/user/register", "/api/user/register/email/verify", "/api/user/password-reset/verify", "/api/user/password-reset/complete"} {
+		t.Run("no captcha "+target, func(t *testing.T) {
+			reply := serveCaptchaRouteRequest(t, engine, http.MethodPost, target, `{}`)
+
+			assert.False(t, reply.Success)
+			assert.NotEqual(t, "CAPTCHA_REQUIRED", reply.Code)
 		})
 	}
 }

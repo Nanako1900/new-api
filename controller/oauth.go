@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -499,8 +500,9 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	} else {
 		user.DisplayName = provider.GetName() + " User"
 	}
-	if oauthUser.Email != "" {
-		user.Email = model.NormalizeEmail(oauthUser.Email)
+	var emailDropReason string
+	user.Email, emailDropReason = oauthSignUpEmail(c, provider, oauthUser, token)
+	if user.Email != "" {
 		if err := model.EnsureEmailAvailable(user.Email, 0); err != nil {
 			if errors.Is(err, model.ErrEmailAlreadyTaken) {
 				return nil, nil, &OAuthEmailAlreadyTakenError{}
@@ -575,7 +577,44 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		user.FinalizeOAuthUserCreation(inviterId)
 	}
 
+	if emailDropReason != "" {
+		common.SysLog(common.LogText("[OAuth] New %s account %d was created without the provider email: %s", provider.GetName(), user.Id, emailDropReason))
+	}
 	return user, nil, nil
+}
+
+// oauthSignUpEmail returns the provider email a new account may store: an
+// address the provider has verified for this account that also meets the site's
+// email policy. Any other address yields "" and the reason it was left out, so
+// the account is created without an email and the user can bind one later
+// through email verification. An address that is left out never reaches the
+// availability check, so it can neither reveal nor block another account's.
+func oauthSignUpEmail(c *gin.Context, provider oauth.Provider, oauthUser *oauth.OAuthUser, token *oauth.OAuthToken) (string, string) {
+	if oauthUser.Email == "" {
+		return "", ""
+	}
+	// Lowercasing can fold a non-ASCII letter into an ASCII one, which would
+	// store an address other than the one the provider verified.
+	if strings.ContainsFunc(oauthUser.Email, func(r rune) bool { return r > unicode.MaxASCII }) {
+		return "", "non_ascii_address"
+	}
+	verified := oauthUser.EmailVerified
+	if emailProvider, ok := provider.(oauth.VerifiedEmailProvider); ok && !verified {
+		emails, err := emailProvider.GetVerifiedEmails(c.Request.Context(), token)
+		if err != nil {
+			return "", "verified_emails_unavailable"
+		}
+		providerEmail := model.NormalizeEmail(oauthUser.Email)
+		verified = slices.ContainsFunc(emails, func(email string) bool { return model.NormalizeEmail(email) == providerEmail })
+	}
+	if !verified {
+		return "", "unverified"
+	}
+	email, err := service.ValidateAccountEmail(oauthUser.Email)
+	if err != nil {
+		return "", "email_policy"
+	}
+	return email, ""
 }
 
 // recordLegacyGitHubBindingAudit records the outcome of a legacy GitHub binding

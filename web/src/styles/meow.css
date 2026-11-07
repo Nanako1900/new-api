@@ -593,41 +593,38 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
 }
 
 /*
- * Sign-in, sign-up and other auth pages (upstream AuthLayout carries
- * .meow-auth): the form sits on a frosted-glass card over the calico
- * glows, and the brand in the corner uses the square logo tile.
+ * Sign-in, sign-up and other auth pages (AuthLayout carries .meow-auth and
+ * names its parts with data-slot): the form sits on a frosted-glass card
+ * over the calico glows, the brand uses the square logo tile, and on large
+ * screens the brand panel's sleeping cat lies on a smaller glass ledge.
  */
 .meow-auth {
   isolation: isolate;
 }
-.meow-auth > .container > div {
+.meow-auth :is([data-slot='auth-card'], [data-slot='auth-brand-ledge']) {
   isolation: isolate;
-  margin-block: 1.5rem;
   border: 1px solid rgb(255 255 255 / 0.85);
-  border-radius: 1.5rem;
   background: rgb(255 255 255 / 0.66);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.9),
     0 30px 60px -36px rgb(30 27 23 / 0.35);
 }
-.dark .meow-auth > .container > div {
+.meow-auth [data-slot='auth-card'] {
+  border-radius: 1.5rem;
+}
+.meow-auth [data-slot='auth-brand-ledge'] {
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.4);
+}
+.dark .meow-auth :is([data-slot='auth-card'], [data-slot='auth-brand-ledge']) {
   border-color: rgb(255 255 255 / 0.1);
   background: rgb(255 255 255 / 0.05);
   box-shadow: none;
 }
-@media (max-width: 639px) {
-  .meow-auth > .container > div {
-    width: auto;
-    margin-inline: 1rem;
-  }
-}
-.meow-auth > a > div:first-child,
-.meow-auth > a > div:first-child > img {
-  width: 2.25rem;
-  height: 2.25rem;
+.meow-auth [data-slot='auth-brand-logo'] {
   border-radius: 0.6rem;
 }
-.meow-auth > a h1 {
+.meow-auth [data-slot='auth-brand-name'] {
   font-weight: 800;
   letter-spacing: -0.02em;
 }

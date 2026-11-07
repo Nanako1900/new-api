@@ -16,21 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, useSearch } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
+import { z } from 'zod'
 
-import {
-  ResetPasswordConfirm,
-  type ResetPasswordSearchParams,
-} from '@/features/auth/reset-password-confirm'
+import { ResetPasswordConfirm } from '@/features/auth/reset-password-confirm'
+
+// Only the token is read; any other parameter of an older link is dropped
+// together with the token when the page clears the address bar.
+const searchSchema = z.object({
+  token: z.string().optional().catch(undefined),
+})
 
 export const Route = createFileRoute('/(auth)/user/reset')({
+  validateSearch: searchSchema,
   component: UserResetPassword,
 })
 
 function UserResetPassword() {
-  const search = useSearch({
-    from: '/(auth)/user/reset',
-  }) as ResetPasswordSearchParams
-
-  return <ResetPasswordConfirm email={search?.email} token={search?.token} />
+  const search = Route.useSearch()
+  return <ResetPasswordConfirm token={search.token} />
 }

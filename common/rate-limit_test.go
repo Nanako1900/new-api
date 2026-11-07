@@ -26,6 +26,23 @@ func TestInMemoryRateLimiterAllocatesTimestampsOnDemand(t *testing.T) {
 	assert.Contains(t, limiter.store, "client")
 }
 
+// A key's history must survive idle eviction for as long as its window lasts,
+// or an hourly cap resets once the key has been idle for the retention period.
+func TestInMemoryRateLimiterKeepsHistoryWithinRetention(t *testing.T) {
+	var limiter InMemoryRateLimiter
+	limiter.Init(time.Hour)
+	for range 5 {
+		require.True(t, limiter.Request("address", 5, 3600))
+	}
+	require.False(t, limiter.Request("address", 5, 3600))
+
+	limiter.deleteExpiredEntries(time.Now().Add(21 * time.Minute))
+	assert.False(t, limiter.Request("address", 5, 3600), "history kept within the retention period")
+
+	limiter.deleteExpiredEntries(time.Now().Add(time.Hour + time.Second))
+	assert.NotContains(t, limiter.store, "address", "idle keys go once no window can still use them")
+}
+
 func TestInMemoryRateLimiterEnforcesWindowBoundary(t *testing.T) {
 	var queue rateLimitQueue
 	queue.append(100)

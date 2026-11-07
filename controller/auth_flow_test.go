@@ -825,6 +825,7 @@ type legacyGitHubOAuthProvider struct {
 	authFlowTestOAuthProvider
 	providerUserID     string
 	legacyID           string
+	profileEmail       string
 	verifiedEmails     []string
 	verifiedEmailsErr  error
 	verifiedEmailCalls int
@@ -832,7 +833,7 @@ type legacyGitHubOAuthProvider struct {
 
 func (*legacyGitHubOAuthProvider) GetName() string { return "GitHub" }
 func (provider *legacyGitHubOAuthProvider) GetUserInfo(context.Context, *oauth.OAuthToken) (*oauth.OAuthUser, error) {
-	return &oauth.OAuthUser{ProviderUserID: provider.providerUserID, Username: provider.legacyID, Extra: map[string]any{"legacy_id": provider.legacyID}}, nil
+	return &oauth.OAuthUser{ProviderUserID: provider.providerUserID, Username: provider.legacyID, Email: provider.profileEmail, Extra: map[string]any{"legacy_id": provider.legacyID}}, nil
 }
 func (provider *legacyGitHubOAuthProvider) GetVerifiedEmails(context.Context, *oauth.OAuthToken) ([]string, error) {
 	provider.verifiedEmailCalls++
@@ -1120,6 +1121,138 @@ func TestOAuthBindIgnoresLegacyGitHubUsernames(t *testing.T) {
 			}
 			assert.Equal(t, test.ownGitHubID, bound.GitHubId)
 			assert.Equal(t, "This GitHub account has already been bound", result.Message)
+		})
+	}
+}
+
+// TestOAuthSignUpKeepsOnlyVerifiedPolicyCompliantEmail covers the provider email
+// a new OAuth account stores. Only an address the provider has verified and the
+// site's email policy accepts is kept. Any other address is dropped before the
+// availability check, so the account is created without an email and an
+// unverified claim can neither reveal nor block an existing address.
+func TestOAuthSignUpKeepsOnlyVerifiedPolicyCompliantEmail(t *testing.T) {
+	const slug = "signup-email-test"
+	tests := []struct {
+		name              string
+		provider          string
+		userInfo          string
+		emailField        string
+		profileEmail      string
+		verifiedEmails    []string
+		verifiedEmailsErr error
+		domainWhitelist   []string
+		aliasRestricted   bool
+		takenEmail        string
+		expectEmail       string
+		expectRejected    bool
+		expectEmailCalls  int
+	}{
+		{name: "oidc verified email is kept", provider: "oidc", userInfo: `{"sub":"oidc-user","email":" New.User@Example.com ","email_verified":true}`, expectEmail: "new.user@example.com"},
+		{name: "oidc string true claim is kept", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com","email_verified":"true"}`, expectEmail: "user@example.com"},
+		{name: "oidc unverified email is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com","email_verified":false}`},
+		{name: "oidc email without claim is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com"}`},
+		{name: "oidc string false claim is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com","email_verified":"false"}`},
+		{name: "oidc numeric claim is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com","email_verified":1}`},
+		{name: "oidc non-ASCII address is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"\u212Aevin@example.com","email_verified":true}`},
+		{name: "oidc unverified email held by another account still registers", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"Victim@Example.com","email_verified":false}`, takenEmail: "victim@example.com"},
+		{name: "oidc verified email held by another account is rejected", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"Victim@Example.com","email_verified":true}`, takenEmail: "victim@example.com", expectRejected: true},
+		{name: "domain outside the whitelist is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@blocked.com","email_verified":true}`, domainWhitelist: []string{"example.com"}},
+		{name: "policy check runs before the availability check", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@blocked.com","email_verified":true}`, domainWhitelist: []string{"example.com"}, takenEmail: "user@blocked.com"},
+		{name: "alias address is dropped when aliases are restricted", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user+tag@example.com","email_verified":true}`, aliasRestricted: true},
+		{name: "address over 50 characters is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"` + strings.Repeat("a", 40) + `@example.com","email_verified":true}`},
+		{name: "custom verified claim next to a top-level email is kept", provider: "custom", emailField: "email", userInfo: `{"sub":"custom-user","email":"custom@example.com","email_verified":true}`, expectEmail: "custom@example.com"},
+		{name: "custom verified claim next to a nested email is kept", provider: "custom", emailField: "data.email", userInfo: `{"sub":"custom-user","data":{"email":"Custom@Example.com","email_verified":true}}`, expectEmail: "custom@example.com"},
+		{name: "custom email without claim is dropped", provider: "custom", emailField: "email", userInfo: `{"sub":"custom-user","email":"custom@example.com"}`},
+		{name: "custom claim beside another field does not verify the email", provider: "custom", emailField: "data.email", userInfo: `{"sub":"custom-user","email_verified":true,"data":{"email":"custom@example.com"}}`},
+		{name: "custom field using gjson syntax fails closed", provider: "custom", emailField: "data|email", userInfo: `{"sub":"custom-user","email_verified":true,"data":{"email":"custom@example.com"}}`},
+		{name: "github email in the verified list is kept", provider: "github", profileEmail: "Octo@Example.com", verifiedEmails: []string{"other@example.com", "octo@example.com"}, expectEmail: "octo@example.com", expectEmailCalls: 1},
+		{name: "github email missing from the verified list is dropped", provider: "github", profileEmail: "octo@example.com", verifiedEmails: []string{"other@example.com"}, expectEmailCalls: 1},
+		{name: "github verified list failure drops the email", provider: "github", profileEmail: "octo@example.com", verifiedEmailsErr: errors.New("emails unavailable"), expectEmailCalls: 1},
+		{name: "github account without a profile email skips the lookup", provider: "github", verifiedEmails: []string{"octo@example.com"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setupSecurityEnrollmentTest(t)
+			previousRegister := common.RegisterEnabled
+			previousDomainRestricted, previousWhitelist := common.EmailDomainRestrictionEnabled, common.EmailDomainWhitelist
+			previousAliasRestricted := common.EmailAliasRestrictionEnabled
+			common.RegisterEnabled = true
+			common.EmailDomainRestrictionEnabled, common.EmailDomainWhitelist = len(test.domainWhitelist) > 0, test.domainWhitelist
+			common.EmailAliasRestrictionEnabled = test.aliasRestricted
+			t.Cleanup(func() {
+				common.RegisterEnabled = previousRegister
+				common.EmailDomainRestrictionEnabled, common.EmailDomainWhitelist = previousDomainRestricted, previousWhitelist
+				common.EmailAliasRestrictionEnabled = previousAliasRestricted
+			})
+			if test.takenEmail != "" {
+				require.NoError(t, model.DB.Create(&model.User{Username: "email-owner", Email: test.takenEmail, Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "email-owner", AuthVersion: 1}).Error)
+			}
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/token" {
+					_, _ = w.Write([]byte(`{"access_token":"provider-token","token_type":"Bearer"}`))
+					return
+				}
+				_, _ = w.Write([]byte(test.userInfo))
+			}))
+			t.Cleanup(upstream.Close)
+			var github *legacyGitHubOAuthProvider
+			switch test.provider {
+			case "oidc":
+				settings := system_setting.GetOIDCSettings()
+				previousSettings := *settings
+				*settings = system_setting.OIDCSettings{Enabled: true, ClientId: "client", ClientSecret: "secret", TokenEndpoint: upstream.URL + "/token", UserInfoEndpoint: upstream.URL + "/userinfo"}
+				t.Cleanup(func() { *settings = previousSettings })
+				oauth.Register(slug, &oauth.OIDCProvider{})
+			case "custom":
+				require.NoError(t, oauth.RegisterCustom(slug, oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{
+					Id: 42, Slug: slug, Name: "Custom", Enabled: true, ClientId: "client", ClientSecret: "secret", UserIdField: "sub", EmailField: test.emailField,
+					TokenEndpoint: upstream.URL + "/token", UserInfoEndpoint: upstream.URL + "/userinfo",
+				})))
+			case "github":
+				github = &legacyGitHubOAuthProvider{providerUserID: "900001", legacyID: "octocat", profileEmail: test.profileEmail, verifiedEmails: test.verifiedEmails, verifiedEmailsErr: test.verifiedEmailsErr}
+				oauth.Register(slug, github)
+			}
+			t.Cleanup(func() { oauth.Unregister(slug) })
+			token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{Purpose: model.AuthFlowPurposeOAuth, Provider: slug, Intent: model.AuthFlowIntentLogin, Payload: `{}`, ExpiresAt: time.Now().Add(time.Minute)})
+			require.NoError(t, err)
+			var usersBefore int64
+			require.NoError(t, model.DB.Model(&model.User{}).Count(&usersBefore).Error)
+			router := gin.New()
+			router.GET("/api/oauth/:provider", HandleOAuth)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/oauth/"+slug+"?state="+token+"&code=provider-code", nil))
+
+			var result struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+				Data    struct {
+					User struct {
+						Id int `json:"id"`
+					} `json:"user"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			if github != nil {
+				assert.Equal(t, test.expectEmailCalls, github.verifiedEmailCalls)
+			}
+			var usersAfter int64
+			require.NoError(t, model.DB.Model(&model.User{}).Count(&usersAfter).Error)
+			if test.expectRejected {
+				assert.False(t, result.Success)
+				assert.Equal(t, "Email address is already in use", result.Message)
+				assert.Equal(t, usersBefore, usersAfter, "no account is created")
+				return
+			}
+			require.True(t, result.Success, response.Body.String())
+			var created model.User
+			require.NoError(t, model.DB.First(&created, result.Data.User.Id).Error)
+			assert.Equal(t, test.expectEmail, created.Email)
+			if test.takenEmail != "" {
+				count, err := model.CountUsersByEmail(test.takenEmail)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, count, "the existing owner keeps the address")
+			}
 		})
 	}
 }

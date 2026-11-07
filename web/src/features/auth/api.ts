@@ -40,6 +40,9 @@ import type {
   Login2FAResponse,
   TwoFAPayload,
   RegisterPayload,
+  PasswordResetLink,
+  RegistrationEmailFlow,
+  VerifiedRegistrationEmail,
   ApiResponse,
 } from './types'
 
@@ -148,15 +151,43 @@ export async function logout(): Promise<ApiResponse> {
 // Password Management
 // ----------------------------------------------------------------------------
 
-// Send password reset email
+// Ask for a password reset link. The answer is the same whether or not an
+// account uses the address; the email stays out of the URL.
 export async function sendPasswordResetEmail(
   email: string,
   captcha?: string
 ): Promise<ApiResponse> {
-  const res = await api.get('/api/reset_password', {
-    params: { email },
-    headers: captchaHeaders(captcha),
-  })
+  const res = await api.post(
+    '/api/user/password-reset/start',
+    { email },
+    { skipAuthRefresh: true, headers: captchaHeaders(captcha) }
+  )
+  return res.data
+}
+
+// Check a reset link token without spending it; answers the masked address.
+export async function verifyPasswordResetToken(
+  token: string
+): Promise<ApiResponse<PasswordResetLink>> {
+  const res = await api.post(
+    '/api/user/password-reset/verify',
+    { token },
+    { skipAuthRefresh: true }
+  )
+  return res.data
+}
+
+// Set the new password and spend the token. Signs out every session and does
+// not sign the user in.
+export async function completePasswordReset(
+  token: string,
+  password: string
+): Promise<ApiResponse> {
+  const res = await api.post(
+    '/api/user/password-reset/complete',
+    { token, password },
+    { skipAuthRefresh: true }
+  )
   return res.data
 }
 
@@ -247,23 +278,40 @@ export async function telegramLogin(
 // Registration
 // ----------------------------------------------------------------------------
 
-// User registration
-export async function register(payload: RegisterPayload): Promise<ApiResponse> {
-  const { captcha, ...body } = payload
-  const res = await api.post('/api/user/register', body, {
-    headers: captchaHeaders(captcha),
-  })
+// Start the email check of a password sign-up. The answer has the same shape
+// whether or not the address is already registered.
+export async function startRegistrationEmail(
+  email: string,
+  captcha?: string
+): Promise<ApiResponse<RegistrationEmailFlow>> {
+  const res = await api.post(
+    '/api/user/register/email/start',
+    { email },
+    { skipAuthRefresh: true, headers: captchaHeaders(captcha) }
+  )
   return res.data
 }
 
-// Send email verification code
-export async function sendEmailVerification(
-  email: string,
-  captcha?: string
-): Promise<ApiResponse> {
-  const res = await api.get('/api/verification', {
-    params: { email },
-    headers: captchaHeaders(captcha),
+// Confirm the 6-digit code; the flow token then becomes the registration token.
+export async function verifyRegistrationEmail(
+  flowToken: string,
+  code: string
+): Promise<ApiResponse<VerifiedRegistrationEmail>> {
+  const res = await api.post(
+    '/api/user/register/email/verify',
+    { flow_token: flowToken, code },
+    { skipAuthRefresh: true }
+  )
+  return res.data
+}
+
+// Create the account with a verified registration token; a success signs the
+// user in and answers like login (session bundle or verification challenge).
+export async function register(
+  payload: RegisterPayload
+): Promise<LoginResponse> {
+  const res = await api.post<LoginResponse>('/api/user/register', payload, {
+    skipAuthRefresh: true,
   })
   return res.data
 }

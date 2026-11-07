@@ -16,51 +16,38 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link } from '@tanstack/react-router'
-import { useTranslation } from 'react-i18next'
+import type { ReactNode } from 'react'
 
-import { Skeleton } from '@/components/ui/skeleton'
-import { useSystemConfig } from '@/hooks/use-system-config'
-
-// MeowAPI: calico glows behind the auth forms.
+import { AuthBrandLink, AuthBrandPanel } from './components/auth-brand-panel'
+// MeowAPI: calico glows behind the auth pages.
 import { MeowAuthBackdrop } from './components/meow-auth-backdrop'
 
 type AuthLayoutProps = {
-  children: React.ReactNode
+  children: ReactNode
 }
 
-export function AuthLayout({ children }: AuthLayoutProps) {
-  const { t } = useTranslation()
-  const { systemName, logo, loading } = useSystemConfig()
-
+/**
+ * Split layout of the sign-in, sign-up, password and verification pages: the
+ * brand panel on the left from `lg` up, the form on a glass card on the right.
+ * Smaller screens show a compact brand header above the form.
+ */
+export function AuthLayout(props: AuthLayoutProps) {
   return (
-    <div className='meow-auth relative grid h-svh max-w-none'>
+    <div data-slot='auth-layout' className='meow-auth relative flex min-h-svh'>
       <MeowAuthBackdrop />
-      <Link
-        to='/'
-        className='absolute top-4 left-4 z-10 flex items-center gap-2 transition-opacity hover:opacity-80 sm:top-8 sm:left-8'
-      >
-        <div className='relative h-8 w-8'>
-          {loading ? (
-            <Skeleton className='absolute inset-0 rounded-full' />
-          ) : (
-            <img
-              src={logo}
-              alt={t('Logo')}
-              className='h-8 w-8 rounded-full object-cover'
-            />
-          )}
-        </div>
-        {loading ? (
-          <Skeleton className='h-6 w-24' />
-        ) : (
-          <h1 className='text-xl font-medium'>{systemName}</h1>
-        )}
-      </Link>
-      <div className='container flex items-center pt-16 sm:pt-0'>
-        <div className='mx-auto flex w-full flex-col justify-center space-y-2 px-4 py-8 sm:w-[480px] sm:p-8'>
-          {children}
-        </div>
+      <AuthBrandPanel />
+      <div className='flex min-w-0 flex-1 flex-col'>
+        <header className='px-4 pt-6 sm:px-8 lg:hidden'>
+          <AuthBrandLink />
+        </header>
+        <main className='flex flex-1 items-center justify-center px-4 py-8 sm:px-8'>
+          <div
+            data-slot='auth-card'
+            className='flex w-full max-w-[440px] flex-col gap-6 p-6 sm:p-8'
+          >
+            {props.children}
+          </div>
+        </main>
       </div>
     </div>
   )
