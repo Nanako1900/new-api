@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type HomeProvider, providerOf } from './provider-models'
+import {
+  HOME_PROVIDERS,
+  type HomeProvider,
+  providerOf,
+} from './provider-models'
 
 type PerfModel = {
   model_name: string
@@ -34,6 +38,23 @@ export type ProviderHealth = {
   /** 0-100 */
   successRate: number
   avgLatencyMs: number
+}
+
+/** The lowest success rate (0-100) the home page still shows live numbers for. */
+export const LIVE_STATUS_MIN_SUCCESS_RATE = 95
+
+/**
+ * Whether the home status bar shows live numbers: every home provider has
+ * measurements and none is below the minimum success rate. Otherwise the
+ * bar shows the service promises instead.
+ */
+export function canShowLiveStatus(
+  health: Record<HomeProvider, ProviderHealth | null>
+): health is Record<HomeProvider, ProviderHealth> {
+  return HOME_PROVIDERS.every((provider) => {
+    const item = health[provider]
+    return item !== null && item.successRate >= LIVE_STATUS_MIN_SUCCESS_RATE
+  })
 }
 
 /**
