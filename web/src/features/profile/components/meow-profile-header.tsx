@@ -20,6 +20,7 @@ import { Pencil } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { RollingNumber } from '@/components/rolling-number'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -73,7 +74,8 @@ function CardStat(props: {
  * holding the account on the left and its balance, usage and requests on
  * the right once the card is 56rem wide (below the account when narrower,
  * whatever the sidebar does). Same props and content as the original
- * `ProfileHeader`; the numbers stay live while the page is open.
+ * `ProfileHeader`; the numbers stay live while the page is open and roll
+ * when they change.
  */
 export function MeowProfileHeader(props: MeowProfileHeaderProps) {
   const { t } = useTranslation()
@@ -175,14 +177,25 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
         <dl className='grid shrink-0 grid-cols-3 divide-x divide-white/10 rounded-[18px] bg-white/[0.06] py-4 ring-1 ring-white/10 @4xl:grid-cols-[repeat(3,minmax(8.5rem,auto))] @4xl:py-5'>
           <CardStat
             label={t('Current Balance')}
-            value={balance}
+            value={<RollingNumber value={totals.quota} format={formatQuota} />}
             title={balance}
             accent
           />
-          <CardStat label={t('Total Usage')} value={usage} title={usage} />
+          <CardStat
+            label={t('Total Usage')}
+            value={
+              <RollingNumber value={totals.usedQuota} format={formatQuota} />
+            }
+            title={usage}
+          />
           <CardStat
             label={t('API Requests')}
-            value={requests}
+            value={
+              <RollingNumber
+                value={totals.requestCount}
+                format={formatCompactNumber}
+              />
+            }
             title={requests}
           />
         </dl>

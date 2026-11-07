@@ -300,6 +300,67 @@ header nav.backdrop-blur-2xl {
 }
 
 /*
+ * Rolling numbers (components/rolling-number.tsx): a changed character
+ * slides in from below when the value grows (from above when it shrinks)
+ * while the old one slides out the other way, both fading, like an
+ * odometer. Reduced motion swaps the characters without moving.
+ */
+@keyframes meow-roll-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(0.6em);
+  }
+}
+@keyframes meow-roll-out-up {
+  to {
+    opacity: 0;
+    transform: translateY(-0.6em);
+  }
+}
+@keyframes meow-roll-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-0.6em);
+  }
+}
+@keyframes meow-roll-out-down {
+  to {
+    opacity: 0;
+    transform: translateY(0.6em);
+  }
+}
+.meow-roll-in-up,
+.meow-roll-out-up,
+.meow-roll-in-down,
+.meow-roll-out-down {
+  animation-duration: 0.55s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+.meow-roll-in-up {
+  animation-name: meow-roll-in-up;
+}
+.meow-roll-out-up {
+  animation-name: meow-roll-out-up;
+}
+.meow-roll-in-down {
+  animation-name: meow-roll-in-down;
+}
+.meow-roll-out-down {
+  animation-name: meow-roll-out-down;
+}
+@media (prefers-reduced-motion: reduce) {
+  .meow-roll-in-up,
+  .meow-roll-in-down {
+    animation: none;
+  }
+  .meow-roll-out-up,
+  .meow-roll-out-down {
+    display: none;
+  }
+}
+
+/*
  * Sleeping cat (components/cat-art.tsx): the tail layer swings from the
  * point where it comes out from behind the cat's rear (percentages of the
  * drawing, so it holds at any size).

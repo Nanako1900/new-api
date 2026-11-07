@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { type ReactNode, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Main } from '@/components/layout'
+import { RollingNumber } from '@/components/rolling-number'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useProviderHealth } from '@/features/home/hooks/use-provider-health'
 import { HOME_PROVIDERS } from '@/features/home/lib/provider-models'
@@ -91,7 +92,11 @@ function ProviderStatusPills() {
   )
 }
 
-function StatCard(props: { label: string; value: string; accent?: boolean }) {
+function StatCard(props: {
+  label: string
+  value: ReactNode
+  accent?: boolean
+}) {
   return (
     <div className='bg-card border-border flex h-full flex-col justify-between gap-4 rounded-[22px] border p-6'>
       <span className='text-muted-foreground text-sm font-bold'>
@@ -173,14 +178,29 @@ export function MeowOverview() {
             <div className='lg:col-span-3'>
               <StatCard
                 label={t('Spend (24h)')}
-                value={isLoading ? '—' : formatQuota(usage.quota)}
+                value={
+                  isLoading ? (
+                    '—'
+                  ) : (
+                    <RollingNumber value={usage.quota} format={formatQuota} />
+                  )
+                }
                 accent
               />
             </div>
             <div className='lg:col-span-3'>
               <StatCard
                 label={t('Requests (24h)')}
-                value={isLoading ? '—' : formatNumber(usage.count, locale)}
+                value={
+                  isLoading ? (
+                    '—'
+                  ) : (
+                    <RollingNumber
+                      value={usage.count}
+                      format={(count) => formatNumber(count, locale)}
+                    />
+                  )
+                }
               />
             </div>
           </div>
