@@ -95,6 +95,8 @@ func ValidateConsoleSettings(settingsStr string, settingType string) error {
 		return validateApiInfo(settingsStr)
 	case "Announcements":
 		return validateAnnouncements(settingsStr)
+	case "Alerts":
+		return validateAlerts(settingsStr)
 	case "FAQ":
 		return validateFAQ(settingsStr)
 	case "UptimeKumaGroups":
