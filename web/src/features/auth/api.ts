@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import axios from 'axios'
 
 import { api, refreshAuthentication, type RefreshOutcome } from '@/lib/api'
+import { captchaHeaders } from '@/lib/captcha'
 import { AuthOperationError } from '@/lib/secure-verification'
 import {
   getServerErrorMessageKey,
@@ -52,7 +53,6 @@ import type {
 
 // User login with username and password
 export async function login(payload: LoginPayload): Promise<LoginResponse> {
-  const turnstile = payload.turnstile ?? ''
   try {
     let passwordFields:
       | { password: string }
@@ -67,12 +67,12 @@ export async function login(payload: LoginPayload): Promise<LoginResponse> {
       passwordFields = { password: payload.password }
     }
     const res = await api.post<LoginResponse>(
-      `/api/user/login?turnstile=${turnstile}`,
+      '/api/user/login',
       {
         username: payload.username,
         ...passwordFields,
       },
-      { skipAuthRefresh: true }
+      { skipAuthRefresh: true, headers: captchaHeaders(payload.captcha) }
     )
     if (payload.passwordEncryptionEnabled && !res.data?.success) {
       clearPasswordEncryptionCache()
@@ -151,10 +151,11 @@ export async function logout(): Promise<ApiResponse> {
 // Send password reset email
 export async function sendPasswordResetEmail(
   email: string,
-  turnstile?: string
+  captcha?: string
 ): Promise<ApiResponse> {
   const res = await api.get('/api/reset_password', {
-    params: { email, turnstile },
+    params: { email },
+    headers: captchaHeaders(captcha),
   })
   return res.data
 }
@@ -248,8 +249,9 @@ export async function telegramLogin(
 
 // User registration
 export async function register(payload: RegisterPayload): Promise<ApiResponse> {
-  const res = await api.post(`/api/user/register`, payload, {
-    params: { turnstile: payload.turnstile ?? '' },
+  const { captcha, ...body } = payload
+  const res = await api.post('/api/user/register', body, {
+    headers: captchaHeaders(captcha),
   })
   return res.data
 }
@@ -257,10 +259,11 @@ export async function register(payload: RegisterPayload): Promise<ApiResponse> {
 // Send email verification code
 export async function sendEmailVerification(
   email: string,
-  turnstile?: string
+  captcha?: string
 ): Promise<ApiResponse> {
   const res = await api.get('/api/verification', {
-    params: { email, turnstile },
+    params: { email },
+    headers: captchaHeaders(captcha),
   })
   return res.data
 }

@@ -21,7 +21,7 @@ For commercial licensing, please contact support@quantumnous.com
  *
  * Signs in a sample user in memory and answers the signed-in API calls
  * with sample data, so console pages can be reviewed without logging in
- * (the live Turnstile check only accepts the production hostname). Public
+ * (the live human verification only accepts the production hostname). Public
  * endpoints still go to the real backend. Nothing is written anywhere:
  * every write returns a "not saved" message.
  *

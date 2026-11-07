@@ -44,9 +44,9 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const botProtectionSchema = z.object({
-  TurnstileCheckEnabled: z.boolean(),
-  TurnstileSiteKey: z.string().optional(),
-  TurnstileSecretKey: z.string().optional(),
+  GeetestCheckEnabled: z.boolean(),
+  GeetestCaptchaId: z.string().optional(),
+  GeetestCaptchaKey: z.string().optional(),
 })
 
 type BotProtectionFormValues = z.infer<typeof botProtectionSchema>
@@ -75,13 +75,14 @@ export function BotProtectionSection({
       ([key, value]) =>
         value !== defaultValues[key as keyof BotProtectionFormValues]
     )
-    const turnstileEnableUpdate = updates.find(
-      ([key, value]) => key === 'TurnstileCheckEnabled' && value === true
+    // The server refuses to enable GeeTest before both keys are saved.
+    const enableUpdate = updates.find(
+      ([key, value]) => key === 'GeetestCheckEnabled' && value === true
     )
-    const orderedUpdates = turnstileEnableUpdate
+    const orderedUpdates = enableUpdate
       ? [
-          ...updates.filter(([key]) => key !== 'TurnstileCheckEnabled'),
-          turnstileEnableUpdate,
+          ...updates.filter(([key]) => key !== 'GeetestCheckEnabled'),
+          enableUpdate,
         ]
       : updates
 
@@ -100,14 +101,14 @@ export function BotProtectionSection({
           />
           <FormField
             control={form.control}
-            name='TurnstileCheckEnabled'
+            name='GeetestCheckEnabled'
             render={({ field }) => (
               <SettingsSwitchItem>
                 <SettingsSwitchContent>
-                  <FormLabel>{t('Enable Turnstile')}</FormLabel>
+                  <FormLabel>{t('Enable GeeTest')}</FormLabel>
                   <FormDescription>
                     {t(
-                      'Protect login and registration with Cloudflare Turnstile'
+                      'Protect login, registration, email codes, password reset and check-in with GeeTest CAPTCHA v4'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>
@@ -123,13 +124,13 @@ export function BotProtectionSection({
 
           <FormField
             control={form.control}
-            name='TurnstileSiteKey'
+            name='GeetestCaptchaId'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('Site Key')}</FormLabel>
+                <FormLabel>{t('Captcha ID')}</FormLabel>
                 <FormControl>
                   <Input
-                    placeholder={t('Your Turnstile site key')}
+                    placeholder={t('Your GeeTest captcha ID')}
                     autoComplete='off'
                     {...field}
                   />
@@ -141,14 +142,14 @@ export function BotProtectionSection({
 
           <FormField
             control={form.control}
-            name='TurnstileSecretKey'
+            name='GeetestCaptchaKey'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('Secret Key')}</FormLabel>
+                <FormLabel>{t('Captcha Key')}</FormLabel>
                 <FormControl>
                   <Input
                     type='password'
-                    placeholder={t('Your Turnstile secret key')}
+                    placeholder={t('Your GeeTest captcha key')}
                     autoComplete='new-password'
                     {...field}
                   />

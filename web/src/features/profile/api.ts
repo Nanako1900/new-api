@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { captchaHeaders } from '@/lib/captcha'
 import type { CustomOAuthBinding } from '@/lib/oauth'
 import { authRequestOptions, authResult } from '@/lib/secure-verification'
 import type { LoginSession } from '@/stores/auth-store'
@@ -119,21 +120,6 @@ export function deleteUserAccount(
 // ============================================================================
 // Account Binding APIs
 // ============================================================================
-
-/**
- * Send email verification code
- */
-export async function sendEmailVerification(
-  email: string,
-  turnstileToken?: string
-): Promise<ApiResponse> {
-  const params = new URLSearchParams({ email })
-  if (turnstileToken) {
-    params.append('turnstile', turnstileToken)
-  }
-  const res = await api.get(`/api/verification?${params}`)
-  return res.data
-}
 
 /**
  * Bind email account
@@ -297,11 +283,10 @@ export async function getCheckinStatus(
  * Perform daily checkin
  */
 export async function performCheckin(
-  turnstileToken?: string
+  captchaToken?: string
 ): Promise<ApiResponse<CheckinResponse>> {
-  const url = turnstileToken
-    ? `/api/user/checkin?turnstile=${encodeURIComponent(turnstileToken)}`
-    : '/api/user/checkin'
-  const res = await api.post(url)
+  const res = await api.post('/api/user/checkin', undefined, {
+    headers: captchaHeaders(captchaToken),
+  })
   return res.data
 }

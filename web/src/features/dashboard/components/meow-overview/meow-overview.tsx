@@ -163,9 +163,6 @@ export function MeowOverview() {
   const { usage, isLoading } = useUsage24h()
 
   const checkinEnabled = status?.checkin_enabled === true
-  const turnstileEnabled = Boolean(
-    status?.turnstile_check && status?.turnstile_site_key
-  )
   const now = new Date()
   const name = user?.display_name || user?.username || ''
   const greeting = splitAroundName((placeholder) =>
@@ -224,12 +221,7 @@ export function MeowOverview() {
               <MeowUsageTrend />
             </div>
             <div className='flex flex-col gap-4 lg:col-span-4'>
-              {checkinEnabled && (
-                <MeowCheckinCard
-                  turnstileEnabled={turnstileEnabled}
-                  turnstileSiteKey={status?.turnstile_site_key || ''}
-                />
-              )}
+              {checkinEnabled && <MeowCheckinCard />}
               <MeowInviteCard />
             </div>
           </div>

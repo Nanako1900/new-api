@@ -248,9 +248,16 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorT(c, "Cannot enable WeChat login. Enter the WeChat login settings first.")
 			return
 		}
-	case "TurnstileCheckEnabled":
-		if option.Value == "true" && common.TurnstileSiteKey == "" {
-			common.ApiErrorT(c, "Cannot enable Turnstile verification. Enter the Turnstile settings first.")
+	case "GeetestCheckEnabled":
+		if option.Value == "true" && (common.GeetestCaptchaId == "" || common.GeetestCaptchaKey == "") {
+			common.ApiErrorT(c, "Cannot enable GeeTest verification. Enter the GeeTest captcha ID and captcha key first.")
+			return
+		}
+	case "GeetestCaptchaId", "GeetestCaptchaKey":
+		// With the check on and no usable ID or key every login fails,
+		// administrators included.
+		if option.Value == "" && common.GeetestCheckEnabled {
+			common.ApiErrorT(c, "Disable GeeTest verification before clearing the captcha ID or captcha key.")
 			return
 		}
 	case "TelegramOAuthEnabled":

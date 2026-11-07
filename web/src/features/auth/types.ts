@@ -27,7 +27,7 @@ import type { LoginResult } from './secure-verification/types'
 export interface LoginPayload {
   username: string
   password: string
-  turnstile?: string
+  captcha?: string
   passwordEncryptionEnabled?: boolean
 }
 
@@ -42,17 +42,17 @@ export interface RegisterPayload {
   email?: string
   verification_code?: string
   aff_code?: string
-  turnstile?: string
+  captcha?: string
 }
 
 export interface PasswordResetPayload {
   email: string
-  turnstile?: string
+  captcha?: string
 }
 
 export interface EmailVerificationPayload {
   email: string
-  turnstile?: string
+  captcha?: string
 }
 
 export interface BindEmailPayload {
@@ -80,6 +80,8 @@ export interface Login2FAResponse {
 export interface ApiResponse<T = unknown> {
   success: boolean
   message: string
+  /** Stable error code, such as `CAPTCHA_REQUIRED` */
+  code?: string
   data?: T
 }
 
@@ -115,8 +117,8 @@ export interface SystemStatus {
     wechat_qr_code_image_url?: string
     wechat_account_qrcode_image_url?: string
     WeChatAccountQRCodeImageURL?: string
-    turnstile_check?: boolean
-    turnstile_site_key?: string
+    geetest_check?: boolean
+    geetest_captcha_id?: string
     email_verification?: boolean
     self_use_mode_enabled?: boolean
     display_in_currency?: boolean
@@ -162,8 +164,8 @@ export interface SystemStatus {
   wechat_qr_code_image_url?: string
   wechat_account_qrcode_image_url?: string
   WeChatAccountQRCodeImageURL?: string
-  turnstile_check?: boolean
-  turnstile_site_key?: string
+  geetest_check?: boolean
+  geetest_captcha_id?: string
   email_verification?: boolean
   self_use_mode_enabled?: boolean
   display_in_currency?: boolean
