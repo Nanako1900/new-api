@@ -33,6 +33,7 @@ import {
   tokenizeCodeLine,
 } from '../../lib/api-demos'
 import { resolveApiRoot } from '../../lib/base-url'
+import { HERO_GLASS, HeroStage } from './hero-visuals/hero-stage'
 
 const TOKEN_CLASS: Record<CodeTokenKind, string> = {
   key: 'text-meow-syn-key',
@@ -110,16 +111,10 @@ export function MeowCodeCard(props: MeowCodeCardProps) {
   const request = renderDemoRequest(demo, apiRoot)
 
   return (
-    <div className={cn('relative', props.className)}>
+    <HeroStage className={props.className}>
       <div
-        aria-hidden='true'
-        className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-14 h-60 w-72 rounded-full opacity-75 blur-[60px]'
-      />
-      <div
-        aria-hidden='true'
-        className='meow-drift-b bg-meow-ink pointer-events-none absolute top-24 -right-16 size-56 rounded-full opacity-55 blur-[64px] dark:bg-white dark:opacity-20'
-      />
-      <div className='relative overflow-hidden rounded-[22px] border border-white/80 bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_30px_60px_-30px_rgba(30,27,23,0.35)] backdrop-blur-xl backdrop-saturate-125 dark:border-white/10 dark:bg-white/[0.06]'>
+        className={cn('relative overflow-hidden rounded-[22px]', HERO_GLASS)}
+      >
         {/* Protocol tabs */}
         <Tabs
           value={demoId}
@@ -183,6 +178,6 @@ export function MeowCodeCard(props: MeowCodeCardProps) {
           <span className='ml-auto'>stream · sse</span>
         </div>
       </div>
-    </div>
+    </HeroStage>
   )
 }

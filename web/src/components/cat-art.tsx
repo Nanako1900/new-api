@@ -44,17 +44,37 @@ export function PawPrint(props: ArtProps) {
   )
 }
 
+type CatEyesProps = ArtProps & {
+  /**
+   * Drawn on an ink surface in either theme (key card, gateway hub): the
+   * eyes take their dark-mode colors.
+   */
+  onInk?: boolean
+}
+
 /**
  * The logo's eyes as a small badge: one black, one white with a black ring.
  */
-export function CatEyes(props: ArtProps) {
+export function CatEyes(props: CatEyesProps) {
   return (
     <span
       aria-hidden='true'
       className={cn('inline-flex shrink-0 gap-1', props.className)}
     >
-      <span className='bg-meow-ink h-[11px] w-[9px] rounded-full dark:bg-white' />
-      <span className='border-meow-ink h-[11px] w-[9px] rounded-full border-[2.5px] bg-white dark:border-white dark:bg-transparent' />
+      <span
+        className={cn(
+          'h-[11px] w-[9px] rounded-full',
+          props.onInk ? 'bg-[#f3efe8]' : 'bg-meow-ink dark:bg-white'
+        )}
+      />
+      <span
+        className={cn(
+          'h-[11px] w-[9px] rounded-full border-[2.5px]',
+          props.onInk
+            ? 'border-[#f3efe8]'
+            : 'border-meow-ink bg-white dark:border-white dark:bg-transparent'
+        )}
+      />
     </span>
   )
 }
