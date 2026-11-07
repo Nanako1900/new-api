@@ -31,6 +31,31 @@
         document.documentElement.classList.add(theme)
       })()
     </script>
+    <!-- A password reset link carries a one-time token in its query string.
+         Move it into session storage and out of the address bar before any
+         analytics script below records the URL. The reset page reads it from
+         there. Keep the key in sync with PASSWORD_RESET_TOKEN_STORAGE_KEY. -->
+    <script>
+      ;(function () {
+        var path = location.pathname.replace(/\/+$/, '')
+        if (path !== '/user/reset' && path !== '/reset') return
+        var params = new URLSearchParams(location.search)
+        var token = params.get('token')
+        if (!token) return
+        try {
+          sessionStorage.setItem('newapi:password-reset-token', token)
+        } catch (e) {
+          return
+        }
+        params.delete('token')
+        var rest = params.toString()
+        history.replaceState(
+          history.state,
+          '',
+          location.pathname + (rest ? '?' + rest : '') + location.hash
+        )
+      })()
+    </script>
     <!--umami-->
     <!--Google Analytics-->
   </head>

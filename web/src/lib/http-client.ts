@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import axios, { type AxiosRequestConfig } from 'axios'
-import { t } from 'i18next'
+import i18next, { t } from 'i18next'
 
+import { toIntlLocale } from '@/i18n/languages'
 import {
   applyAuthRotation,
   clearAuthentication,
@@ -162,5 +163,16 @@ api.interceptors.request.use(async (config) => {
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`
   }
+  return config
+})
+
+// Mail the server sends for a request (sign-up codes, password reset links)
+// is written in the language shown on the page, read at request time so a
+// language switch applies to the next request. Unknown languages send no
+// header and the browser's own preference applies.
+api.interceptors.request.use((config) => {
+  if (config.headers.has('Accept-Language')) return config
+  const locale = toIntlLocale(i18next.resolvedLanguage || i18next.language)
+  if (locale) config.headers.set('Accept-Language', locale)
   return config
 })

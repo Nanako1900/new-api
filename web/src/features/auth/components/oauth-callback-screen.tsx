@@ -102,13 +102,16 @@ export function OAuthCallbackScreen({
     <AuthLayout>
       <div className='w-full space-y-8'>
         <div className='flex flex-col items-center space-y-4 text-center'>
-          <div className='bg-muted flex h-16 w-16 items-center justify-center rounded-2xl'>
+          <div
+            aria-hidden='true'
+            className='bg-muted flex h-16 w-16 items-center justify-center rounded-2xl'
+          >
             <Icon className='h-8 w-8' />
           </div>
           <div className='space-y-2'>
-            <h2 className='text-center text-2xl font-semibold tracking-tight'>
+            <h1 className='text-center text-2xl font-extrabold tracking-[-0.02em]'>
               {headline}
-            </h2>
+            </h1>
             <p className='text-muted-foreground text-sm sm:text-base'>
               {description}
             </p>

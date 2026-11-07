@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /**
- * MeowAPI: calico glows behind the sign-in and sign-up forms (orange
- * top-left, ink on the right, like the logo's patches). The form card
- * itself is styled through `.meow-auth` in meow.css.
+ * MeowAPI: calico glows behind the auth pages (orange top-left, ink on the
+ * right, like the logo's patches). The glass card and the brand panel's
+ * ledge are styled through `.meow-auth [data-slot=...]` in meow.css.
  */
 export function MeowAuthBackdrop() {
   return (

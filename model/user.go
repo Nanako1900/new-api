@@ -1185,33 +1185,6 @@ func IsTelegramIdAlreadyTaken(telegramId string) bool {
 	return DB.Unscoped().Where("telegram_id = ?", telegramId).Find(&User{}).RowsAffected == 1
 }
 
-func ResetUserPasswordByEmail(email string, password string) error {
-	if email == "" || password == "" {
-		return common.NewMessage("Email or password is empty!")
-	}
-	user, err := GetUniqueUserByEmail(email)
-	if err != nil {
-		return err
-	}
-	hashedPassword, err := common.HashAccountPassword(password)
-	if err != nil {
-		return err
-	}
-	if err = DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := IncrementUserAuthVersionWithTx(tx, user.Id); err != nil {
-			return err
-		}
-		return tx.Model(&User{}).Where("id = ?", user.Id).Update("password", hashedPassword).Error
-	}); err != nil {
-		return err
-	}
-	if err := PublishUserAuthCache(user.Id); err != nil {
-		return err
-	}
-	_, err = RevokeAllUserSessions(user.Id, "password_reset")
-	return err
-}
-
 func IsAdmin(userId int) bool {
 	if userId == 0 {
 		return false

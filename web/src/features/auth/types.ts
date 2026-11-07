@@ -39,18 +39,12 @@ export interface TwoFAPayload {
 export interface RegisterPayload {
   username: string
   password: string
-  email?: string
-  verification_code?: string
+  /** Flow token of a verified registration email. */
+  registration_token: string
   aff_code?: string
-  captcha?: string
 }
 
 export interface PasswordResetPayload {
-  email: string
-  captcha?: string
-}
-
-export interface EmailVerificationPayload {
   email: string
   captcha?: string
 }
@@ -69,6 +63,26 @@ export interface LoginResponse {
   success: boolean
   message: string
   data?: LoginResult
+}
+
+/** A started registration email check (unix seconds). */
+export interface RegistrationEmailFlow {
+  flow_token: string
+  email: string
+  expires_at: number
+  resend_at: number
+}
+
+/** The verified address; the registration token is valid until expires_at. */
+export interface VerifiedRegistrationEmail {
+  email: string
+  expires_at: number
+}
+
+/** A usable password reset link: the masked address, valid until expires_at. */
+export interface PasswordResetLink {
+  email: string
+  expires_at: number
 }
 
 export interface Login2FAResponse {
@@ -120,6 +134,7 @@ export interface SystemStatus {
     geetest_check?: boolean
     geetest_captcha_id?: string
     email_verification?: boolean
+    email_delivery_configured?: boolean
     self_use_mode_enabled?: boolean
     display_in_currency?: boolean
     display_token_stat_enabled?: boolean
@@ -167,6 +182,8 @@ export interface SystemStatus {
   geetest_check?: boolean
   geetest_captcha_id?: string
   email_verification?: boolean
+  /** Whether the server can send email (SMTP or Resend); password sign-up needs it. */
+  email_delivery_configured?: boolean
   self_use_mode_enabled?: boolean
   display_in_currency?: boolean
   display_token_stat_enabled?: boolean

@@ -31,14 +31,16 @@ import { cn } from '@/lib/utils'
 
 import { useOAuthLogin } from '../hooks/use-oauth-login'
 import type { SystemStatus } from '../types'
+import { AuthDivider } from './auth-divider'
 
 type OAuthProvidersProps = {
   status: SystemStatus | null
   disabled?: boolean
   className?: string
   onWeChatLogin?: () => void
-  isWeChatLoading?: boolean
   redirectTo?: string
+  /** Set to false when the form draws its own divider above these buttons. */
+  withDivider?: boolean
 }
 
 type ProviderButton = {
@@ -54,8 +56,8 @@ export function OAuthProviders({
   disabled = false,
   className,
   onWeChatLogin,
-  isWeChatLoading = false,
   redirectTo,
+  withDivider = true,
 }: OAuthProvidersProps) {
   const { t } = useTranslation()
   const {
@@ -77,8 +79,7 @@ export function OAuthProviders({
       key: 'wechat',
       label: t('Continue with WeChat'),
       onClick: onWeChatLogin,
-      icon: <IconWeChat className='h-4 w-4' />,
-      disabled: isWeChatLoading,
+      icon: <IconWeChat aria-hidden='true' className='h-4 w-4' />,
     })
   }
 
@@ -87,7 +88,7 @@ export function OAuthProviders({
       key: 'github',
       label: githubButtonText || t('Continue with GitHub'),
       onClick: handleGitHubLogin,
-      icon: <IconGithub className='h-4 w-4' />,
+      icon: <IconGithub aria-hidden='true' className='h-4 w-4' />,
       disabled: githubButtonDisabled,
     })
   }
@@ -97,7 +98,7 @@ export function OAuthProviders({
       key: 'discord',
       label: t('Continue with Discord'),
       onClick: handleDiscordLogin,
-      icon: <IconDiscord className='h-4 w-4' />,
+      icon: <IconDiscord aria-hidden='true' className='h-4 w-4' />,
     })
   }
 
@@ -117,7 +118,7 @@ export function OAuthProviders({
       key: 'linuxdo',
       label: t('Continue with LinuxDO'),
       onClick: handleLinuxDOLogin,
-      icon: <IconLinuxDo className='h-4 w-4' />,
+      icon: <IconLinuxDo aria-hidden='true' className='h-4 w-4' />,
     })
   }
 
@@ -126,7 +127,7 @@ export function OAuthProviders({
       key: 'telegram',
       label: t('Continue with Telegram'),
       onClick: handleTelegramLogin,
-      icon: <IconTelegram data-icon='inline-start' />,
+      icon: <IconTelegram aria-hidden='true' data-icon='inline-start' />,
     })
   }
 
@@ -146,16 +147,7 @@ export function OAuthProviders({
 
   return (
     <div className={cn('space-y-3', className)}>
-      <div className='relative'>
-        <div className='absolute inset-0 flex items-center'>
-          <span className='w-full border-t' />
-        </div>
-        <div className='relative flex justify-center text-xs uppercase'>
-          <span className='bg-background text-muted-foreground px-2'>
-            {t('Or continue with')}
-          </span>
-        </div>
-      </div>
+      {withDivider && <AuthDivider>{t('Or continue with')}</AuthDivider>}
 
       <div className='flex flex-col gap-2'>
         {providerButtons.map(

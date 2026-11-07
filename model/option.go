@@ -426,7 +426,7 @@ func updateOptionMap(key string, value string) (err error) {
 			common.PasswordRegisterEnabled = boolValue
 		case "PasswordLoginEnabled":
 			common.PasswordLoginEnabled = boolValue
-		case "EmailVerificationEnabled":
+		case "EmailVerificationEnabled": // Deprecated: see common.EmailVerificationEnabled.
 			common.EmailVerificationEnabled = boolValue
 		case "GitHubOAuthEnabled":
 			common.GitHubOAuthEnabled = boolValue
