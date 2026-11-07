@@ -1017,3 +1017,86 @@ header a[href='/']:has(> div > img[alt]) > div:first-child > img {
   opacity: 0.2;
   filter: blur(90px);
 }
+
+/*
+ * Home hero visuals (features/home/components/meow/hero-visuals). Each
+ * motion stops under prefers-reduced-motion, leaving the finished state.
+ */
+
+/* Key card: a soft light band sweeps across the card now and then. */
+@keyframes meow-card-sheen {
+  0%,
+  62% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(130%);
+  }
+}
+.meow-card-sheen {
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgb(255 255 255 / 0.16) 50%,
+    transparent 65%
+  );
+  animation: meow-card-sheen 7s ease-in-out infinite;
+}
+
+/* Gateway: a short orange pulse travels each path (pathLength = 100). The
+ * gap is twice the path, so the pulse runs, then rests off the path. */
+@keyframes meow-flow {
+  to {
+    stroke-dashoffset: -200;
+  }
+}
+.meow-flow {
+  stroke-dasharray: 7 193;
+  stroke-dashoffset: 0;
+  filter: drop-shadow(0 0 1.2px var(--meow-orange));
+  animation: meow-flow 2.8s linear infinite;
+}
+
+/* Gateway hub: a ring breathing out from the key tile. */
+@keyframes meow-hub-ring {
+  0% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+.meow-hub-ring {
+  animation: meow-hub-ring 2.8s ease-out infinite;
+}
+
+/* Base URL: replaced URLs type out once, one character per step. Inline
+ * custom properties carry the length, delay and duration of each line. */
+@keyframes meow-type {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+.meow-type {
+  clip-path: inset(0 100% 0 0);
+  animation: meow-type var(--type-duration, 1s) steps(var(--chars, 20))
+    var(--type-delay, 0s) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meow-card-sheen,
+  .meow-hub-ring {
+    animation: none;
+    opacity: 0;
+  }
+  .meow-flow {
+    animation: none;
+    opacity: 0;
+  }
+  .meow-type {
+    animation: none;
+    clip-path: none;
+  }
+}

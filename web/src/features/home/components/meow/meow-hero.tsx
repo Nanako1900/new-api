@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next'
 import { CatEyes } from '@/components/cat-art'
 import { Button } from '@/components/ui/button'
 
-import { MeowCodeCard } from './meow-code-card'
+import { MeowHeroVisual } from './hero-visuals'
 
 type MeowHeroProps = {
   isAuthenticated: boolean
@@ -83,7 +83,7 @@ export function MeowHero(props: MeowHeroProps) {
         </div>
       </div>
 
-      <MeowCodeCard className='min-w-0 flex-1' />
+      <MeowHeroVisual className='min-w-0 flex-1' />
     </section>
   )
 }

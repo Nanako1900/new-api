@@ -28,6 +28,7 @@ import { NoticeSection } from '../maintenance/notice-section'
 import { SidebarModulesSection } from '../maintenance/sidebar-modules-section'
 import type { SiteSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { HomeHeroSection } from './home-hero-section'
 
 const SITE_SECTIONS = [
   {
@@ -52,6 +53,13 @@ const SITE_SECTIONS = [
           },
         }}
       />
+    ),
+  },
+  {
+    id: 'home-hero',
+    titleKey: 'Home page visual',
+    build: (settings: SiteSettings) => (
+      <HomeHeroSection defaultValue={settings.HomeHeroVisual ?? ''} />
     ),
   },
   {
