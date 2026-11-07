@@ -47,7 +47,7 @@ type ProviderCard = {
 // the orange glow (top left) and an orange icon tile, GPT the dark glow (top
 // right) and a black tile. Dark mode keeps the earlier solid cards.
 const GLASS_CARD =
-  'border-white/75 bg-white/30 text-meow-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_24px_48px_-30px_rgba(30,27,23,0.3)] backdrop-blur-xl backdrop-saturate-125 dark:text-white dark:shadow-none'
+  'border-white/75 bg-white/30 text-meow-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_24px_48px_-30px_rgba(30,27,23,0.3)] dark:text-white dark:shadow-none'
 const GLASS_CHIP = 'border-white/80 bg-white/45'
 
 const PROVIDERS: ProviderCard[] = [
