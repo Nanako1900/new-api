@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 
 import { Skeleton } from '@/components/ui/skeleton'
+import { useLiveBalanceTotals } from '@/hooks/use-live-balance'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber, formatQuota } from '@/lib/format'
 
@@ -45,11 +46,12 @@ function StatTile(props: { label: string; value: string }) {
 /**
  * Wallet header stats in the MeowAPI look: the balance on a dark tile with
  * the calico glow, then total usage and request count. Same props as the
- * original `WalletStatsCard`.
+ * original `WalletStatsCard`; the numbers stay live while the page is open.
  */
 export function MeowWalletStatsCard(props: MeowWalletStatsCardProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const totals = useLiveBalanceTotals(props.user)
 
   if (props.loading) {
     return (
@@ -72,19 +74,19 @@ export function MeowWalletStatsCard(props: MeowWalletStatsCardProps) {
           {t('Current Balance')}
         </span>
         <span className='text-4xl font-extrabold tracking-[-0.03em] tabular-nums sm:text-[2.75rem]'>
-          {formatQuota(props.user?.quota ?? 0)}
+          {formatQuota(totals.quota)}
         </span>
       </div>
       <div className='lg:col-span-3'>
         <StatTile
           label={t('Total Usage')}
-          value={formatQuota(props.user?.used_quota ?? 0)}
+          value={formatQuota(totals.usedQuota)}
         />
       </div>
       <div className='lg:col-span-3'>
         <StatTile
           label={t('API Requests')}
-          value={formatNumber(props.user?.request_count ?? 0, locale)}
+          value={formatNumber(totals.requestCount, locale)}
         />
       </div>
     </div>

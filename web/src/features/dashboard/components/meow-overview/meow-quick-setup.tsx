@@ -103,7 +103,7 @@ export function MeowQuickSetup() {
         aria-hidden='true'
         className='meow-drift-b bg-meow-ink pointer-events-none absolute top-16 right-6 size-44 rounded-full opacity-25 blur-[54px] dark:bg-white dark:opacity-10'
       />
-      <div className='relative flex h-full flex-col gap-4 rounded-[22px] border border-white/80 bg-white/55 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_24px_48px_-30px_rgba(30,27,23,0.3)] backdrop-blur-xl backdrop-saturate-125 dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none'>
+      <div className='relative isolate flex h-full flex-col gap-4 rounded-[22px] border border-white/80 bg-white/55 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_24px_48px_-30px_rgba(30,27,23,0.3)] dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none'>
         <div className='flex flex-wrap items-center justify-between gap-3'>
           <h2 className='text-base font-extrabold'>{t('Quick setup')}</h2>
           <Tabs

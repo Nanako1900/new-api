@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useLiveBalanceTotals } from '@/hooks/use-live-balance'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatCompactNumber, formatQuota } from '@/lib/format'
 import { getRoleLabel } from '@/lib/roles'
@@ -38,7 +39,7 @@ const BADGE_ON_DARK = 'border-white/15! bg-white/10! text-white/85!'
 
 function StatTile(props: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className='flex min-w-0 flex-col justify-between gap-3 rounded-[20px] border border-white/85 bg-[#fffbf5]/60 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_24px_48px_-30px_rgba(30,27,23,0.3)] backdrop-blur-xl backdrop-saturate-125 sm:px-6 sm:py-5 dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none'>
+    <div className='isolate flex min-w-0 flex-col justify-between gap-3 rounded-[20px] border border-white/85 bg-[#fffbf5]/60 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_24px_48px_-30px_rgba(30,27,23,0.3)] sm:px-6 sm:py-5 dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none'>
       <span className='text-muted-foreground truncate text-[13px] font-bold'>
         {props.label}
       </span>
@@ -57,10 +58,11 @@ function StatTile(props: { label: string; value: string; accent?: boolean }) {
 /**
  * Profile header in the MeowAPI look: the account on a dark tile with the
  * calico glow, then balance, usage and requests. Same props and content as
- * the original `ProfileHeader`.
+ * the original `ProfileHeader`; the numbers stay live while the page is open.
  */
 export function MeowProfileHeader(props: MeowProfileHeaderProps) {
   const { t } = useTranslation()
+  const totals = useLiveBalanceTotals(props.profile)
 
   if (props.loading) {
     return (
@@ -140,16 +142,16 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
         />
         <StatTile
           label={t('Current Balance')}
-          value={formatQuota(profile.quota)}
+          value={formatQuota(totals.quota)}
           accent
         />
         <StatTile
           label={t('Total Usage')}
-          value={formatQuota(profile.used_quota)}
+          value={formatQuota(totals.usedQuota)}
         />
         <StatTile
           label={t('API Requests')}
-          value={formatCompactNumber(profile.request_count)}
+          value={formatCompactNumber(totals.requestCount)}
         />
       </div>
     </div>

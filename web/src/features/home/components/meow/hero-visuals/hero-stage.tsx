@@ -20,9 +20,14 @@ import type { ReactNode } from 'react'
 
 import { cn } from '@/lib/utils'
 
-/** Frosted glass over the calico glows, shared by every hero visual. */
+/**
+ * Frosted glass over the calico glows, shared by every hero visual. No
+ * backdrop-filter: the glows are already blurred, and in Firefox each
+ * backdrop-filter makes scrolling stutter (see meow.css). `isolate` keeps
+ * the stacking context the filter used to create.
+ */
 export const HERO_GLASS =
-  'border border-white/80 bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_30px_60px_-30px_rgba(30,27,23,0.35)] backdrop-blur-xl backdrop-saturate-125 dark:border-white/10 dark:bg-white/[0.06] dark:shadow-none'
+  'isolate border border-white/80 bg-white/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_30px_60px_-30px_rgba(30,27,23,0.35)] dark:border-white/10 dark:bg-white/[0.06] dark:shadow-none'
 
 type HeroStageProps = {
   className?: string

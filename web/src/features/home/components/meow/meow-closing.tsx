@@ -31,7 +31,7 @@ export function MeowClosing(props: MeowClosingProps) {
 
   return (
     <section className='mx-auto max-w-6xl px-4 pb-24 sm:px-8'>
-      <div className='relative isolate flex flex-col items-start gap-5 overflow-hidden rounded-3xl border border-white/75 bg-linear-to-r from-[#FCE3CE]/90 via-[#FDF0E4]/55 to-white/25 px-7 py-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_24px_48px_-30px_rgba(30,27,23,0.3)] backdrop-blur-xl sm:flex-row sm:items-center sm:px-10 dark:border-[#4A3020] dark:from-[#3B2416] dark:via-[#2A1D14] dark:to-[#1E1B17]'>
+      <div className='relative isolate flex flex-col items-start gap-5 overflow-hidden rounded-3xl border border-white/75 bg-linear-to-r from-[#FCE3CE]/90 via-[#FDF0E4]/55 to-white/25 px-7 py-7 shadow-[inset_0_1px_0_rgba(255,255,255,0.85),0_24px_48px_-30px_rgba(30,27,23,0.3)] sm:flex-row sm:items-center sm:px-10 dark:border-[#4A3020] dark:from-[#3B2416] dark:via-[#2A1D14] dark:to-[#1E1B17]'>
         <div
           aria-hidden='true'
           className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-10 -z-10 h-40 w-64 rounded-full opacity-45 blur-[56px]'
