@@ -31,7 +31,7 @@ function mountSplash(shownAt?: number): HTMLElement {
   const splash = document.createElement('div')
   splash.id = 'meow-splash'
   splash.innerHTML =
-    '<div class="meow-splash-tile"></div><svg class="meow-splash-word"></svg>'
+    '<div class="meow-splash-bg"></div><div class="meow-splash-tile"></div><svg class="meow-splash-word"></svg>'
   if (shownAt !== undefined) {
     splash.dataset.shownAt = String(shownAt)
     splash.classList.add('is-shown')

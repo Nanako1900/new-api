@@ -74,7 +74,6 @@
         align-items: center;
         justify-content: center;
         gap: 22px;
-        background: #f6eee2;
         color: #1e1b17;
         opacity: 0;
         pointer-events: none;
@@ -91,13 +90,26 @@
         animation: meow-splash-out 0.25s ease-in-out forwards;
       }
       html.dark #meow-splash {
-        background: #15130f;
         color: #f3efe8;
       }
+      /* The cover is its own layer so the exit can fade it by opacity alone,
+         which the GPU animates even while the app is busy. */
+      .meow-splash-bg {
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        background: #f6eee2;
+      }
+      html.dark .meow-splash-bg {
+        background: #15130f;
+      }
+      /* 20.5px is the logo's own corner (28 of its 120 units), so the tile
+         scaled down by the exit lands with the header logo's corners and no
+         radius needs animating. */
       .meow-splash-tile {
         width: 88px;
         height: 88px;
-        border-radius: 22px;
+        border-radius: 20.5px;
         overflow: hidden;
         opacity: 0;
         animation: meow-splash-pop 0.3s cubic-bezier(0.22, 1, 0.36, 1)
@@ -185,6 +197,7 @@
   <body>
     <div id="root" translate="no" class="notranslate"></div>
     <div id="meow-splash" aria-hidden="true">
+      <div class="meow-splash-bg"></div>
       <div class="meow-splash-tile">
         <svg viewBox="0 0 120 120">
           <defs>

@@ -74,7 +74,11 @@ function findHeaderLogo(): HTMLImageElement | null {
   return logo
 }
 
-/** The splash logo shrinks into the header logo while the cover fades away. */
+/**
+ * The splash logo shrinks into the header logo while the cover fades away.
+ * Only transform and opacity animate, so the GPU keeps the flight smooth
+ * while the app renders; the tile's corners scale down to the header logo's.
+ */
 function flyIntoHeaderLogo(
   splash: HTMLElement,
   tile: HTMLElement,
@@ -85,30 +89,23 @@ function flyIntoHeaderLogo(
   const scale = to.width / from.width
   const dx = to.left + to.width / 2 - (from.left + from.width / 2)
   const dy = to.top + to.height / 2 - (from.top + from.height / 2)
-  const logoRadius = Number.parseFloat(
-    getComputedStyle(logo).borderTopLeftRadius
-  )
-  const endRadius = (Number.isFinite(logoRadius) ? logoRadius : 0) / scale
 
   splash.classList.remove('is-shown')
   logo.style.visibility = 'hidden'
   const flight = tile.animate(
     [
-      { transform: 'none', borderRadius: getComputedStyle(tile).borderRadius },
-      {
-        transform: `translate(${dx}px, ${dy}px) scale(${scale})`,
-        borderRadius: `${endRadius}px`,
-      },
+      { transform: 'none' },
+      { transform: `translate(${dx}px, ${dy}px) scale(${scale})` },
     ],
     { duration: FLIGHT_MS, easing: FLIGHT_EASING, fill: 'forwards' }
   )
-  splash.animate(
-    [
-      { backgroundColor: getComputedStyle(splash).backgroundColor },
-      { backgroundColor: 'transparent' },
-    ],
-    { duration: 300, easing: 'ease-in-out', fill: 'forwards' }
-  )
+  splash
+    .querySelector('.meow-splash-bg')
+    ?.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: 300,
+      easing: 'ease-in-out',
+      fill: 'forwards',
+    })
   splash
     .querySelector('.meow-splash-word')
     ?.animate([{ opacity: 1 }, { opacity: 0 }], {
