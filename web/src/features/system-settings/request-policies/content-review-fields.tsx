@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { useId, useMemo } from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -59,9 +59,6 @@ type ReviewNumberField = {
   description: string
 }
 
-// One request-checks form per page, so a fixed id is unique.
-const REVIEW_NOTE_ID = 'content-review-note'
-
 type ContentReviewFieldsProps = {
   // True after a save was refused because of an invalid value; keeps the
   // options open while the value is corrected.
@@ -76,6 +73,7 @@ export function ContentReviewFields(props: ContentReviewFieldsProps) {
     name: 'content_safety_setting.review_enabled',
   })
   const open = reviewEnabled || props.revealed
+  const noteId = useId()
 
   return (
     <SettingsControlGroup>
@@ -102,17 +100,17 @@ export function ContentReviewFields(props: ContentReviewFieldsProps) {
         <SettingsControlChildren
           role='group'
           aria-label={t('AI review options')}
-          aria-describedby={REVIEW_NOTE_ID}
+          aria-describedby={noteId}
           className='space-y-4'
         >
-          <ReviewOptionFields />
+          <ReviewOptionFields noteId={noteId} />
         </SettingsControlChildren>
       )}
     </SettingsControlGroup>
   )
 }
 
-function ReviewOptionFields() {
+function ReviewOptionFields(props: { noteId: string }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const form = useFormContext<RequestChecksFormValues>()
@@ -175,7 +173,7 @@ function ReviewOptionFields() {
 
   return (
     <>
-      <p id={REVIEW_NOTE_ID} className='text-muted-foreground text-sm'>
+      <p id={props.noteId} className='text-muted-foreground text-sm'>
         {t(
           'AI review fails closed: if the review times out, no review channel is available, or the answer cannot be read, the request is rejected with HTTP 503. Request content can try to manipulate the review model through prompt injection, so choose a model that is robust against it.'
         )}

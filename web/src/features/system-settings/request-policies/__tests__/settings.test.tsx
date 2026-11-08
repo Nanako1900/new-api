@@ -34,6 +34,7 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -517,6 +518,26 @@ describe('request policy settings', () => {
     expect(screen.getByText(/Allowed range: 1–60/)).toBeVisible()
     expect(screen.getByText(/Allowed range: 0–604,800/)).toBeVisible()
     expect(screen.getByText(/Allowed range: 1–3,650/)).toBeVisible()
+  })
+
+  it('range hints reformat their numbers when the interface language changes', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('switch', { name: 'Enable AI review' })
+    )
+    expect(screen.getByText(/Allowed range: 0–604,800/)).toBeVisible()
+    try {
+      i18next.addResourceBundle('fr', 'translation', {})
+      await act(() => i18next.changeLanguage('fr'))
+      expect(
+        await screen.findByText(/Allowed range: 0–604[\u202f\u00a0 ]800/)
+      ).toBeVisible()
+      i18next.addResourceBundle('zhTW', 'translation', {})
+      await act(() => i18next.changeLanguage('zhTW'))
+      expect(await screen.findByText(/Allowed range: 0–604,800/)).toBeVisible()
+    } finally {
+      await act(() => i18next.changeLanguage('en'))
+    }
   })
 
   it('the AI review notes are one static note, not a live alert', async () => {
