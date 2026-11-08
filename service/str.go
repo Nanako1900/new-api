@@ -150,3 +150,27 @@ func AcSearch(findText string, dict []string, stopImmediately bool) (bool, []str
 	}
 	return false, nil
 }
+
+// AcMatch is one dictionary hit. Pos is the rune offset where Word starts.
+type AcMatch struct {
+	Pos  int
+	Word string
+}
+
+// AcMatches returns every dictionary hit in text. Callers lowercase text rune
+// by rune first, so the offsets map back onto the original text.
+func AcMatches(text []rune, dict []string) []AcMatch {
+	if len(dict) == 0 || len(text) == 0 {
+		return nil
+	}
+	m := getOrBuildAC(dict)
+	if m == nil {
+		return nil
+	}
+	hits := m.MultiPatternSearch(text, false)
+	matches := make([]AcMatch, 0, len(hits))
+	for _, hit := range hits {
+		matches = append(matches, AcMatch{Pos: hit.Pos, Word: string(hit.Word)})
+	}
+	return matches
+}
