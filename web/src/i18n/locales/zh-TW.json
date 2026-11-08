@@ -7486,6 +7486,15 @@
     "Peace of mind": "用得放心",
     "No charge for failed requests": "失敗請求不扣費",
     "Daily check-in credits": "每日簽到領額度",
-    "Invite friends, earn rewards": "邀請好友返利"
+    "Invite friends, earn rewards": "邀請好友返利",
+    "Signing you in to the monitor console": "正在登入監控台",
+    "Your current session signs you in. No password or API key is shared with the monitor console.": "將使用你目前的登入狀態完成登入，不會向監控台提供密碼或 API 金鑰。",
+    "Redirecting to the monitor console...": "正在前往監控台...",
+    "Could not sign in to the monitor console": "無法登入監控台",
+    "This sign-in link is invalid. Open the monitor console again to sign in.": "這個登入連結無效，請重新開啟監控台再登入。",
+    "The monitor console is not enabled on this site.": "本站未啟用監控台。",
+    "This monitor console address is not allowed to sign in.": "這個監控台位址不允許登入。",
+    "Could not sign in to the monitor console. Please try again.": "無法登入監控台，請重試。",
+    "Monitor console": "監控台"
   }
 }

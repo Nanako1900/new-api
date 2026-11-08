@@ -129,6 +129,12 @@ func TestUserSessionPreviousRefreshHashMigrationSQLite(t *testing.T) {
 }
 
 func TestUserSessionPreviousRefreshHashMigrationConfiguredDatabases(t *testing.T) {
+	runOnConfiguredMigrationDatabases(t, testPreviousRefreshHashMigration)
+}
+
+// runOnConfiguredMigrationDatabases runs a migration case against the real
+// MySQL and PostgreSQL instances named by TEST_MYSQL_DSN / TEST_POSTGRES_DSN.
+func runOnConfiguredMigrationDatabases(t *testing.T, run func(*testing.T, *gorm.DB, *migrationSQLRecorder, string)) {
 	tests := []struct {
 		name      string
 		env       string
@@ -151,7 +157,74 @@ func TestUserSessionPreviousRefreshHashMigrationConfiguredDatabases(t *testing.T
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = sqlDB.Close() })
-			testPreviousRefreshHashMigration(t, db, recorder, test.name)
+			run(t, db, recorder, test.name)
 		})
 	}
+}
+
+type userSessionKindMigrationLegacy struct {
+	SID         string `gorm:"column:sid;type:varchar(64);primaryKey"`
+	LoginMethod string `gorm:"type:varchar(32);not null"`
+}
+
+// userSessionKindMigrationTarget mirrors the UserSession kind columns; the
+// schema test below keeps both tag sets identical.
+type userSessionKindMigrationTarget struct {
+	SID         string `gorm:"column:sid;type:varchar(64);primaryKey"`
+	LoginMethod string `gorm:"type:varchar(32);not null"`
+	Kind        string `gorm:"type:varchar(16);not null;default:''"`
+	ParentSID   string `gorm:"column:parent_sid;type:varchar(64);not null;default:''"`
+}
+
+func TestUserSessionKindColumnsMatchMigrationFixture(t *testing.T) {
+	sessionSchema := &gorm.Statement{DB: DB}
+	require.NoError(t, sessionSchema.Parse(&UserSession{}))
+	fixtureSchema := &gorm.Statement{DB: DB}
+	require.NoError(t, fixtureSchema.Parse(&userSessionKindMigrationTarget{}))
+	for _, name := range []string{"Kind", "ParentSID"} {
+		sessionField := sessionSchema.Schema.LookUpField(name)
+		fixtureField := fixtureSchema.Schema.LookUpField(name)
+		require.NotNil(t, sessionField, name)
+		require.NotNil(t, fixtureField, name)
+		assert.Equal(t, fixtureField.TagSettings, sessionField.TagSettings, name)
+	}
+}
+
+func testUserSessionKindMigration(t *testing.T, db *gorm.DB, recorder *migrationSQLRecorder, _ string) {
+	t.Helper()
+	tableName := fmt.Sprintf("user_session_kind_migration_%d", time.Now().UnixNano())
+	t.Cleanup(func() { _ = db.Migrator().DropTable(tableName) })
+
+	require.NoError(t, db.Table(tableName).AutoMigrate(&userSessionKindMigrationLegacy{}))
+	require.NoError(t, db.Table(tableName).Create(&userSessionKindMigrationLegacy{SID: "legacy-session", LoginMethod: "password"}).Error)
+
+	require.NoError(t, db.Table(tableName).AutoMigrate(&userSessionKindMigrationTarget{}))
+	var upgraded userSessionKindMigrationTarget
+	require.NoError(t, db.Table(tableName).Where("sid = ?", "legacy-session").First(&upgraded).Error)
+	assert.Equal(t, "password", upgraded.LoginMethod)
+	assert.Empty(t, upgraded.Kind, "existing sessions must stay dashboard sessions")
+	assert.Empty(t, upgraded.ParentSID)
+
+	require.NoError(t, db.Table(tableName).Create(&userSessionKindMigrationTarget{
+		SID: "monitor-session", LoginMethod: "monitor_sso", Kind: "monitor", ParentSID: "legacy-session",
+	}).Error)
+	var monitor userSessionKindMigrationTarget
+	require.NoError(t, db.Table(tableName).Where("sid = ?", "monitor-session").First(&monitor).Error)
+	assert.Equal(t, "monitor", monitor.Kind)
+	assert.Equal(t, "legacy-session", monitor.ParentSID)
+
+	recorder.reset()
+	require.NoError(t, db.Table(tableName).AutoMigrate(&userSessionKindMigrationTarget{}))
+	assert.Empty(t, recorder.schemaMutations(), "a second migration must not repeat DDL for the kind columns")
+}
+
+func TestUserSessionKindMigrationSQLite(t *testing.T) {
+	recorder := &migrationSQLRecorder{}
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: recorder})
+	require.NoError(t, err)
+	testUserSessionKindMigration(t, db, recorder, "sqlite")
+}
+
+func TestUserSessionKindMigrationConfiguredDatabases(t *testing.T) {
+	runOnConfiguredMigrationDatabases(t, testUserSessionKindMigration)
 }

@@ -368,6 +368,29 @@ func TestLoginSessionCreateRefreshAndRevoke(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrLoginSessionRevoked))
 }
 
+func TestDashboardAuthRejectsMonitorSessions(t *testing.T) {
+	useTestSessionSecret(t)
+	user := setupAuthSessionTestDB(t)
+	parent, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
+	require.NoError(t, err)
+	monitor, refreshSecret, err := newLoginSession(user.Id, user.AuthVersion, "monitor_sso", "127.0.0.1", "monitor-agent")
+	require.NoError(t, err)
+	monitor.Kind = model.UserSessionKindMonitor
+	monitor.ParentSID = parent.Session.SID
+	require.NoError(t, model.CreateUserSession(monitor))
+
+	_, _, err = ValidateLoginSession(AuthIdentity{
+		UserID: user.Id, SessionID: monitor.SID, UserAuthVersion: monitor.UserAuthVersion, SessionVersion: monitor.Version,
+	})
+	assert.ErrorIs(t, err, ErrLoginSessionRevoked, "a dashboard access token must never authenticate a monitor session")
+
+	_, _, err = RefreshLoginSession(monitor.SID+"."+refreshSecret, "", "127.0.0.1", "monitor-agent")
+	assert.ErrorIs(t, err, ErrRefreshTokenInvalid, "the dashboard refresh endpoint must not turn a monitor session into a dashboard bundle")
+	stored, err := model.GetUserSessionBySID(monitor.SID)
+	require.NoError(t, err)
+	assert.Equal(t, monitor.RefreshHash, stored.RefreshHash, "a rejected refresh must not rotate the monitor session")
+}
+
 func TestIndependentRedisSessionRevokeConvergesAfterCacheTTL(t *testing.T) {
 	useTestSessionSecret(t)
 	user := setupAuthSessionTestDB(t)

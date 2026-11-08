@@ -25,6 +25,10 @@ const (
 	securityProofTokenUse = "security_proof"
 	authTokenIssuer       = "new-api"
 	authTokenAudience     = "new-api-dashboard"
+	// Monitor access tokens authenticate only the read-only monitor API. They
+	// use their own audience and signing key so no dashboard parser accepts them.
+	monitorAccessTokenUse = "monitor_access"
+	monitorTokenAudience  = "new-api-monitor"
 )
 
 var (
@@ -58,32 +62,52 @@ func authSigningKey(purpose string) []byte {
 }
 
 func IssueAccessToken(identity AuthIdentity) (string, int64, error) {
+	return issueSessionToken(identity, accessTokenUse, authTokenAudience)
+}
+
+// IssueMonitorAccessToken signs the short-lived bearer token of a monitor
+// session. It carries the same identity claims as a dashboard access token.
+func IssueMonitorAccessToken(identity AuthIdentity) (string, int64, error) {
+	return issueSessionToken(identity, monitorAccessTokenUse, monitorTokenAudience)
+}
+
+func issueSessionToken(identity AuthIdentity, tokenUse, audience string) (string, int64, error) {
 	if identity.UserID <= 0 || identity.SessionID == "" || identity.UserAuthVersion <= 0 || identity.SessionVersion <= 0 {
 		return "", 0, ErrAuthTokenInvalid
 	}
 	now := time.Now()
 	expiresAt := now.Add(AccessTokenTTL)
 	claims := authClaims{
-		TokenUse:        accessTokenUse,
+		TokenUse:        tokenUse,
 		SessionID:       identity.SessionID,
 		UserAuthVersion: identity.UserAuthVersion,
 		SessionVersion:  identity.SessionVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    authTokenIssuer,
 			Subject:   strconv.Itoa(identity.UserID),
-			Audience:  jwt.ClaimStrings{authTokenAudience},
+			Audience:  jwt.ClaimStrings{audience},
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			NotBefore: jwt.NewNumericDate(now.Add(-5 * time.Second)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ID:        uuid.NewString(),
 		},
 	}
-	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(authSigningKey(accessTokenUse))
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(authSigningKey(tokenUse))
 	return signed, expiresAt.Unix(), err
 }
 
 func ParseAccessToken(raw string) (AuthIdentity, error) {
-	claims, err := parseAuthClaims(raw, accessTokenUse, authSigningKey(accessTokenUse))
+	return parseSessionToken(raw, accessTokenUse, authTokenAudience)
+}
+
+// ParseMonitorAccessToken verifies a monitor access token. The caller must
+// still validate the monitor session it names.
+func ParseMonitorAccessToken(raw string) (AuthIdentity, error) {
+	return parseSessionToken(raw, monitorAccessTokenUse, monitorTokenAudience)
+}
+
+func parseSessionToken(raw, tokenUse, audience string) (AuthIdentity, error) {
+	claims, err := parseAuthClaims(raw, tokenUse, audience, authSigningKey(tokenUse))
 	if err != nil {
 		return AuthIdentity{}, err
 	}
@@ -113,6 +137,10 @@ func ParseDashboardAccessToken(raw string) (identity AuthIdentity, internal bool
 	parsed, _, parseErr := jwt.NewParser().ParseUnverified(raw, claims)
 	if parseErr != nil || parsed == nil {
 		return AuthIdentity{}, false, nil
+	}
+	if claims.Issuer == authTokenIssuer && (slices.Contains(claims.Audience, monitorTokenAudience) || claims.TokenUse == monitorAccessTokenUse) {
+		// A monitor token is ours but never a dashboard credential.
+		return AuthIdentity{}, true, ErrAuthTokenInvalid
 	}
 	audienceMatches := slices.Contains(claims.Audience, authTokenAudience)
 	knownTokenUse := claims.TokenUse == accessTokenUse || claims.TokenUse == securityProofTokenUse
@@ -160,7 +188,7 @@ func IssueSecurityProof(identity AuthIdentity, method string, binding Verificati
 }
 
 func verifySecurityProof(raw string, identity AuthIdentity, binding VerificationBinding) (*authClaims, error) {
-	claims, err := parseAuthClaims(raw, securityProofTokenUse, authSigningKey(securityProofTokenUse))
+	claims, err := parseAuthClaims(raw, securityProofTokenUse, authTokenAudience, authSigningKey(securityProofTokenUse))
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +208,7 @@ func verifySecurityProof(raw string, identity AuthIdentity, binding Verification
 	return claims, nil
 }
 
-func parseAuthClaims(raw, expectedUse string, key []byte) (*authClaims, error) {
+func parseAuthClaims(raw, expectedUse, audience string, key []byte) (*authClaims, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, ErrAuthTokenInvalid
@@ -191,7 +219,7 @@ func parseAuthClaims(raw, expectedUse string, key []byte) (*authClaims, error) {
 			return nil, fmt.Errorf("%w: unexpected signing method", ErrAuthTokenInvalid)
 		}
 		return key, nil
-	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithIssuer(authTokenIssuer), jwt.WithAudience(authTokenAudience), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(5*time.Second))
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithIssuer(authTokenIssuer), jwt.WithAudience(audience), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(5*time.Second))
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return nil, ErrAuthTokenExpired

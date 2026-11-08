@@ -30,6 +30,7 @@ import (
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/monitorstream"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -105,6 +106,7 @@ func main() {
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
 	wsmanager.StartSubscriber(context.Background())
+	monitorstream.Start(context.Background())
 
 	// Warm pricing after channel cache initialization so Advanced Custom
 	// endpoint inference can read cached route settings on first request.
@@ -226,6 +228,8 @@ func main() {
 	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	// Ask monitor streams to reconnect elsewhere instead of holding shutdown.
+	monitorstream.Stop()
 	if err := srv.Shutdown(ctx); err != nil {
 		common.SysError(common.LogText("server forced to shutdown: %v", err))
 	}

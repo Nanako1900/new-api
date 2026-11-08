@@ -139,6 +139,11 @@ func ValidateLoginSession(identity AuthIdentity) (*model.UserSession, *model.Use
 	if session.UserID != identity.UserID || session.Status != model.UserSessionStatusActive || session.RevokedAt != 0 || session.ExpiresAt <= now || session.Version != identity.SessionVersion || session.UserAuthVersion != identity.UserAuthVersion {
 		return nil, nil, ErrLoginSessionRevoked
 	}
+	// Only dashboard sessions carry dashboard access. A monitor session is
+	// read-only and never authenticates a dashboard request.
+	if session.Kind != model.UserSessionKindDashboard {
+		return nil, nil, ErrLoginSessionRevoked
+	}
 	user, err := model.GetUserCache(identity.UserID)
 	if err != nil {
 		return nil, nil, err
@@ -249,6 +254,10 @@ func RefreshLoginSession(rawRefreshToken, expectedSID, ip, userAgent string) (*A
 	if session.Status != model.UserSessionStatusActive || session.RevokedAt != 0 || session.ExpiresAt <= time.Now().Unix() {
 		return nil, nil, ErrLoginSessionRevoked
 	}
+	// A monitor refresh token must never be rotated into a dashboard bundle.
+	if session.Kind != model.UserSessionKindDashboard {
+		return nil, nil, ErrRefreshTokenInvalid
+	}
 	userCache, err := model.GetUserCache(session.UserID)
 	if err != nil {
 		return nil, nil, err
@@ -262,35 +271,42 @@ func RefreshLoginSession(rawRefreshToken, expectedSID, ip, userAgent string) (*A
 		_, _ = model.RevokeUserSession(session.UserID, session.SID, "user_security_changed")
 		return nil, nil, ErrLoginSessionRevoked
 	}
-	nextSecret := deriveNextRefreshSecret(sid, secret)
-	rotated, err := model.RotateUserSessionRefresh(session.UserID, sid, hashRefreshSecret(secret), hashRefreshSecret(nextSecret), time.Now().Unix(), RefreshReplayWindow)
+	rotated, nextRefreshToken, recovered, err := rotateSessionRefreshToken(session, secret)
 	if err != nil {
-		if errors.Is(err, model.ErrUserSessionRefreshRace) && rotated != nil &&
-			hashRefreshSecret(nextSecret) == rotated.RefreshHash {
-			bundle, issueErr := issueAuthBundle(rotated, sid+"."+nextSecret, true)
-			if issueErr != nil {
-				return nil, nil, issueErr
-			}
-			return bundle, currentUser, nil
-		}
-		if errors.Is(err, model.ErrUserSessionRefreshReuse) {
-			return nil, nil, ErrLoginSessionRevoked
-		}
-		if errors.Is(err, model.ErrUserSessionRefreshInvalid) {
-			return nil, nil, ErrRefreshTokenInvalid
-		}
-		if errors.Is(err, model.ErrUserSessionRefreshRace) {
-			return nil, nil, ErrRefreshRace
-		}
 		return nil, nil, err
 	}
-	rotated.IP = truncateAuthMetadata(ip, 64)
-	rotated.UserAgent = truncateAuthMetadata(userAgent, 512)
-	bundle, err := issueAuthBundle(rotated, sid+"."+nextSecret, true)
+	if !recovered {
+		rotated.IP = truncateAuthMetadata(ip, 64)
+		rotated.UserAgent = truncateAuthMetadata(userAgent, 512)
+	}
+	bundle, err := issueAuthBundle(rotated, nextRefreshToken, true)
 	if err != nil {
 		return nil, nil, err
 	}
 	return bundle, currentUser, nil
+}
+
+// rotateSessionRefreshToken rotates the refresh secret of an already validated
+// session and returns the rotated row with the next raw refresh token. The
+// next secret is derived from the presented one, so a concurrent refresh that
+// already rotated to it is recovered (recovered=true) instead of failing.
+func rotateSessionRefreshToken(session *model.UserSession, secret string) (*model.UserSession, string, bool, error) {
+	nextSecret := deriveNextRefreshSecret(session.SID, secret)
+	nextRefreshToken := session.SID + "." + nextSecret
+	rotated, err := model.RotateUserSessionRefresh(session.UserID, session.SID, hashRefreshSecret(secret), hashRefreshSecret(nextSecret), time.Now().Unix(), RefreshReplayWindow)
+	switch {
+	case err == nil:
+		return rotated, nextRefreshToken, false, nil
+	case errors.Is(err, model.ErrUserSessionRefreshRace) && rotated != nil && hashRefreshSecret(nextSecret) == rotated.RefreshHash:
+		return rotated, nextRefreshToken, true, nil
+	case errors.Is(err, model.ErrUserSessionRefreshReuse):
+		return nil, "", false, ErrLoginSessionRevoked
+	case errors.Is(err, model.ErrUserSessionRefreshInvalid):
+		return nil, "", false, ErrRefreshTokenInvalid
+	case errors.Is(err, model.ErrUserSessionRefreshRace):
+		return nil, "", false, ErrRefreshRace
+	}
+	return nil, "", false, err
 }
 
 func RevokeByRefreshToken(rawRefreshToken, expectedSID, reason string) error {

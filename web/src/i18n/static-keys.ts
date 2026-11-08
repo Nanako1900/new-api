@@ -917,4 +917,9 @@ export const STATIC_I18N_KEYS = [
   'Good morning, {{name}}',
   'Good afternoon, {{name}}',
   'Good evening, {{name}}',
+  // Monitor console sign-in messages chosen from server error codes.
+  'This sign-in link is invalid. Open the monitor console again to sign in.',
+  'The monitor console is not enabled on this site.',
+  'This monitor console address is not allowed to sign in.',
+  'Could not sign in to the monitor console. Please try again.',
 ] as const
