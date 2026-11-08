@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type ReactNode, useMemo, useState } from 'react'
+import { lazy, type ReactNode, Suspense, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
@@ -27,9 +27,15 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useMeowChannelPerf } from '../../hooks/use-meow-channel-perf'
 import { usePricingData } from '../../hooks/use-pricing-data'
 import { buildMeowCatalog } from '../../lib/meow-catalog'
-import { ModelDetailsDrawer } from '../model-details'
 import { MeowFamilyCard } from './meow-family-card'
 import type { MeowPriceOptions } from './meow-model-row'
+
+// The drawer pulls in the charts and only mounts once a model is picked.
+const ModelDetailsDrawer = lazy(() =>
+  import('../model-details').then((module) => ({
+    default: module.ModelDetailsDrawer,
+  }))
+)
 
 const SKELETON_KEYS = ['claude', 'gpt'] as const
 
@@ -141,26 +147,28 @@ export function MeowPricingCatalog() {
       {body}
 
       {selectedModel && (
-        <ModelDetailsDrawer
-          open
-          onOpenChange={(open) => {
-            if (!open) setSelectedModelName(null)
-          }}
-          model={selectedModel}
-          groupRatio={pricing.groupRatio}
-          usableGroup={pricing.usableGroup}
-          endpointMap={
-            pricing.endpointMap as Record<
-              string,
-              { path?: string; method?: string }
-            >
-          }
-          autoGroups={pricing.autoGroups}
-          priceRate={pricing.priceRate}
-          usdExchangeRate={pricing.usdExchangeRate}
-          tokenUnit='M'
-          showRechargePrice={prices.showRechargePrice}
-        />
+        <Suspense fallback={null}>
+          <ModelDetailsDrawer
+            open
+            onOpenChange={(open) => {
+              if (!open) setSelectedModelName(null)
+            }}
+            model={selectedModel}
+            groupRatio={pricing.groupRatio}
+            usableGroup={pricing.usableGroup}
+            endpointMap={
+              pricing.endpointMap as Record<
+                string,
+                { path?: string; method?: string }
+              >
+            }
+            autoGroups={pricing.autoGroups}
+            priceRate={pricing.priceRate}
+            usdExchangeRate={pricing.usdExchangeRate}
+            tokenUnit='M'
+            showRechargePrice={prices.showRechargePrice}
+          />
+        </Suspense>
       )}
     </div>
   )

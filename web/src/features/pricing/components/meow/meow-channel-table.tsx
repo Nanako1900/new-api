@@ -16,11 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
+import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import type { MeowChannel, MeowChannelPerf } from '../../lib/meow-catalog'
@@ -29,6 +31,12 @@ import {
   MeowModelRow,
   type MeowPriceOptions,
 } from './meow-model-row'
+
+/** The channel's translated description, or its group name without one. */
+function channelLabel(t: TFunction, channel: MeowChannel): string {
+  if (!channel.description) return channel.group
+  return translateServerText(t, channel.description)
+}
 
 export interface MeowChannelBadgeProps {
   channel: MeowChannel
@@ -49,7 +57,7 @@ export function MeowChannelBadge(props: MeowChannelBadgeProps) {
         props.className
       )}
     >
-      <Label className='font-semibold'>{props.channel.label}</Label>
+      <Label className='font-semibold'>{channelLabel(t, props.channel)}</Label>
       <span className='bg-muted text-foreground rounded-md px-1.5 py-0.5 font-mono text-xs'>
         <span className='sr-only'>{t('Group Ratio')} </span>×
         {formatNumber(props.channel.ratio, locale)}
@@ -91,7 +99,7 @@ export function MeowChannelTable(props: MeowChannelTableProps) {
       )}
       <div
         role='table'
-        aria-label={`${props.familyName} · ${props.channel.label}`}
+        aria-label={`${props.familyName} · ${channelLabel(t, props.channel)}`}
       >
         <div
           role='row'

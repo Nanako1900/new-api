@@ -208,7 +208,7 @@ describe('buildMeowCatalog', () => {
     ])
   })
 
-  it('labels a channel with its group description, falling back to the group name', () => {
+  it('keeps the trimmed group description, empty when none is set', () => {
     const families = buildMeowCatalog(
       [model('claude-sonnet', { enable_groups: ['all'] })],
       { official: '官方渠道', kiro: { desc: '', ratio: 5 } },
@@ -216,10 +216,13 @@ describe('buildMeowCatalog', () => {
     )
 
     expect(
-      families[0].channels.map((channel) => [channel.label, channel.ratio])
+      families[0].channels.map((channel) => [
+        channel.description,
+        channel.ratio,
+      ])
     ).toEqual([
       ['官方渠道', 1.5],
-      ['kiro', 0.9],
+      ['', 0.9],
     ])
   })
 })

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PerformanceGroup } from '@/features/performance-metrics/types'
@@ -286,5 +287,38 @@ describe('meow family card', () => {
     expect(cells[1]).toHaveTextContent('$4.5')
     expect(cells[4]).toHaveTextContent('—')
     expect(cells[5]).toHaveTextContent('—')
+  })
+
+  it('translates a group description that is a server text key', () => {
+    i18next.addResource(
+      'en',
+      'translation',
+      'Default group',
+      'Standard channel'
+    )
+    try {
+      const translated = buildMeowCatalog(
+        [SONNET, GPT],
+        { official: 'Default group' },
+        GROUP_RATIO
+      ).find((item) => item.id === 'claude')
+      if (!translated) throw new Error('claude family not built')
+
+      render(
+        <MeowFamilyCard
+          family={translated}
+          prices={PRICES}
+          perf={NO_PERF}
+          onSelect={vi.fn()}
+        />
+      )
+
+      expect(
+        screen.getByRole('table', { name: 'Claude · Standard channel' })
+      ).toBeInTheDocument()
+      expect(screen.getByText('Standard channel')).toBeInTheDocument()
+    } finally {
+      delete i18next.getResourceBundle('en', 'translation')['Default group']
+    }
   })
 })

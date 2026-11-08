@@ -33,10 +33,11 @@ import { getConfiguredGroupRatio } from './model-helpers'
 
 export type MeowFamilyId = HomeProvider | 'other'
 
-/** A token group shown as a channel: label, price multiplier and models. */
+/** A token group shown as a channel: description, price multiplier and models. */
 export type MeowChannel = {
   group: string
-  label: string
+  /** Trimmed group description (a server text key), empty when none is set. */
+  description: string
   ratio: number
   models: PricingModel[]
 }
@@ -102,7 +103,7 @@ export function buildMeowCatalog(
       const description = typeof info === 'string' ? info : (info.desc ?? '')
       return {
         group,
-        label: description.trim() || group,
+        description: description.trim(),
         ratio: getConfiguredGroupRatio(groupRatio, group),
       }
     })

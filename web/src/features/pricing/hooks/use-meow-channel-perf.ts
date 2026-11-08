@@ -25,7 +25,9 @@ import type { MeowChannelPerf, MeowModelPerf } from '../lib/meow-catalog'
 
 // The details drawer (OverviewSummaryGrid in model-details.tsx and
 // model-details-performance.tsx) reads the same key and window, so all share
-// the cache.
+// the cache. `meta` and `retry` are last-writer-wins on the shared query; the
+// page's observer usually wins, so a failure seen only from the drawer may
+// still toast.
 const PERF_WINDOW_HOURS = 24
 
 /** Last-24h metrics for each model, indexed by model name and group. */

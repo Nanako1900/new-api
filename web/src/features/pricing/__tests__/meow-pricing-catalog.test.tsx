@@ -164,7 +164,12 @@ describe('meow pricing catalog', () => {
     )
 
     expect(
-      await screen.findByRole('dialog', { name: 'claude-sonnet' })
+      // The drawer chunk loads lazily, which is slow on a cold module cache.
+      await screen.findByRole(
+        'dialog',
+        { name: 'claude-sonnet' },
+        { timeout: 10_000 }
+      )
     ).toBeInTheDocument()
   })
 

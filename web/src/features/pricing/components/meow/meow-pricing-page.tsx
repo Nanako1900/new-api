@@ -34,7 +34,7 @@ const GLOW_MASK = 'linear-gradient(to bottom, black 40%, transparent 100%)'
 export function MeowPricing() {
   return (
     <PublicLayout showMainContainer={false}>
-      <div className='relative'>
+      <main className='relative'>
         <div
           aria-hidden
           className='pointer-events-none absolute inset-x-0 top-0 h-[600px] opacity-20 dark:opacity-[0.10]'
@@ -47,7 +47,7 @@ export function MeowPricing() {
         <PageTransition className='relative mx-auto w-full px-3 pt-16 pb-8 sm:px-6 sm:pt-20 sm:pb-10 xl:px-8'>
           <MeowPricingCatalog />
         </PageTransition>
-      </div>
+      </main>
     </PublicLayout>
   )
 }
