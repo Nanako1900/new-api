@@ -24,7 +24,7 @@ import { getServerErrorStatus } from './server-error-message'
 interface ErrorNotificationMeta extends Record<string, unknown> {
   /** Disable automatic notifications when a caller presents the failure itself. */
   errorToast?: boolean
-  // MeowAPI: background queries shown inline (price list metrics) opt out of the 500 page.
+  /** MeowAPI: queries whose failure the page shows inline (price list metrics) skip the 500 page. */
   errorPage?: boolean
 }
 
