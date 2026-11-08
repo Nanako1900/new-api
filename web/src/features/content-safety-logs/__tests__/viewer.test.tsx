@@ -353,16 +353,7 @@ it('removes the previous rows and shows the empty state while a filter is invali
   expect(screen.getByText('No records')).toBeVisible()
 })
 
-it('leaves for /403 and records the lost permission when the API answers 403', async () => {
-  useAuthStore.getState().auth.setUser({
-    id: 1,
-    username: 'admin',
-    role: ROLE.ADMIN,
-    permissions: { admin_permissions: { audit: { read: true } } },
-  })
-  vi.spyOn(api, 'get').mockRejectedValue(
-    Object.assign(new Error('forbidden'), { response: { status: 403 } })
-  )
+function renderTableInRouter() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -393,10 +384,42 @@ it('leaves for /403 and records the lost permission when the API answers 403', a
       </QueryClientProvider>
     </PageFooterProvider>
   )
+  return router
+}
+
+function signInWithAuditRead() {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'admin',
+    role: ROLE.ADMIN,
+    permissions: { admin_permissions: { audit: { read: true } } },
+  })
+}
+
+const auditRead = () =>
+  useAuthStore.getState().auth.user?.permissions?.admin_permissions?.audit?.read
+
+it('leaves for /403 and records the lost permission when the API answers 403', async () => {
+  signInWithAuditRead()
+  vi.spyOn(api, 'get').mockRejectedValue(
+    Object.assign(new Error('forbidden'), { response: { status: 403 } })
+  )
+  const router = renderTableInRouter()
   expect(await screen.findByText('Forbidden page')).toBeVisible()
   expect(router.state.location.pathname).toBe('/403')
-  expect(
-    useAuthStore.getState().auth.user?.permissions?.admin_permissions?.audit
-      ?.read
-  ).toBe(false)
+  expect(auditRead()).toBe(false)
+})
+
+it('stays on the page and keeps the permission when the API answers 500', async () => {
+  signInWithAuditRead()
+  vi.spyOn(api, 'get').mockRejectedValue(
+    Object.assign(new Error('server error'), { response: { status: 500 } })
+  )
+  const router = renderTableInRouter()
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Failed to load content safety logs'
+  )
+  expect(router.state.location.pathname).toBe('/usage-logs/content-safety')
+  expect(screen.queryByText('Forbidden page')).not.toBeInTheDocument()
+  expect(auditRead()).toBe(true)
 })

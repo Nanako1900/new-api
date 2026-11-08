@@ -7670,7 +7670,7 @@
     "Alert #{{index}} has an invalid start time": "Оповещение №{{index}}: недопустимое время начала",
     "Alert #{{index}} has an invalid end time": "Оповещение №{{index}}: недопустимое время окончания",
     "Alert #{{index}} end time must be after its start time": "Оповещение №{{index}}: время окончания должно быть позже времени начала",
-    "Failed to load content safety logs": "Не удалось загрузить журнал безопасности контента",
+    "Failed to load content safety logs": "Не удалось загрузить журнал модерации",
     "Decision": "Решение",
     "Hit words": "Найденные слова",
     "Matched content": "Найденное содержимое",
@@ -7723,7 +7723,7 @@
     "Select a review group": "Выберите группу проверки",
     "Prompt text filtering needs both switches enabled and a non-empty block word list or AI review.": "Для фильтрации промптов включите оба переключателя и задайте непустой список слов для блокировки или включите ИИ-проверку.",
     "Block words": "Слова для блокировки",
-    "Content safety log retention (days)": "Хранение журнала безопасности контента (дни)",
+    "Content safety log retention (days)": "Хранение журнала модерации (дни)",
     "Block and review records older than this are deleted once a day.": "Записи о блокировках и проверках старше этого срока удаляются раз в сутки.",
     "Review timed out": "Время проверки истекло",
     "No review channel available": "Нет доступного канала проверки",
@@ -7732,7 +7732,7 @@
     "Review rate limit reached": "Достигнут лимит частоты проверок",
     "Review upstream error": "Ошибка вышестоящего сервиса проверки",
     "Client canceled": "Отменено клиентом",
-    "Content safety log cleanup": "Очистка журнала безопасности контента",
-    "Invalid content safety log query": "Недопустимый запрос к журналу безопасности контента"
+    "Content safety log cleanup": "Очистка журнала модерации",
+    "Invalid content safety log query": "Недопустимый запрос к журналу модерации"
   }
 }

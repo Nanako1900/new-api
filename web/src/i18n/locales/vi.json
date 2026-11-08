@@ -7670,7 +7670,7 @@
     "Alert #{{index}} has an invalid start time": "Thời gian bắt đầu của cảnh báo #{{index}} không hợp lệ",
     "Alert #{{index}} has an invalid end time": "Thời gian kết thúc của cảnh báo #{{index}} không hợp lệ",
     "Alert #{{index}} end time must be after its start time": "Thời gian kết thúc của cảnh báo #{{index}} phải sau thời gian bắt đầu",
-    "Failed to load content safety logs": "Không tải được nhật ký an toàn nội dung",
+    "Failed to load content safety logs": "Không tải được nhật ký kiểm duyệt",
     "Decision": "Kết luận",
     "Hit words": "Từ bị khớp",
     "Matched content": "Nội dung bị khớp",
@@ -7723,7 +7723,7 @@
     "Select a review group": "Chọn nhóm kiểm duyệt",
     "Prompt text filtering needs both switches enabled and a non-empty block word list or AI review.": "Lọc văn bản lời nhắc cần bật cả hai công tắc và có danh sách từ chặn không trống hoặc bật kiểm duyệt bằng AI.",
     "Block words": "Từ chặn",
-    "Content safety log retention (days)": "Thời gian lưu nhật ký an toàn nội dung (ngày)",
+    "Content safety log retention (days)": "Thời gian lưu nhật ký kiểm duyệt (ngày)",
     "Block and review records older than this are deleted once a day.": "Bản ghi chặn và kiểm duyệt cũ hơn mốc này được xóa mỗi ngày một lần.",
     "Review timed out": "Kiểm duyệt hết thời gian chờ",
     "No review channel available": "Không có kênh kiểm duyệt khả dụng",
@@ -7732,7 +7732,7 @@
     "Review rate limit reached": "Đã đạt giới hạn tần suất kiểm duyệt",
     "Review upstream error": "Lỗi thượng nguồn khi kiểm duyệt",
     "Client canceled": "Máy khách đã hủy",
-    "Content safety log cleanup": "Dọn dẹp nhật ký an toàn nội dung",
-    "Invalid content safety log query": "Truy vấn nhật ký an toàn nội dung không hợp lệ"
+    "Content safety log cleanup": "Dọn dẹp nhật ký kiểm duyệt",
+    "Invalid content safety log query": "Truy vấn nhật ký kiểm duyệt không hợp lệ"
   }
 }

@@ -7670,7 +7670,7 @@
     "Alert #{{index}} has an invalid start time": "L'heure de début de l'alerte n° {{index}} est invalide",
     "Alert #{{index}} has an invalid end time": "L'heure de fin de l'alerte n° {{index}} est invalide",
     "Alert #{{index}} end time must be after its start time": "L'heure de fin de l'alerte n° {{index}} doit être postérieure à son heure de début",
-    "Failed to load content safety logs": "Impossible de charger les journaux de sécurité du contenu",
+    "Failed to load content safety logs": "Impossible de charger les journaux de modération",
     "Decision": "Décision",
     "Hit words": "Mots détectés",
     "Matched content": "Contenu détecté",
@@ -7723,7 +7723,7 @@
     "Select a review group": "Choisissez un groupe de vérification",
     "Prompt text filtering needs both switches enabled and a non-empty block word list or AI review.": "Le filtrage des prompts nécessite les deux options activées et une liste de mots à bloquer non vide, ou la vérification par IA.",
     "Block words": "Mots à bloquer",
-    "Content safety log retention (days)": "Conservation des journaux de sécurité du contenu (jours)",
+    "Content safety log retention (days)": "Conservation des journaux de modération (jours)",
     "Block and review records older than this are deleted once a day.": "Les enregistrements de blocage et de vérification plus anciens sont supprimés une fois par jour.",
     "Review timed out": "Délai de vérification dépassé",
     "No review channel available": "Aucun canal de vérification disponible",
@@ -7732,7 +7732,7 @@
     "Review rate limit reached": "Limite de fréquence de vérification atteinte",
     "Review upstream error": "Erreur en amont lors de la vérification",
     "Client canceled": "Annulé par le client",
-    "Content safety log cleanup": "Nettoyage des journaux de sécurité du contenu",
+    "Content safety log cleanup": "Nettoyage des journaux de modération",
     "Invalid content safety log query": "Critères de recherche des journaux de modération invalides"
   }
 }
