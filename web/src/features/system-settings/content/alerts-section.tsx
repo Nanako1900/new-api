@@ -5,26 +5,38 @@ import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
-import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
-import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
-  ALERT_LEVEL_META,
-  ALERT_STATUS_META,
+  ALERT_LEVELS,
   CONSOLE_ALERTS_QUERY_KEY,
   MAX_ALERTS,
 } from '@/features/console-alerts/constants'
-import { getAlertStatus } from '@/features/console-alerts/lib/alert-status'
 import type { ConsoleAlert } from '@/features/console-alerts/types'
-import dayjs from '@/lib/dayjs'
 
+import { FormDirtyIndicator } from '../components/form-dirty-indicator'
+import { FormNavigationGuard } from '../components/form-navigation-guard'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { AlertFormDialog } from './alert-form-dialog'
 import type { AlertFormValues } from './alert-schema'
+import { buildAlertColumns } from './alerts-table-columns'
 
-const SCHEDULE_FORMAT = 'YYYY-MM-DD HH:mm'
+/** Parses stored alerts, dropping entries the list cannot render. */
+function parseStoredAlerts(data: string): ConsoleAlert[] {
+  try {
+    const parsed: unknown = JSON.parse(data || '[]')
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (item): item is ConsoleAlert =>
+        typeof item === 'object' &&
+        item !== null &&
+        typeof item.id === 'number' &&
+        ALERT_LEVELS.includes(item.level)
+    )
+  } catch {
+    return []
+  }
+}
 
 type AlertsSectionProps = {
   /** Stored `console_setting.alerts` JSON. */
@@ -35,7 +47,9 @@ export function AlertsSection(props: AlertsSectionProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const updateOption = useUpdateOption()
-  const [alerts, setAlerts] = useState<ConsoleAlert[]>([])
+  const [alerts, setAlerts] = useState<ConsoleAlert[]>(() =>
+    parseStoredAlerts(props.data)
+  )
   const [hasChanges, setHasChanges] = useState(false)
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [formOpen, setFormOpen] = useState(false)
@@ -43,12 +57,7 @@ export function AlertsSection(props: AlertsSectionProps) {
   const [pendingDeleteIds, setPendingDeleteIds] = useState<number[]>([])
 
   useEffect(() => {
-    try {
-      const parsed: unknown = JSON.parse(props.data || '[]')
-      setAlerts(Array.isArray(parsed) ? (parsed as ConsoleAlert[]) : [])
-    } catch {
-      setAlerts([])
-    }
+    setAlerts(parseStoredAlerts(props.data))
     setHasChanges(false)
     setSelectedIds([])
   }, [props.data])
@@ -118,6 +127,7 @@ export function AlertsSection(props: AlertsSectionProps) {
 
   return (
     <SettingsSection title={t('Alerts')}>
+      <FormNavigationGuard when={hasChanges} />
       <div className='space-y-4'>
         <div className='flex flex-wrap items-center gap-2'>
           <Button
@@ -146,133 +156,24 @@ export function AlertsSection(props: AlertsSectionProps) {
             <Save className='mr-2 h-4 w-4' />
             {updateOption.isPending ? t('Saving...') : t('Save Settings')}
           </Button>
-          {hasChanges ? (
-            <span className='text-muted-foreground text-xs'>
-              {t('You have unsaved changes')}
-            </span>
-          ) : null}
+          <FormDirtyIndicator isDirty={hasChanges} />
         </div>
 
         <StaticDataTable
           data={sortedAlerts}
           getRowKey={(alert) => alert.id}
           emptyContent={t('No alerts yet. Click "Add Alert" to create one.')}
-          columns={[
-            {
-              id: 'select',
-              className: 'w-12',
-              header: (
-                <Checkbox
-                  checked={
-                    alerts.length > 0 && selectedIds.length === alerts.length
-                  }
-                  onCheckedChange={(checked) =>
-                    setSelectedIds(
-                      checked ? alerts.map((alert) => alert.id) : []
-                    )
-                  }
-                />
-              ),
-              cell: (alert) => (
-                <Checkbox
-                  checked={selectedIds.includes(alert.id)}
-                  onCheckedChange={(checked) =>
-                    toggleSelected(alert.id, checked === true)
-                  }
-                />
-              ),
-            },
-            {
-              id: 'alert',
-              header: t('Alert'),
-              cell: (alert) => (
-                <div className='flex max-w-md flex-col gap-0.5'>
-                  {alert.title ? (
-                    <span className='truncate text-sm font-medium'>
-                      {alert.title}
-                    </span>
-                  ) : null}
-                  <span className='text-muted-foreground truncate text-xs'>
-                    {alert.content}
-                  </span>
-                </div>
-              ),
-            },
-            {
-              id: 'level',
-              header: t('Level'),
-              cell: (alert) => (
-                <StatusBadge
-                  label={t(ALERT_LEVEL_META[alert.level].labelKey)}
-                  variant={ALERT_LEVEL_META[alert.level].badgeVariant}
-                  copyable={false}
-                />
-              ),
-            },
-            {
-              id: 'status',
-              header: t('Status'),
-              cell: (alert) => {
-                const status = ALERT_STATUS_META[getAlertStatus(alert, now)]
-                return (
-                  <StatusBadge
-                    label={t(status.labelKey)}
-                    variant={status.badgeVariant}
-                    copyable={false}
-                  />
-                )
-              },
-            },
-            {
-              id: 'schedule',
-              header: t('Schedule'),
-              cell: (alert) => {
-                if (!alert.startsAt && !alert.endsAt) {
-                  return (
-                    <span className='text-muted-foreground text-xs'>
-                      {t('Always')}
-                    </span>
-                  )
-                }
-                return (
-                  <div className='flex flex-col gap-0.5 text-xs'>
-                    {alert.startsAt ? (
-                      <span>
-                        {t('Starts {{time}}', {
-                          time: dayjs(alert.startsAt).format(SCHEDULE_FORMAT),
-                        })}
-                      </span>
-                    ) : null}
-                    {alert.endsAt ? (
-                      <span>
-                        {t('Ends {{time}}', {
-                          time: dayjs(alert.endsAt).format(SCHEDULE_FORMAT),
-                        })}
-                      </span>
-                    ) : null}
-                  </div>
-                )
-              },
-            },
-            {
-              id: 'dismissible',
-              header: t('Dismissible'),
-              cell: (alert) => (alert.dismissible ? t('Yes') : t('No')),
-            },
-            {
-              id: 'actions',
-              header: t('Actions'),
-              cell: (alert) => (
-                <StaticRowActions
-                  editLabel={t('Edit')}
-                  deleteLabel={t('Delete')}
-                  menuLabel={t('Open menu')}
-                  onEdit={() => openForm(alert)}
-                  onDelete={() => setPendingDeleteIds([alert.id])}
-                />
-              ),
-            },
-          ]}
+          columns={buildAlertColumns({
+            t,
+            alerts,
+            selectedIds,
+            now,
+            onToggleAll: (checked) =>
+              setSelectedIds(checked ? alerts.map((alert) => alert.id) : []),
+            onToggleOne: toggleSelected,
+            onEdit: openForm,
+            onDelete: (alert) => setPendingDeleteIds([alert.id]),
+          })}
         />
       </div>
 

@@ -90,8 +90,6 @@ export function AlertFormDialog(props: AlertFormDialogProps) {
         'Alerts appear at the top of every console page for signed-in users.'
       )}
       contentClassName='max-w-2xl'
-      contentHeight='auto'
-      bodyClassName='space-y-4'
       footer={
         <>
           <Button
