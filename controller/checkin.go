@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -41,8 +42,11 @@ func GetCheckinStatus(c *gin.Context) {
 
 // DoCheckin 执行用户签到
 func DoCheckin(c *gin.Context) {
+	// The captcha gate recorded this request as a check-in; withdraw it when
+	// no check-in happens.
 	setting := operation_setting.GetCheckinSetting()
 	if !setting.Enabled {
+		middleware.WithdrawCaptchaRisk(c)
 		common.ApiErrorT(c, "Check-in feature is not enabled")
 		return
 	}
@@ -51,6 +55,7 @@ func DoCheckin(c *gin.Context) {
 
 	checkin, err := model.UserCheckin(userId)
 	if err != nil {
+		middleware.WithdrawCaptchaRisk(c)
 		common.ApiError(c, err)
 		return
 	}

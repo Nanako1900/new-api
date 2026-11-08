@@ -25,12 +25,10 @@ import {
   ChevronUp,
   Sparkles,
 } from 'lucide-react'
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { Dialog } from '@/components/dialog'
-import { GeetestCaptcha } from '@/components/geetest-captcha'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
@@ -42,7 +40,6 @@ import {
   TooltipProvider,
 } from '@/components/ui/tooltip'
 import { useCaptcha } from '@/hooks/use-captcha'
-import { isCaptchaRejection } from '@/lib/captcha'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -60,14 +57,11 @@ export function CheckinCalendarCard({
   checkinEnabled,
 }: CheckinCalendarCardProps) {
   const { t } = useTranslation()
-  const { captchaId } = useCaptcha()
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth(), 1)
   })
   const [checkinLoading, setCheckinLoading] = useState(false)
-  const [captchaModalVisible, setCaptchaModalVisible] = useState(false)
-  const [captchaWidgetKey, setCaptchaWidgetKey] = useState(0)
   const [initialLoaded, setInitialLoaded] = useState(false)
   const [collapsed, setCollapsed] = useState<boolean>(false)
 
@@ -121,6 +115,10 @@ export function CheckinCalendarCard({
 
   const checkedToday = checkinData?.stats?.checked_in_today === true
   const todayAward = checkinRecordsMap[todayString]
+  // No GeeTest traffic while the button cannot check in.
+  const captcha = useCaptcha({
+    active: checkinEnabled && !isLoading && !checkedToday,
+  })
 
   useEffect(() => {
     if (initialLoaded) return
@@ -130,44 +128,25 @@ export function CheckinCalendarCard({
     setInitialLoaded(true)
   }, [checkinData, checkedToday, initialLoaded, isLoading])
 
-  const doCheckin = useCallback(
-    async (token?: string) => {
-      setCheckinLoading(true)
-      try {
-        const res = await performCheckin(token)
-        if (res.success && res.data) {
-          toast.success(
-            `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
-          )
-          refetch()
-          setCaptchaModalVisible(false)
-        } else {
-          const captchaRejected = isCaptchaRejection(res)
-          if (!token && captchaRejected) {
-            if (!captchaId) {
-              toast.error(t('GeeTest is enabled but the captcha ID is empty.'))
-              return
-            }
-            setCaptchaModalVisible(true)
-            return
-          }
-          if (token) {
-            // The result is spent: retry with a fresh challenge, or close the
-            // check when verification was not what failed.
-            setCaptchaWidgetKey((v) => v + 1)
-            if (!captchaRejected) setCaptchaModalVisible(false)
-          }
-          handleServerError(res, t('Check-in failed'))
-        }
-      } catch (error) {
-        if (token) setCaptchaWidgetKey((v) => v + 1)
-        handleServerError(error, t('Check-in failed'))
-      } finally {
-        setCheckinLoading(false)
+  async function doCheckin() {
+    setCheckinLoading(true)
+    try {
+      const res = await captcha.run(performCheckin)
+      if (!res) return
+      if (res.success && res.data) {
+        toast.success(
+          `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
+        )
+        void refetch()
+      } else {
+        handleServerError(res, t('Check-in failed'))
       }
-    },
-    [captchaId, refetch, t]
-  )
+    } catch (error) {
+      handleServerError(error, t('Check-in failed'))
+    } finally {
+      setCheckinLoading(false)
+    }
+  }
 
   const handlePrevMonth = () => {
     setCurrentMonth(
@@ -248,33 +227,6 @@ export function CheckinCalendarCard({
 
   return (
     <TooltipProvider delay={100}>
-      <Dialog
-        open={captchaModalVisible}
-        onOpenChange={(open) => {
-          setCaptchaModalVisible(open)
-          if (!open) {
-            setCaptchaWidgetKey((v) => v + 1)
-          }
-        }}
-        title={t('Security Check')}
-        contentClassName='sm:max-w-md'
-        contentHeight='auto'
-        bodyClassName='space-y-4'
-      >
-        <div className='text-muted-foreground text-sm'>
-          {t('Please complete the security check to continue.')}
-        </div>
-        <div className='flex justify-center py-4'>
-          <GeetestCaptcha
-            key={captchaWidgetKey}
-            captchaId={captchaId}
-            onVerify={(token) => {
-              doCheckin(token)
-            }}
-          />
-        </div>
-      </Dialog>
-
       <Card data-card-hover='false' className='gap-0 overflow-hidden py-0'>
         {/* Header */}
         <div className='border-b p-4 sm:p-6'>
@@ -317,7 +269,7 @@ export function CheckinCalendarCard({
               </div>
             </button>
             <Button
-              onClick={() => doCheckin()}
+              onClick={() => void doCheckin()}
               disabled={checkinLoading || checkedToday}
               size='sm'
               className='w-full shrink-0 sm:w-auto'

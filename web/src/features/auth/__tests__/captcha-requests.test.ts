@@ -125,9 +125,30 @@ describe('captcha-guarded auth requests', () => {
     })
   })
 
-  it('without a captcha token, sends no captcha header', async () => {
-    await sendPasswordResetEmail('alice@example.com')
+  // Risk mode sends the first attempt without a GeeTest result.
+  it.each([
+    [
+      'login',
+      () => login({ username: 'alice', password: 'secret' }),
+      '/api/user/login',
+    ],
+    [
+      'the sign-up email check',
+      () => startRegistrationEmail('alice@example.com'),
+      '/api/user/register/email/start',
+    ],
+    [
+      'the password reset link',
+      () => sendPasswordResetEmail('alice@example.com'),
+      '/api/user/password-reset/start',
+    ],
+  ])(
+    'without a captcha token, %s sends no captcha header',
+    async (_name, request, url) => {
+      await request()
 
-    expect(sent[0].headers.has('X-Captcha-Token')).toBe(false)
-  })
+      expect(sentUrl(sent[0])).toBe(url)
+      expect(sent[0].headers.has('X-Captcha-Token')).toBe(false)
+    }
+  )
 })

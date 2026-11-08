@@ -17,18 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { Dialog } from '@/components/dialog'
-import { GeetestCaptcha } from '@/components/geetest-captcha'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { getCheckinStatus, performCheckin } from '@/features/profile/api'
 import { useCaptcha } from '@/hooks/use-captcha'
 import { getSelf } from '@/lib/api'
-import { isCaptchaRejection } from '@/lib/captcha'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
@@ -71,16 +68,13 @@ function useCheckinMonth(month: string, enabled: boolean) {
 
 /**
  * Daily check-in: the last seven days as paws or the month calendar, the
- * current streak and one button. Check-in and the human verification retry
- * follow the profile calendar card.
+ * current streak and one button. Check-in and its human verification follow
+ * the profile calendar card.
  */
 export function MeowCheckinCard() {
   const { t } = useTranslation()
-  const { captchaId } = useCaptcha()
   const setUser = useAuthStore((state) => state.auth.setUser)
   const [checkinLoading, setCheckinLoading] = useState(false)
-  const [captchaOpen, setCaptchaOpen] = useState(false)
-  const [captchaWidgetKey, setCaptchaWidgetKey] = useState(0)
 
   const today = useMemo(() => new Date(), [])
   const week = useMemo(() => lastSevenDays(today), [today])
@@ -122,50 +116,33 @@ export function MeowCheckinCard() {
   }, [shown.data])
 
   const checkedToday = current.data?.stats?.checked_in_today === true
+  // No GeeTest traffic while the button cannot check in.
+  const captcha = useCaptcha({ active: !current.isLoading && !checkedToday })
   const streak = checkinStreak(today, checkedDates)
   const queryClient = useQueryClient()
 
-  const doCheckin = useCallback(
-    async (token?: string) => {
-      setCheckinLoading(true)
-      try {
-        const res = await performCheckin(token)
-        if (res.success && res.data) {
-          toast.success(
-            `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
-          )
-          setCaptchaOpen(false)
-          void queryClient.invalidateQueries({ queryKey: ['checkin-status'] })
-          // Refresh the balance shown on the overview.
-          const self = await getSelf().catch(() => null)
-          if (self?.success && self.data) setUser(self.data)
-          return
-        }
-        const captchaRejected = isCaptchaRejection(res)
-        if (!token && captchaRejected) {
-          if (!captchaId) {
-            toast.error(t('GeeTest is enabled but the captcha ID is empty.'))
-            return
-          }
-          setCaptchaOpen(true)
-          return
-        }
-        if (token) {
-          // The result is spent: retry with a fresh challenge, or close the
-          // check when verification was not what failed.
-          setCaptchaWidgetKey((v) => v + 1)
-          if (!captchaRejected) setCaptchaOpen(false)
-        }
-        handleServerError(res, t('Check-in failed'))
-      } catch (error) {
-        if (token) setCaptchaWidgetKey((v) => v + 1)
-        handleServerError(error, t('Check-in failed'))
-      } finally {
-        setCheckinLoading(false)
+  async function doCheckin() {
+    setCheckinLoading(true)
+    try {
+      const res = await captcha.run(performCheckin)
+      if (!res) return
+      if (res.success && res.data) {
+        toast.success(
+          `${t('Check-in successful! Received')} ${formatQuotaWithCurrency(res.data.quota_awarded)}`
+        )
+        void queryClient.invalidateQueries({ queryKey: ['checkin-status'] })
+        // Refresh the balance shown on the overview.
+        const self = await getSelf().catch(() => null)
+        if (self?.success && self.data) setUser(self.data)
+        return
       }
-    },
-    [captchaId, queryClient, setUser, t]
-  )
+      handleServerError(res, t('Check-in failed'))
+    } catch (error) {
+      handleServerError(error, t('Check-in failed'))
+    } finally {
+      setCheckinLoading(false)
+    }
+  }
 
   const todayKey = toDateKey(today)
 
@@ -175,31 +152,6 @@ export function MeowCheckinCard() {
 
   return (
     <div className='bg-card border-border flex flex-col gap-4 rounded-[22px] border p-5'>
-      <Dialog
-        open={captchaOpen}
-        onOpenChange={(open) => {
-          setCaptchaOpen(open)
-          if (!open) setCaptchaWidgetKey((v) => v + 1)
-        }}
-        title={t('Security Check')}
-        contentClassName='sm:max-w-md'
-        contentHeight='auto'
-        bodyClassName='space-y-4'
-      >
-        <div className='text-muted-foreground text-sm'>
-          {t('Please complete the security check to continue.')}
-        </div>
-        <div className='flex justify-center py-4'>
-          <GeetestCaptcha
-            key={captchaWidgetKey}
-            captchaId={captchaId}
-            onVerify={(token) => {
-              void doCheckin(token)
-            }}
-          />
-        </div>
-      </Dialog>
-
       <div className='flex items-start justify-between gap-3'>
         <div className='flex flex-col gap-0.5'>
           <h2 className='text-base font-extrabold'>{t('Daily Check-in')}</h2>

@@ -33,21 +33,25 @@ func serveCaptchaRouteRequest(t *testing.T, engine *gin.Engine, method, target, 
 func setGeetestOptions(t *testing.T, enabled bool, captchaID, captchaKey string) {
 	t.Helper()
 	previousEnabled := common.GeetestCheckEnabled
+	previousMode := common.GeetestCheckMode
 	previousID := common.GeetestCaptchaId
 	previousKey := common.GeetestCaptchaKey
 	t.Cleanup(func() {
 		common.GeetestCheckEnabled = previousEnabled
+		common.GeetestCheckMode = previousMode
 		common.GeetestCaptchaId = previousID
 		common.GeetestCaptchaKey = previousKey
 	})
 	common.GeetestCheckEnabled = enabled
+	common.GeetestCheckMode = common.GeetestCheckModeAlways
 	common.GeetestCaptchaId = captchaID
 	common.GeetestCaptchaKey = captchaKey
 }
 
-// The anonymous account entry points must reach the GeeTest check before any
-// account lookup or email is sent. The check-in route sits behind UserAuth and
-// is covered by the web console's check-in flow test.
+// In always mode the anonymous account entry points must reach the GeeTest
+// check before any account lookup or email is sent; password login runs it in
+// controller.Login. Risk mode and the check-in route are covered by the
+// middleware and controller captcha risk tests.
 func TestAnonymousAccountRoutesRequireGeetest(t *testing.T) {
 	setGeetestOptions(t, true, "captcha-id", "captcha-key")
 	gin.SetMode(gin.TestMode)
@@ -135,6 +139,23 @@ func TestGeetestOptionUpdatesCannotLockOutLogin(t *testing.T) {
 
 			assert.False(t, reply.Success)
 			assert.Equal(t, test.message, reply.Message)
+		})
+	}
+}
+
+func TestGeetestCheckModeOptionRejectsUnknownModes(t *testing.T) {
+	setGeetestOptions(t, true, "captcha-id", "captcha-key")
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.PUT("/api/option/", controller.UpdateOption)
+
+	for _, value := range []string{`""`, `"RISK"`, `"sometimes"`, `true`} {
+		t.Run(value, func(t *testing.T) {
+			reply := serveCaptchaRouteRequest(t, engine, http.MethodPut, "/api/option/", `{"key":"GeetestCheckMode","value":`+value+`}`)
+
+			assert.False(t, reply.Success)
+			assert.Equal(t, "Invalid GeeTest verification mode", reply.Message)
+			assert.Equal(t, common.GeetestCheckModeAlways, common.GeetestCheckMode)
 		})
 	}
 }
