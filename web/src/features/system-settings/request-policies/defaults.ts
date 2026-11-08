@@ -41,9 +41,26 @@ export type FilteringSettings = Pick<
   SecuritySettings,
   'CheckSensitiveEnabled' | 'CheckSensitiveOnPromptEnabled' | 'SensitiveWords'
 >
+// Options of the content safety review tier, stored as
+// `content_safety_setting.*`. The block-word tier keeps FilteringSettings.
+export type ContentSafetySettings = {
+  'content_safety_setting.review_enabled': boolean
+  'content_safety_setting.review_words': string
+  'content_safety_setting.review_model': string
+  'content_safety_setting.review_group': string
+  'content_safety_setting.review_prompt': string
+  'content_safety_setting.review_timeout_seconds': number
+  'content_safety_setting.review_max_concurrency': number
+  'content_safety_setting.review_rate_limit_per_minute': number
+  'content_safety_setting.window_chars': number
+  'content_safety_setting.max_windows': number
+  'content_safety_setting.cache_ttl_seconds': number
+  'content_safety_setting.log_retention_days': number
+}
 export type RequestPolicySettings = RetrySettings &
   HealthSettings &
   FilteringSettings &
+  ContentSafetySettings &
   Pick<ChannelAffinitySettings, keyof ChannelAffinitySettings>
 
 export const defaultRequestPolicySettings: RequestPolicySettings = {
@@ -69,4 +86,16 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   CheckSensitiveEnabled: false,
   CheckSensitiveOnPromptEnabled: false,
   SensitiveWords: '',
+  'content_safety_setting.review_enabled': false,
+  'content_safety_setting.review_words': '',
+  'content_safety_setting.review_model': '',
+  'content_safety_setting.review_group': 'default',
+  'content_safety_setting.review_prompt': '',
+  'content_safety_setting.review_timeout_seconds': 15,
+  'content_safety_setting.review_max_concurrency': 16,
+  'content_safety_setting.review_rate_limit_per_minute': 30,
+  'content_safety_setting.window_chars': 300,
+  'content_safety_setting.max_windows': 20,
+  'content_safety_setting.cache_ttl_seconds': 86400,
+  'content_safety_setting.log_retention_days': 30,
 }

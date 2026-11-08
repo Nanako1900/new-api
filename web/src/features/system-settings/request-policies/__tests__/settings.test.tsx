@@ -164,6 +164,12 @@ beforeEach(() => {
         },
       }
     }
+    if (url === '/api/channel/models_enabled') {
+      return { data: { success: true, data: ['judge-model', 'backup-judge'] } }
+    }
+    if (url === '/api/group/') {
+      return { data: { success: true, data: ['default', 'vip'] } }
+    }
     return {
       data: {
         success: true,
@@ -239,9 +245,9 @@ describe('request policy settings', () => {
     const prompt = screen.getByRole('switch', { name: 'Inspect user prompts' })
     expect(prompt).toHaveAttribute('aria-disabled', 'true')
     expect(prompt).toBeChecked()
-    expect(
-      screen.getByRole('textbox', { name: 'Blocked keywords' })
-    ).toHaveValue('blocked')
+    expect(screen.getByRole('textbox', { name: 'Block words' })).toHaveValue(
+      'blocked'
+    )
     await userEvent.click(
       screen.getByRole('button', { name: 'Save sensitive words' })
     )
@@ -256,7 +262,7 @@ describe('request policy settings', () => {
   it('refreshing another policy keeps unsaved filter text', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
     const keywords = await screen.findByRole('textbox', {
-      name: 'Blocked keywords',
+      name: 'Block words',
     })
     fireEvent.change(keywords, { target: { value: 'unsaved' } })
     settings.RetryTimes = 5
@@ -264,6 +270,31 @@ describe('request policy settings', () => {
       await queryClient.invalidateQueries({ queryKey: ['system-options'] })
     })
     expect(keywords).toHaveValue('unsaved')
+  })
+
+  it('saving a changed log retention also sends the current review switch and group', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    fireEvent.change(
+      await screen.findByRole('spinbutton', {
+        name: 'Content safety log retention (days)',
+      }),
+      { target: { value: '45' } }
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            'content_safety_setting.review_enabled': 'false',
+            'content_safety_setting.review_group': 'default',
+            'content_safety_setting.log_retention_days': '45',
+          },
+        }
+      )
+    )
   })
 
   it('invalid retry status ranges show validation and do not write options', async () => {
