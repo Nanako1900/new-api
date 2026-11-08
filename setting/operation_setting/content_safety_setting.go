@@ -43,18 +43,19 @@ var contentSafetySetting = ContentSafetySetting{
 type contentSafetyIntOption struct {
 	field    string
 	min, max int
+	ptr      func(*ContentSafetySetting) *int
 }
 
 // contentSafetyIntOptions lists the integer options in a fixed order with their
 // inclusive ranges, so validation errors are deterministic.
 var contentSafetyIntOptions = []contentSafetyIntOption{
-	{"review_timeout_seconds", 1, 60},
-	{"review_max_concurrency", 1, 256},
-	{"review_rate_limit_per_minute", 1, 10000},
-	{"window_chars", 50, 2000},
-	{"max_windows", 1, 100},
-	{"cache_ttl_seconds", 0, 604800},
-	{"log_retention_days", 1, 3650},
+	{"review_timeout_seconds", 1, 60, func(s *ContentSafetySetting) *int { return &s.ReviewTimeoutSeconds }},
+	{"review_max_concurrency", 1, 256, func(s *ContentSafetySetting) *int { return &s.ReviewMaxConcurrency }},
+	{"review_rate_limit_per_minute", 1, 10000, func(s *ContentSafetySetting) *int { return &s.ReviewRateLimitPerMinute }},
+	{"window_chars", 50, 2000, func(s *ContentSafetySetting) *int { return &s.WindowChars }},
+	{"max_windows", 1, 100, func(s *ContentSafetySetting) *int { return &s.MaxWindows }},
+	{"cache_ttl_seconds", 0, 604800, func(s *ContentSafetySetting) *int { return &s.CacheTTLSeconds }},
+	{"log_retention_days", 1, 3650, func(s *ContentSafetySetting) *int { return &s.LogRetentionDays }},
 }
 
 var contentSafetyNonIntFields = []string{"review_enabled", "review_words", "review_model", "review_group", "review_prompt"}
@@ -83,17 +84,8 @@ func (s *ContentSafetySetting) ReviewWordList() []string {
 // (manual edits, older nodes), so consumers read this copy.
 func (s *ContentSafetySetting) Bounded() ContentSafetySetting {
 	bounded := *s
-	ints := map[string]*int{
-		"review_timeout_seconds":       &bounded.ReviewTimeoutSeconds,
-		"review_max_concurrency":       &bounded.ReviewMaxConcurrency,
-		"review_rate_limit_per_minute": &bounded.ReviewRateLimitPerMinute,
-		"window_chars":                 &bounded.WindowChars,
-		"max_windows":                  &bounded.MaxWindows,
-		"cache_ttl_seconds":            &bounded.CacheTTLSeconds,
-		"log_retention_days":           &bounded.LogRetentionDays,
-	}
 	for _, option := range contentSafetyIntOptions {
-		value := ints[option.field]
+		value := option.ptr(&bounded)
 		*value = min(max(*value, option.min), option.max)
 	}
 	bounded.ReviewModel = strings.TrimSpace(bounded.ReviewModel)

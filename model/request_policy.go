@@ -228,6 +228,25 @@ func refreshRequestPolicySnapshot() error {
 
 // UpdateRequestPolicyOptions validates the entire resulting policy before any
 // write. Unknown JSON rule fields stay in the original option string.
+// validateContentSafetyReviewGroup rejects enabling the AI review with a group
+// that does not exist. It runs on the write path only: BuildRequestPolicy also
+// runs on every refresh, and a group deleted later must not discard the whole
+// snapshot. At runtime a missing group means no review channel, so the request
+// fails closed instead. values are the written options, options the merged set.
+func validateContentSafetyReviewGroup(values, options map[string]string) error {
+	_, enabledChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_enabled"]
+	_, groupChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_group"]
+	if !enabledChanged && !groupChanged {
+		return nil
+	}
+	enabled, _ := strconv.ParseBool(options[operation_setting.ContentSafetyOptionPrefix+"review_enabled"])
+	group := options[operation_setting.ContentSafetyOptionPrefix+"review_group"]
+	if enabled && !ratio_setting.ContainsGroupRatio(group) {
+		return fmt.Errorf("content safety review group %q does not exist", group)
+	}
+	return nil
+}
+
 func UpdateRequestPolicyOptions(values map[string]string) error {
 	requestPolicyOptionMutex.Lock()
 	defer requestPolicyOptionMutex.Unlock()
@@ -242,17 +261,8 @@ func UpdateRequestPolicyOptions(values map[string]string) error {
 	if err != nil {
 		return err
 	}
-	// Checked on write only: BuildRequestPolicy also runs on every refresh, and a
-	// group deleted later must not discard the whole snapshot. At runtime a
-	// missing group just means no review channel, so the request fails closed.
-	_, enabledChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_enabled"]
-	_, groupChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_group"]
-	if enabledChanged || groupChanged {
-		enabled, _ := strconv.ParseBool(options[operation_setting.ContentSafetyOptionPrefix+"review_enabled"])
-		group := options[operation_setting.ContentSafetyOptionPrefix+"review_group"]
-		if enabled && !ratio_setting.ContainsGroupRatio(group) {
-			return fmt.Errorf("content safety review group %q does not exist", group)
-		}
+	if err := validateContentSafetyReviewGroup(values, options); err != nil {
+		return err
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		for key, value := range values {

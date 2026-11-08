@@ -183,6 +183,12 @@ func TestUpdateRequestPolicyOptionsRejectsMissingReviewGroup(t *testing.T) {
 		assert.ErrorContains(t, err, "does not exist")
 		assert.Same(t, snapshot, CurrentRequestPolicy())
 	}
+	err = UpdateOptionsBulk(map[string]string{
+		p + "review_enabled": "true", p + "review_model": "judge",
+		p + "review_words": "knife", p + "review_group": "no-such-group",
+	})
+	assert.ErrorContains(t, err, "does not exist")
+	assert.Same(t, snapshot, CurrentRequestPolicy())
 }
 
 func TestContentSafetySettingBounded(t *testing.T) {

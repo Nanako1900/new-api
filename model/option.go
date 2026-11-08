@@ -359,6 +359,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 			if err != nil {
 				return err
 			}
+			if err := validateContentSafetyReviewGroup(values, options); err != nil {
+				return err
+			}
 			break
 		}
 	}
