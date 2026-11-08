@@ -23,7 +23,6 @@ import { useTranslation } from 'react-i18next'
 // MeowAPI: console page look (large title).
 import { MeowSectionLayout as SectionPageLayout } from '@/components/meow-section-layout'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { getUserProfile } from '@/features/profile/api'
 import {
   ADMIN_PERMISSION_RESOURCES,
   ADMIN_PERMISSION_ACTIONS,
@@ -33,6 +32,10 @@ import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { AuditLogViewer } from './components/audit-log-viewer'
+import {
+  markAuditReadRevoked,
+  refreshUserCapabilities,
+} from './lib/audit-access'
 
 export function AuditLogs() {
   const { t } = useTranslation()
@@ -53,40 +56,10 @@ export function AuditLogs() {
   const handleAccessDenied = useCallback(async () => {
     setAccessRevoked(true)
     setScope('self')
-    const current = useAuthStore.getState().auth.user
-    if (current && current.id === userId) {
-      useAuthStore.getState().auth.setUser({
-        ...current,
-        permissions: {
-          ...current.permissions,
-          admin_permissions: {
-            ...current.permissions?.admin_permissions,
-            audit: { read: false },
-          },
-        },
-      })
-    }
+    markAuditReadRevoked(userId)
     await queryClient.cancelQueries({ queryKey: ['audit', userId, 'all'] })
     queryClient.removeQueries({ queryKey: ['audit', userId, 'all'] })
-    try {
-      const profile = await getUserProfile()
-      const latest = useAuthStore.getState().auth.user
-      if (
-        profile.success &&
-        profile.data &&
-        latest &&
-        profile.data.id === userId &&
-        latest.id === userId
-      ) {
-        useAuthStore.getState().auth.setUser({
-          ...latest,
-          role: profile.data.role,
-          permissions: profile.data.permissions,
-        })
-      }
-    } catch {
-      // Keep the denied scope closed when refreshing capabilities fails.
-    }
+    await refreshUserCapabilities(userId)
   }, [queryClient, userId])
   return (
     <SectionPageLayout fixedContent>

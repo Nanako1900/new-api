@@ -45,8 +45,11 @@ interface ComboboxInputProps {
   openOnFocus?: boolean
   disabled?: boolean
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>
+  onBlur?: React.FocusEventHandler<HTMLInputElement>
+  ref?: React.Ref<HTMLInputElement>
   'aria-label'?: string
   'aria-labelledby'?: string
+  'aria-describedby'?: string
   'aria-invalid'?: React.AriaAttributes['aria-invalid']
 }
 
@@ -63,8 +66,11 @@ export function ComboboxInput({
   openOnFocus = true,
   disabled = false,
   onKeyDown,
+  onBlur,
+  ref,
   'aria-label': ariaLabel,
   'aria-labelledby': ariaLabelledBy,
+  'aria-describedby': ariaDescribedBy,
   'aria-invalid': ariaInvalid,
 }: ComboboxInputProps) {
   const { t } = useTranslation()
@@ -75,6 +81,17 @@ export function ComboboxInput({
   const [highlightedIndex, setHighlightedIndex] = React.useState(-1)
   const containerRef = React.useRef<HTMLDivElement>(null)
   const inputRef = React.useRef<HTMLInputElement>(null)
+  const setInputRef = React.useCallback(
+    (node: HTMLInputElement | null) => {
+      inputRef.current = node
+      if (typeof ref === 'function') {
+        ref(node)
+      } else if (ref) {
+        ref.current = node
+      }
+    },
+    [ref]
+  )
   const listRef = React.useRef<HTMLUListElement>(null)
   const dropdownRef = React.useRef<HTMLDivElement>(null)
   // The dropdown is portaled so scrolling ancestors cannot clip it. It goes
@@ -225,13 +242,14 @@ export function ComboboxInput({
   return (
     <div ref={containerRef} className='relative'>
       <Input
-        ref={inputRef}
+        ref={setInputRef}
         id={id}
         type='text'
         role='combobox'
         disabled={disabled}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
+        aria-describedby={ariaDescribedBy}
         aria-invalid={ariaInvalid}
         aria-expanded={!!showDropdown}
         aria-controls={
@@ -272,9 +290,10 @@ export function ComboboxInput({
           }
           pointerFocusRef.current = false
         }}
-        onBlur={() => {
+        onBlur={(event) => {
           setOpen(false)
           setSearchValue('')
+          onBlur?.(event)
         }}
         onKeyDown={(event) => {
           handleKeyDown(event)

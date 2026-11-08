@@ -330,6 +330,9 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	if common2.GetContextKeyBool(c, appconstant.ContextKeyBindUpstreamToRequestContext) {
+		req = req.WithContext(c.Request.Context())
+	}
 	ApplyUpstreamBodyMetadata(req, requestBody)
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
@@ -357,6 +360,9 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
+	}
+	if common2.GetContextKeyBool(c, appconstant.ContextKeyBindUpstreamToRequestContext) {
+		req = req.WithContext(c.Request.Context())
 	}
 	ApplyUpstreamBodyMetadata(req, requestBody)
 	// set form data

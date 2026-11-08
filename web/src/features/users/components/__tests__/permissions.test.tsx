@@ -39,9 +39,9 @@ const target: User = {
   request_count: 0,
   group: 'default',
 }
-const label = "View other accounts' audit logs"
+const label = "View other accounts' audit and content safety logs"
 const description =
-  'View audit records from user and admin roles. Root records are always excluded.'
+  "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded."
 
 function renderPermissions(viewerRole: number, allowed?: boolean) {
   useAuthStore

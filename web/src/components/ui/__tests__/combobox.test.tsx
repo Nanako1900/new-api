@@ -277,3 +277,35 @@ describe('selected option icons', () => {
     expect(screen.queryByAltText('')).not.toBeInTheDocument()
   })
 })
+
+describe('custom value input', () => {
+  it('forwards the description, ref and blur handler to the input', async () => {
+    const ref = { current: null as HTMLInputElement | null }
+    const onBlur = vi.fn()
+    render(
+      <>
+        <p id='hint'>Pick a model</p>
+        <Combobox
+          options={options}
+          allowCustomValue
+          value=''
+          onValueChange={() => {}}
+          onBlur={onBlur}
+          ref={ref}
+          aria-label='Model'
+          aria-describedby='hint'
+          aria-invalid
+        />
+        <button type='button'>Other</button>
+      </>
+    )
+    const input = screen.getByRole('combobox', { name: 'Model' })
+    expect(input).toHaveAccessibleDescription('Pick a model')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(ref.current).toBe(input)
+
+    await userEvent.click(input)
+    await userEvent.click(screen.getByRole('button', { name: 'Other' }))
+    expect(onBlur).toHaveBeenCalledOnce()
+  })
+})

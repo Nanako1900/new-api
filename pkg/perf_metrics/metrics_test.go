@@ -35,6 +35,8 @@ func TestClassifyRelayOutcome(t *testing.T) {
 		{"upstream rate limit", context.Background(), types.InitOpenAIError("rate_limit_exceeded", 429), OutcomeFailure},
 		{"local quota", context.Background(), types.NewError(errors.New("quota"), types.ErrorCodeInsufficientUserQuota), OutcomeIgnored},
 		{"local violation fee", context.Background(), types.NewError(errors.New("csam"), types.ErrorCodeViolationFeeGrokCSAM), OutcomeIgnored},
+		{"local content review rejection", context.Background(), types.NewError(errors.New("rejected"), types.ErrorCodeContentReviewRejected), OutcomeIgnored},
+		{"local content review unavailable", context.Background(), types.NewErrorWithStatusCode(errors.New("unavailable"), types.ErrorCodeContentReviewUnavailable, 503), OutcomeIgnored},
 		{"upstream quota", context.Background(), types.InitOpenAIError("insufficient_quota", 429), OutcomeFailure},
 		{"upstream gateway quota", context.Background(), types.InitOpenAIError(types.ErrorCodeInsufficientUserQuota, 403), OutcomeFailure},
 		{"unavailable channel", context.Background(), types.NewErrorWithStatusCode(errors.New("disabled"), types.ErrorCodeGetChannelFailed, 403), OutcomeFailure},

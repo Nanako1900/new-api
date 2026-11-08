@@ -459,25 +459,16 @@ func TransferAffQuota(c *gin.Context) {
 }
 
 func GetAffCode(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
+	affCode, err := model.EnsureUserAffCode(c.GetInt("id"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if user.AffCode == "" {
-		user.AffCode = common.GetRandomString(4)
-		if err := user.Update(false); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    user.AffCode,
+		"data":    affCode,
 	})
-	return
 }
 
 func GetSelf(c *gin.Context) {
@@ -814,22 +805,12 @@ func UpdateSelf(c *gin.Context) {
 	}
 	// 检查是否是用户设置更新请求 (sidebar_modules 或 language)
 	if sidebarModules, sidebarExists := requestData["sidebar_modules"]; sidebarExists && !passwordRequested {
-		userId := c.GetInt("id")
-		user, err := model.GetUserById(userId, false)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-
-		// 获取当前用户设置
-		currentSetting := user.GetSetting()
-
-		// 更新sidebar_modules字段
-		if sidebarModulesStr, ok := sidebarModules.(string); ok {
-			currentSetting.SidebarModules = sidebarModulesStr
-		}
-
-		if err := model.UpdateUserSetting(user.Id, currentSetting); err != nil {
+		// 只更新sidebar_modules字段，其余设置保持数据库中的最新值
+		if err := model.UpdateUserSettingWith(c.GetInt("id"), func(setting *dto.UserSetting) {
+			if sidebarModulesStr, ok := sidebarModules.(string); ok {
+				setting.SidebarModules = sidebarModulesStr
+			}
+		}); err != nil {
 			common.ApiErrorT(c, "Update failed")
 			return
 		}
@@ -840,22 +821,12 @@ func UpdateSelf(c *gin.Context) {
 
 	// 检查是否是语言偏好更新请求
 	if language, langExists := requestData["language"]; langExists && !passwordRequested {
-		userId := c.GetInt("id")
-		user, err := model.GetUserById(userId, false)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-
-		// 获取当前用户设置
-		currentSetting := user.GetSetting()
-
-		// 更新language字段
-		if langStr, ok := language.(string); ok {
-			currentSetting.Language = langStr
-		}
-
-		if err := model.UpdateUserSetting(user.Id, currentSetting); err != nil {
+		// 只更新language字段，其余设置保持数据库中的最新值
+		if err := model.UpdateUserSettingWith(c.GetInt("id"), func(setting *dto.UserSetting) {
+			if langStr, ok := language.(string); ok {
+				setting.Language = langStr
+			}
+		}); err != nil {
 			common.ApiErrorT(c, "Update failed")
 			return
 		}
@@ -1180,7 +1151,6 @@ func ManageUser(c *gin.Context) {
 			common.ApiErrorT(c, "This user is already an administrator")
 			return
 		}
-		user.Role = common.RoleAdminUser
 	case "demote":
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorT(c, "Cannot demote super administrator user")
@@ -1200,7 +1170,17 @@ func ManageUser(c *gin.Context) {
 	if authorization == nil {
 		return
 	}
-	if req.Action == "demote" {
+	switch req.Action {
+	case "promote":
+		// The user read above may be stale by now; the promote writes only the
+		// role, so a ban or group change committed meanwhile is kept.
+		promoted, err := model.PromoteUserToAdmin(user.Id)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		user.Role, user.Status = promoted.Role, promoted.Status
+	case "demote":
 		if err := model.DB.Transaction(func(tx *gorm.DB) error {
 			if err := user.UpdateWithTx(tx, false); err != nil {
 				return err
@@ -1222,14 +1202,14 @@ func ManageUser(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-	} else {
+	default:
 		if err := user.Update(false); err != nil {
 			common.ApiError(c, err)
 			return
 		}
 	}
-	// Update/UpdateWithTx has already published the new user hash and revoked
-	// browser sessions exactly once. Only PAT/relay token caches still need an
+	// Each branch has already published the new user hash and revoked browser
+	// sessions exactly once. Only PAT/relay token caches still need an
 	// explicit invalidation; deleting the user hash here would discard the
 	// freshly published auth-version floor.
 	if err := model.InvalidateUserTokensCache(user.Id); err != nil {
@@ -1430,14 +1410,28 @@ func UpdateUserSetting(c *gin.Context) {
 	}
 
 	userId := c.GetInt("id")
-	user, err := model.GetUserById(userId, true)
+	user, err := model.GetUserById(userId, false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	// 从已保存的设置出发，语言、侧边栏、扣费策略等不由此表单管理的字段保持不变；
 	// 请求未携带的开关也保持原值
-	settings := user.GetSetting()
+	err = model.UpdateUserSettingWith(userId, func(settings *dto.UserSetting) {
+		applyNotificationSettings(settings, req, user.Role >= common.RoleAdminUser)
+	})
+	if err != nil {
+		common.ApiErrorT(c, "Update failed")
+		return
+	}
+
+	common.ApiSuccessT(c, "Settings updated", nil)
+}
+
+// applyNotificationSettings copies the notification form onto the stored
+// setting. Only the selected channel keeps its address and credentials, and
+// only administrators change the channel and upstream update switches.
+func applyNotificationSettings(settings *dto.UserSetting, req UpdateUserSettingRequest, isAdmin bool) {
 	settings.NotifyType = req.QuotaWarningType
 	settings.QuotaWarningThreshold = req.QuotaWarningThreshold
 	settings.AcceptUnsetRatioModel = req.AcceptUnsetModelRatioModel
@@ -1445,7 +1439,7 @@ func UpdateUserSetting(c *gin.Context) {
 	if req.QuotaWarningEnabled != nil {
 		settings.QuotaWarningEnabled = req.QuotaWarningEnabled
 	}
-	if user.Role >= common.RoleAdminUser {
+	if isAdmin {
 		if req.UpstreamModelUpdateNotifyEnabled != nil {
 			settings.UpstreamModelUpdateNotifyEnabled = *req.UpstreamModelUpdateNotifyEnabled
 		}
@@ -1477,12 +1471,4 @@ func UpdateUserSetting(c *gin.Context) {
 			settings.GotifyPriority = req.GotifyPriority
 		}
 	}
-
-	// 更新用户设置
-	if err := model.UpdateUserSetting(user.Id, settings); err != nil {
-		common.ApiErrorT(c, "Update failed")
-		return
-	}
-
-	common.ApiSuccessT(c, "Settings updated", nil)
 }

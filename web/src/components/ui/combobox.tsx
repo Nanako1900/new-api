@@ -80,8 +80,11 @@ function Combobox(
         id={props.id}
         aria-label={props['aria-label']}
         aria-labelledby={props['aria-labelledby']}
+        aria-describedby={props['aria-describedby']}
         aria-invalid={props['aria-invalid']}
         onKeyDown={props.onKeyDown}
+        onBlur={props.onBlur}
+        ref={props.ref}
         options={props.options}
         value={props.value ?? ''}
         onValueChange={(value) => props.onValueChange?.(value)}

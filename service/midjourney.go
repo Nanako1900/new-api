@@ -296,6 +296,14 @@ func RecordMidjourneyPolicyResponse(c *gin.Context, response *dto.MidjourneyResp
 	return false
 }
 
+// ClearMidjourneyMode removes the speed flags that MjModeClearEnabled strips
+// from a prompt before it is forwarded to the proxy.
+func ClearMidjourneyMode(prompt string) string {
+	prompt = strings.ReplaceAll(prompt, "--fast", "")
+	prompt = strings.ReplaceAll(prompt, "--relax", "")
+	return strings.ReplaceAll(prompt, "--turbo", "")
+}
+
 func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestURL string) (*dto.MidjourneyResponseWithStatusCode, []byte, error) {
 	var nullBytes []byte
 	//var requestBody io.Reader
@@ -319,11 +327,7 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 	}
 	if setting.MjModeClearEnabled {
 		if prompt, ok := mapResult["prompt"].(string); ok {
-			prompt = strings.Replace(prompt, "--fast", "", -1)
-			prompt = strings.Replace(prompt, "--relax", "", -1)
-			prompt = strings.Replace(prompt, "--turbo", "", -1)
-
-			mapResult["prompt"] = prompt
+			mapResult["prompt"] = ClearMidjourneyMode(prompt)
 		}
 	}
 	reqBody, err := common.Marshal(mapResult)

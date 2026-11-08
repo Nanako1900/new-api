@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"gorm.io/gorm"
 )
 
@@ -40,8 +41,9 @@ var requestPolicyDefaults = requestPolicyDefaultOptions()
 func requestPolicyDefaultOptions() map[string]string {
 	defaults := make(map[string]string)
 	for prefix, value := range map[string]any{
-		"channel_affinity_setting.": operation_setting.GetChannelAffinitySetting(),
-		"monitor_setting.":          operation_setting.GetMonitorSetting(),
+		"channel_affinity_setting.":                 operation_setting.GetChannelAffinitySetting(),
+		"monitor_setting.":                          operation_setting.GetMonitorSetting(),
+		operation_setting.ContentSafetyOptionPrefix: operation_setting.GetContentSafetySetting(),
 	} {
 		fields, err := config.ConfigToMap(value)
 		if err != nil {
@@ -66,6 +68,9 @@ func requestPolicyDefaultOptions() map[string]string {
 
 func IsRequestPolicyOption(key string) bool {
 	if strings.HasPrefix(key, "channel_affinity_setting.") {
+		return true
+	}
+	if strings.HasPrefix(key, operation_setting.ContentSafetyOptionPrefix) {
 		return true
 	}
 	switch key {
@@ -154,6 +159,9 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 			snapshot.TextKeywords = append(snapshot.TextKeywords, word)
 		}
 	}
+	if err := operation_setting.ValidateContentSafetyOptions(raw); err != nil {
+		return nil, err
+	}
 	if err := operation_setting.ValidateChannelTestConcurrency(raw["monitor_setting.channel_test_concurrency"]); err != nil {
 		return nil, err
 	}
@@ -218,6 +226,25 @@ func refreshRequestPolicySnapshot() error {
 	return err
 }
 
+// validateContentSafetyReviewGroup rejects enabling the AI review with a group
+// that does not exist. It runs on the write path only: BuildRequestPolicy also
+// runs on every refresh, and a group deleted later must not discard the whole
+// snapshot. At runtime a missing group means no review channel, so the request
+// fails closed instead. values are the written options, options the merged set.
+func validateContentSafetyReviewGroup(values, options map[string]string) error {
+	_, enabledChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_enabled"]
+	_, groupChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_group"]
+	if !enabledChanged && !groupChanged {
+		return nil
+	}
+	enabled, _ := strconv.ParseBool(options[operation_setting.ContentSafetyOptionPrefix+"review_enabled"])
+	group := options[operation_setting.ContentSafetyOptionPrefix+"review_group"]
+	if enabled && !ratio_setting.ContainsGroupRatio(group) {
+		return fmt.Errorf("content safety review group %q does not exist", group)
+	}
+	return nil
+}
+
 // UpdateRequestPolicyOptions validates the entire resulting policy before any
 // write. Unknown JSON rule fields stay in the original option string.
 func UpdateRequestPolicyOptions(values map[string]string) error {
@@ -232,6 +259,9 @@ func UpdateRequestPolicyOptions(values map[string]string) error {
 	}
 	snapshot, err := BuildRequestPolicy(options)
 	if err != nil {
+		return err
+	}
+	if err := validateContentSafetyReviewGroup(values, options); err != nil {
 		return err
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {

@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contentsafety"
 	"github.com/gin-gonic/gin"
 )
 
@@ -1237,6 +1238,10 @@ func respondPluginProtocolSubmissionError(c *gin.Context, taskErr *dto.TaskError
 	status := http.StatusInternalServerError
 	if taskErr != nil && taskErr.StatusCode >= 400 && taskErr.StatusCode <= 599 {
 		status = taskErr.StatusCode
+	}
+	if taskErr != nil && contentsafety.IsDecisionErrorCode(taskErr.Code) {
+		respondPluginProtocolError(c, status, taskErr.Code, taskErr.Message)
+		return
 	}
 	switch status {
 	case http.StatusBadRequest:

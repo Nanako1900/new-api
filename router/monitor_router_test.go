@@ -184,9 +184,9 @@ func TestMonitorSSORoundTripThroughRoutes(t *testing.T) {
 
 func TestMonitorUserCarriesTheAvatarOnly(t *testing.T) {
 	env := setupMonitorRouterTest(t)
-	require.NoError(t, model.UpdateUserSetting(env.user.Id, dto.UserSetting{
-		WebhookUrl: "https://hooks.example/secret-path", WebhookSecret: "webhook-secret-value",
-		NotificationEmail: "private@example.com", GotifyToken: "gotify-token-value",
+	require.NoError(t, model.UpdateUserSettingWith(env.user.Id, func(setting *dto.UserSetting) {
+		setting.WebhookUrl, setting.WebhookSecret = "https://hooks.example/secret-path", "webhook-secret-value"
+		setting.NotificationEmail, setting.GotifyToken = "private@example.com", "gotify-token-value"
 	}))
 	accessToken, refreshCookie := env.signIn(t)
 
@@ -224,7 +224,9 @@ const monitorTestPreferences = `{"version":1,"layout":[{"i":"logs","x":0,"y":0,"
 
 func TestMonitorPreferencesRoundTrip(t *testing.T) {
 	env := setupMonitorRouterTest(t)
-	require.NoError(t, model.UpdateUserSetting(env.user.Id, dto.UserSetting{WebhookSecret: "webhook-secret-value", Language: "zh"}))
+	require.NoError(t, model.UpdateUserSettingWith(env.user.Id, func(setting *dto.UserSetting) {
+		setting.WebhookSecret, setting.Language = "webhook-secret-value", "zh"
+	}))
 	accessToken, _ := env.signIn(t)
 
 	empty := env.do(monitorTestRequest{method: http.MethodGet, path: "/api/monitor/preferences", bearer: accessToken})

@@ -2672,3 +2672,32 @@ func TestNativeRouteCredentialRewritesOnlyTheVendorsOwnForm(t *testing.T) {
 		})
 	}
 }
+
+// A content safety decision keeps its code and message through the plugin
+// error sanitizer, so a client can tell a rejected prompt from a malformed
+// request or a server failure.
+func TestRespondTaskPluginErrorKeepsContentSafetyDecisions(t *testing.T) {
+	plugin := compileTaskRoutePlugin(t, genericTaskPluginSource)
+	for _, tc := range []struct {
+		code   string
+		status int
+	}{
+		{code: "sensitive_words_detected", status: http.StatusBadRequest},
+		{code: "content_review_rejected", status: http.StatusBadRequest},
+		{code: "content_review_unavailable", status: http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/vendor/submit", nil)
+			c.Set(jsplugin.ContextKeyPinnedRoute, jsplugin.PinnedRoute{Plugin: plugin})
+
+			require.True(t, RespondTaskPluginError(c, &dto.TaskError{Code: tc.code, Message: "content decision", StatusCode: tc.status}))
+			assert.Equal(t, tc.status, recorder.Code)
+			var body dto.TaskError
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &body))
+			assert.Equal(t, tc.code, body.Code)
+			assert.Equal(t, "content decision", body.Message)
+		})
+	}
+}

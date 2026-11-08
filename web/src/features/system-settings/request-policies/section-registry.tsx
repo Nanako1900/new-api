@@ -27,13 +27,7 @@ const POLICY_SECTIONS = [
     id: 'filtering',
     titleKey: 'Request checks',
     build: (settings: RequestPolicySettings) => (
-      <RequestChecksSection
-        defaultValues={{
-          CheckSensitiveEnabled: settings.CheckSensitiveEnabled,
-          CheckSensitiveOnPromptEnabled: settings.CheckSensitiveOnPromptEnabled,
-          SensitiveWords: settings.SensitiveWords,
-        }}
-      />
+      <RequestChecksSection defaultValues={settings} />
     ),
   },
   {
