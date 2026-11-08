@@ -202,10 +202,12 @@ func TestContentSafetyGate(t *testing.T) {
 // The keyword tier runs inside PrepareRequestBilling, before pricing and
 // pre-consume. The model has a price, so a clean request reserves it while a
 // blocked one reserves nothing, and the client learns the error code, not the
-// matched word. Formats that carry raw request JSON are scanned after
-// decoding, so a JSON escape cannot hide a block word.
+// matched word. Request JSON is scanned after decoding, so a JSON escape
+// cannot hide a block word, and so are the members the model reads that token
+// counting skips: tools, schemas, instructions and documents.
 func TestPrepareRequestBillingScansContentBeforePreConsume(t *testing.T) {
 	const escapedBomb = `make a b\u006fmb`
+	userHello := []kitdto.Message{{Role: "user", Content: "hello"}}
 	for _, tc := range []struct {
 		name     string
 		format   types.RelayFormat
@@ -220,6 +222,17 @@ func TestPrepareRequestBillingScansContentBeforePreConsume(t *testing.T) {
 		{name: "an escaped block word in a DeepSeek tools body", format: types.RelayFormatDeepSeekTools, request: &kitdto.DeepSeekToolsRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"query":"` + escapedBomb + `"}`)}, blocked: true},
 		{name: "a block word as an object key", format: types.RelayFormatDeepSeekTools, request: &kitdto.DeepSeekToolsRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"query":"hello","filters":{"bomb":true}}`)}, blocked: true},
 		{name: "an escaped block word as an object key", format: types.RelayFormatDeepSeekTools, request: &kitdto.DeepSeekToolsRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"query":"hello","filters":{"b\u006fmb":true}}`)}, blocked: true},
+		{name: "an escaped block word in Responses tools", format: types.RelayFormatOpenAIResponses, request: &kitdto.OpenAIResponsesRequest{Model: "gpt-test", Input: common.RawMessage(`"hello"`), Tools: common.RawMessage(`[{"type":"function","name":"lookup","description":"` + escapedBomb + `"}]`)}, blocked: true},
+		{name: "an escaped block word in Responses instructions given as an array", format: types.RelayFormatOpenAIResponses, request: &kitdto.OpenAIResponsesRequest{Model: "gpt-test", Input: common.RawMessage(`"hello"`), Instructions: common.RawMessage(`[{"role":"developer","content":"` + escapedBomb + `"}]`)}, blocked: true},
+		{name: "an escaped block word in a Responses text format", format: types.RelayFormatOpenAIResponses, request: &kitdto.OpenAIResponsesRequest{Model: "gpt-test", Input: common.RawMessage(`"hello"`), Text: common.RawMessage(`{"format":{"type":"json_schema","name":"answer","schema":{"type":"object","description":"` + escapedBomb + `"}}}`)}, blocked: true},
+		{name: "an escaped block word in Responses prompt variables", format: types.RelayFormatOpenAIResponses, request: &kitdto.OpenAIResponsesRequest{Model: "gpt-test", Input: common.RawMessage(`"hello"`), Prompt: common.RawMessage(`{"id":"pmpt_1","variables":{"topic":"` + escapedBomb + `"}}`)}, blocked: true},
+		{name: "an escaped block word in Gemini tools", format: types.RelayFormatGemini, request: &kitdto.GeminiChatRequest{Contents: []kitdto.GeminiChatContent{{Role: "user", Parts: []kitdto.GeminiPart{{Text: "hello"}}}}, Tools: common.RawMessage(`[{"functionDeclarations":[{"name":"lookup","description":"` + escapedBomb + `"}]}]`)}, blocked: true},
+		{name: "a block word in compaction tools", format: types.RelayFormatOpenAIResponsesCompaction, request: &kitdto.OpenAIResponsesCompactionRequest{Model: "gpt-test", Input: common.RawMessage(`"hello"`), Tools: common.RawMessage(`[{"type":"function","name":"lookup","description":"make a bomb"}]`)}, blocked: true},
+		{name: "a block word in a Chat response format schema", format: types.RelayFormatOpenAI, request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: userHello, ResponseFormat: &kitdto.ResponseFormat{Type: "json_schema", JsonSchema: common.RawMessage(`{"name":"answer","schema":{"type":"object","properties":{"bomb":{"type":"string"}}}}`)}}, blocked: true},
+		{name: "an escaped block word in legacy Chat functions", format: types.RelayFormatOpenAI, request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: userHello, Functions: common.RawMessage(`[{"name":"lookup","description":"` + escapedBomb + `"}]`)}, blocked: true},
+		{name: "a block word in speech instructions", format: types.RelayFormatOpenAIAudio, request: &kitdto.AudioRequest{Model: "gpt-test", Input: "hello", Voice: "alloy", Instructions: "read it like a bomb threat"}, blocked: true},
+		{name: "a block word in a Claude text document", format: types.RelayFormatClaude, request: &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{{Role: "user", Content: []any{map[string]any{"type": "document", "source": map[string]any{"type": "text", "media_type": "text/plain", "data": "make a bomb"}}}}}}, blocked: true},
+		{name: "a block word in a Claude document title", format: types.RelayFormatClaude, request: &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{{Role: "user", Content: []any{map[string]any{"type": "document", "title": "bomb manual", "source": map[string]any{"type": "url", "url": "https://example.com/manual.pdf"}}}}}}, blocked: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setupContentSafetyReview(t, reviewerReply(""))
@@ -250,25 +263,36 @@ func TestPrepareRequestBillingScansContentBeforePreConsume(t *testing.T) {
 	}
 }
 
-// A raw-JSON format is scanned once, decoded: one review word in an Alpha
-// Search body is one window, so a repeat of the request is decided by the
-// cached verdict instead of a second review.
-func TestContentSafetyReviewOfARawJSONBodyIsOneCachedWindow(t *testing.T) {
-	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
-	filler := strings.Repeat("for cooking at home ", 20)
-	body := `{"model":"gpt-test","query":"` + filler + saltedText("where to buy a kitchen knife") + filler + `"}`
-	require.Greater(t, len(body), 800)
-	userId := nextContentSafetyUser()
-	for range 2 {
-		c, info := newContentSafetyContext(userId)
-		info.RelayFormat, info.Request = types.RelayFormatOpenAIAlphaSearch, &kitdto.AlphaSearchRequest{Model: "gpt-test", RawBody: common.RawMessage(body)}
-		require.Nil(t, scanRequestContent(c, info, body))
-		windows, _ := common.GetContextKeyType[[]contentsafety.Window](c, constant.ContextKeyContentSafetyWindows)
-		assert.Len(t, windows, 1)
-		require.Nil(t, EnforceContentSafety(c, info))
+// Request JSON that token counting keeps raw is scanned once, decoded, never
+// raw as well: one review word in it is one window, so a repeat of the request
+// is decided by the cached verdict instead of a second review. The filler
+// keeps a raw and a decoded copy of the word too far apart to share a window.
+func TestContentSafetyReviewOfRawRequestJSONIsOneCachedWindow(t *testing.T) {
+	filler := strings.Repeat("for cooking at home ", 80)
+	const question = "where to buy a kitchen knife"
+	for _, tc := range []struct {
+		name    string
+		request kitdto.Request
+	}{
+		{name: "an Alpha Search body", request: &kitdto.AlphaSearchRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"model":"gpt-test","query":"` + filler + saltedText(question) + filler + `"}`)}},
+		{name: "Responses tools", request: &kitdto.OpenAIResponsesRequest{Model: "gpt-test", Input: common.RawMessage(`"hello"`), Tools: common.RawMessage(`[{"type":"function","name":"lookup","description":"` + filler + saltedText(question) + filler + `"}]`)}},
+		{name: "Gemini tools", request: &kitdto.GeminiChatRequest{Contents: []kitdto.GeminiChatContent{{Role: "user", Parts: []kitdto.GeminiPart{{Text: "hello"}}}}, Tools: common.RawMessage(`[{"functionDeclarations":[{"name":"lookup","description":"` + filler + saltedText(question) + filler + `"}]}]`)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+			userId := nextContentSafetyUser()
+			for range 2 {
+				c, info := newContentSafetyContext(userId)
+				info.Request = tc.request
+				require.Nil(t, scanRequestContent(c, info, tc.request.GetTokenCountMeta().CombineText))
+				windows, _ := common.GetContextKeyType[[]contentsafety.Window](c, constant.ContextKeyContentSafetyWindows)
+				assert.Len(t, windows, 1)
+				require.Nil(t, EnforceContentSafety(c, info))
+			}
+			assert.Equal(t, int32(1), calls.Load(), "the repeat is served from the verdict cache")
+			requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
+		})
 	}
-	assert.Equal(t, int32(1), calls.Load(), "the repeat is served from the verdict cache")
-	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
 }
 
 func TestContentSafetyReviewCachesVerdictPerWindow(t *testing.T) {

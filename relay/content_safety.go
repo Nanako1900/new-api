@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -48,19 +49,8 @@ type contentReview struct {
 // before pre-consume; review windows wait in the context until
 // EnforceContentSafety runs after pre-consume.
 func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, text string) *types.NewAPIError {
-	// These formats count tokens over the raw request JSON, where an escape
-	// such as \u006f for "o" hides a word from the scan. They are scanned
-	// decoded, keys included, and raw only where a part is not JSON. Scanning
-	// both would put every hit in two windows, which the verdict cache never
-	// stores.
 	if info != nil {
-		switch request := info.Request.(type) {
-		case *dto.OpenAIResponsesCompactionRequest:
-			// Instructions and input are two JSON values, each may span lines.
-			text = contentsafety.CollectJSONText(request.Instructions) + "\n" + contentsafety.CollectJSONText(request.Input)
-		case *dto.AlphaSearchRequest, *dto.DeepSeekToolsRequest:
-			text = contentsafety.CollectJSONText([]byte(text))
-		}
+		text = requestScanText(info.Request, text)
 	}
 	cfg := operation_setting.GetContentSafetySetting().Bounded()
 	var reviewWords []string
@@ -81,6 +71,68 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, text string
 		common.SetContextKey(c, constant.ContextKeyContentSafetyWindows, result.Review)
 	}
 	return nil
+}
+
+// requestScanText is the text of a request the keyword tier scans, given the
+// CombineText its token count reads. Token counting, which also drives the
+// billing estimate, skips some members the model reads and keeps others as
+// raw request JSON, where an escape such as \u006f for "o" hides a word.
+// Those members are scanned decoded, keys included, and each only once: a
+// member counted raw is scanned decoded instead of raw, never both, because a
+// hit in two windows makes a multi-window batch that is not cached per window.
+func requestScanText(request dto.Request, combineText string) string {
+	parts := []string{combineText}
+	switch r := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		parts = append(parts, contentsafety.CollectJSONText(r.Functions))
+		if r.ResponseFormat != nil {
+			parts = append(parts, contentsafety.CollectJSONText(r.ResponseFormat.JsonSchema))
+		}
+	case *dto.OpenAIResponsesRequest:
+		// Token counting reads these members raw (instructions unless a plain
+		// string), so the rest is counted again on a copy without them.
+		counted := *r
+		counted.Instructions, counted.Metadata, counted.Text, counted.ToolChoice, counted.Prompt, counted.Tools = nil, nil, nil, nil, nil, nil
+		parts = []string{counted.GetTokenCountMeta().CombineText}
+		for _, member := range [][]byte{r.Instructions, r.Metadata, r.Text, r.ToolChoice, r.Prompt, r.Tools} {
+			parts = append(parts, contentsafety.CollectJSONText(member))
+		}
+	case *dto.OpenAIResponsesCompactionRequest:
+		// Token counting reads instructions and input raw and skips the rest.
+		parts = []string{contentsafety.CollectJSONText(r.Instructions), contentsafety.CollectJSONText(r.Input),
+			contentsafety.CollectJSONText(r.Tools), contentsafety.CollectJSONText(r.Text)}
+	case *dto.GeminiChatRequest:
+		// Token counting reads tools raw.
+		counted := *r
+		counted.Tools = nil
+		parts = []string{counted.GetTokenCountMeta().CombineText, contentsafety.CollectJSONText(r.Tools)}
+	case *dto.ClaudeRequest:
+		// Token counting skips document blocks; their title and context, and
+		// the data of a text source, are plain text the model reads.
+		for _, message := range r.Messages {
+			blocks, _ := message.Content.([]any)
+			for _, block := range blocks {
+				document, _ := block.(map[string]any)
+				if document["type"] != "document" {
+					continue
+				}
+				title, _ := document["title"].(string)
+				documentContext, _ := document["context"].(string)
+				parts = append(parts, title, documentContext)
+				if source, _ := document["source"].(map[string]any); source["type"] == "text" {
+					data, _ := source["data"].(string)
+					parts = append(parts, data)
+				}
+			}
+		}
+	case *dto.AudioRequest:
+		// Speech instructions are plain text, not JSON.
+		parts = append(parts, r.Instructions)
+	case *dto.AlphaSearchRequest, *dto.DeepSeekToolsRequest:
+		// Token counting reads the whole request body raw.
+		parts = []string{contentsafety.CollectJSONText([]byte(combineText))}
+	}
+	return strings.Join(slices.DeleteFunc(parts, func(part string) bool { return part == "" }), "\n")
 }
 
 // EnforceContentSafety is the AI review tier. It runs after pre-consume, so
