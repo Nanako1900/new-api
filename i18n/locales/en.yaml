@@ -95,3 +95,6 @@ channel.upstream_update_added_models: "Added model examples (showing {{.Shown}}/
 channel.upstream_update_removed_models: "Removed model examples (showing {{.Shown}}/{{.Total}}): {{.Models}}"
 channel.upstream_update_failed_channels: "Failed channel IDs (showing {{.Shown}}/{{.Total}}): {{.Ids}}"
 channel.upstream_update_more_omitted: " ({{.Count}} more omitted)"
+content_safety.blocked: "The request contains content that is not allowed"
+content_safety.rejected: "The request content did not pass the safety review"
+content_safety.unavailable: "The content safety review is temporarily unavailable. Please try again later"
