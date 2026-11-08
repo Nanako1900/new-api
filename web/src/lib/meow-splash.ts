@@ -43,6 +43,24 @@ export const MEOW_SPLASH_FADE_MS = 250
 const FLIGHT_MS = 450
 const FLIGHT_EASING = 'cubic-bezier(0.5, 0, 0.15, 1)'
 
+const PREVIEW_PARAM = 'meow-splash'
+const PREVIEW_DEFAULT_MS = 5000
+/** Stays under the 10s failsafe in index.html. */
+const PREVIEW_MAX_MS = 8000
+
+/**
+ * Local preview: `?meow-splash` (or `?meow-splash=3000`) holds the app back
+ * that many ms so the splash can be seen on a fast localhost; index.html
+ * also treats it as a first visit. Returns 0 without the parameter.
+ */
+export function readMeowSplashPreviewDelay(search: string): number {
+  const params = new URLSearchParams(search)
+  if (!params.has(PREVIEW_PARAM)) return 0
+  const ms = Number(params.get(PREVIEW_PARAM))
+  if (!Number.isFinite(ms) || ms <= 0) return PREVIEW_DEFAULT_MS
+  return Math.min(ms, PREVIEW_MAX_MS)
+}
+
 /** The site logo in the public header, if it is loaded and on screen. */
 function findHeaderLogo(): HTMLImageElement | null {
   const logo = document.querySelector<HTMLImageElement>(

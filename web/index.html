@@ -254,13 +254,17 @@
     </div>
     <script>
       // Splash bookkeeping that must run before the app loads: the later
-      // reveal for returning visitors, when it actually appeared (read by
-      // src/lib/meow-splash.ts), and a failsafe if the app never mounts.
+      // reveal for returning visitors (not in the ?meow-splash local
+      // preview), when it actually appeared (read by src/lib/meow-splash.ts),
+      // and a failsafe if the app never mounts.
       ;(function () {
         var splash = document.getElementById('meow-splash')
         if (!splash) return
         try {
-          if (localStorage.getItem('meow:splash:v1:seen')) {
+          if (
+            localStorage.getItem('meow:splash:v1:seen') &&
+            !new URLSearchParams(location.search).has('meow-splash')
+          ) {
             splash.classList.add('is-returning')
           }
         } catch (e) {}

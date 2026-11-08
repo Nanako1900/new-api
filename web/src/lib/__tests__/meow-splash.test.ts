@@ -23,6 +23,7 @@ import {
   MEOW_SPLASH_FADE_MS,
   MEOW_SPLASH_HOLD_MS,
   MEOW_SPLASH_SEEN_KEY,
+  readMeowSplashPreviewDelay,
 } from '../meow-splash'
 
 /** The #meow-splash block of index.html; `shownAt` as its script records it. */
@@ -108,4 +109,18 @@ test('without a header logo to fly into, the splash fades out and is removed', (
   vi.advanceTimersByTime(1 + MEOW_SPLASH_FADE_MS)
 
   expect(document.querySelector('#meow-splash')).toBeNull()
+})
+
+test('the local preview holds the app only when ?meow-splash is in the URL', () => {
+  expect(readMeowSplashPreviewDelay('?meow-preview=1')).toBe(0)
+})
+
+test('the local preview holds the app for the given time, 5s by default', () => {
+  expect(readMeowSplashPreviewDelay('?meow-splash=3000')).toBe(3000)
+  expect(readMeowSplashPreviewDelay('?meow-splash')).toBe(5000)
+  expect(readMeowSplashPreviewDelay('?meow-splash=soon')).toBe(5000)
+})
+
+test('the local preview hold stays under the 10s failsafe', () => {
+  expect(readMeowSplashPreviewDelay('?meow-splash=60000')).toBe(8000)
 })
