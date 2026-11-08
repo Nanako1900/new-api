@@ -31,6 +31,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -291,6 +292,126 @@ describe('request policy settings', () => {
             'content_safety_setting.review_enabled': 'false',
             'content_safety_setting.review_group': 'default',
             'content_safety_setting.log_retention_days': '45',
+          },
+        }
+      )
+    )
+  })
+
+  it('AI review options stay hidden until AI review is switched on', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const toggle = await screen.findByRole('switch', {
+      name: 'Enable AI review',
+    })
+    expect(toggle).not.toBeChecked()
+    expect(
+      screen.queryByRole('group', { name: 'AI review options' })
+    ).not.toBeInTheDocument()
+    await userEvent.click(toggle)
+    const options = screen.getByRole('group', { name: 'AI review options' })
+    expect(
+      within(options).getByRole('textbox', { name: 'Review words' })
+    ).toBeVisible()
+    expect(
+      within(options).getByRole('combobox', { name: 'Review model' })
+    ).toBeVisible()
+    expect(
+      within(options).getByRole('combobox', { name: 'Review group' })
+    ).toBeVisible()
+  })
+
+  it('enabling AI review without a model or review words shows field errors and does not write options', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('switch', { name: 'Enable AI review' })
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('textbox', { name: 'Review words' })
+      ).toHaveAttribute('aria-invalid', 'true')
+    )
+    expect(
+      screen.getByRole('combobox', { name: 'Review model' })
+    ).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText('Enter at least one review word')).toBeVisible()
+    expect(screen.getByText('Select a review model')).toBeVisible()
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('a valid AI review setup writes exactly the changed content safety options', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('switch', { name: 'Enable AI review' })
+    )
+    fireEvent.change(screen.getByRole('textbox', { name: 'Review words' }), {
+      target: { value: 'knife' },
+    })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Review model' }), {
+      target: { value: 'judge-model' },
+    })
+    fireEvent.change(
+      screen.getByRole('spinbutton', { name: 'Review timeout (seconds)' }),
+      { target: { value: '20' } }
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            'content_safety_setting.review_enabled': 'true',
+            'content_safety_setting.review_group': 'default',
+            'content_safety_setting.review_words': 'knife',
+            'content_safety_setting.review_model': 'judge-model',
+            'content_safety_setting.review_timeout_seconds': '20',
+          },
+        }
+      )
+    )
+  })
+
+  it('an out-of-range review timeout shows the allowed range and does not write options', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('switch', { name: 'Enable AI review' })
+    )
+    const timeout = screen.getByRole('spinbutton', {
+      name: 'Review timeout (seconds)',
+    })
+    fireEvent.change(timeout, { target: { value: '61' } })
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() => expect(timeout).toHaveAttribute('aria-invalid', 'true'))
+    expect(screen.getByText('Enter an integer from 1 to 60')).toBeVisible()
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('changing only the review words still sends the review switch and group', async () => {
+    settings['content_safety_setting.review_enabled'] = true
+    settings['content_safety_setting.review_model'] = 'judge-model'
+    settings['content_safety_setting.review_words'] = 'knife'
+    await renderPolicies('/system-settings/request-policies/filtering')
+    fireEvent.change(
+      await screen.findByRole('textbox', { name: 'Review words' }),
+      { target: { value: 'knife\ngun' } }
+    )
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Save sensitive words' })
+    )
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            'content_safety_setting.review_enabled': 'true',
+            'content_safety_setting.review_group': 'default',
+            'content_safety_setting.review_words': 'knife\ngun',
           },
         }
       )

@@ -47,6 +47,7 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { safeNumberFieldProps } from '../utils/numeric-field'
+import { ContentReviewFields } from './content-review-fields'
 import {
   CONTENT_SAFETY_INT_LIMITS,
   CONTENT_SAFETY_OPTION_PREFIX,
@@ -210,6 +211,8 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
               </FormItem>
             )}
           />
+
+          <ContentReviewFields />
 
           <FormField
             control={form.control}
