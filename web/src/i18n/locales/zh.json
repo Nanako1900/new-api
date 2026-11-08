@@ -23,7 +23,7 @@
     "Checking your reset link...": "正在检查重置链接...",
     "Choose a new password for your account.": "为您的账户设置新密码。",
     "Configure email delivery": "配置邮件发送",
-    "Copy group name": "复制分组名",
+    "Copy group name": "复制分组名称",
     "Disable GeeTest verification before clearing the captcha ID or captcha key.": "请先关闭极验验证，再清空验证 ID 或验证 Key。",
     "Email delivery is not configured, so password sign-up is unavailable.": "尚未配置邮件发送，密码注册暂不可用。",
     "Enable GeeTest": "启用极验",
