@@ -7732,8 +7732,8 @@
     "Client canceled": "Máy khách đã hủy",
     "Content safety log cleanup": "Dọn dẹp nhật ký kiểm duyệt",
     "Invalid content safety log query": "Truy vấn nhật ký kiểm duyệt không hợp lệ",
-    "View other accounts' audit and content safety logs": "Xem nhật ký kiểm toán và an toàn nội dung của tài khoản khác",
-    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "Xem bản ghi kiểm toán và bản ghi an toàn nội dung (bao gồm đoạn trích từ prompt của người dùng) của vai trò user và admin. Luôn loại trừ bản ghi của vai trò root.",
+    "View other accounts' audit and content safety logs": "Xem nhật ký kiểm toán và nhật ký kiểm duyệt của tài khoản khác",
+    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "Xem bản ghi kiểm toán và nhật ký kiểm duyệt (bao gồm đoạn trích từ prompt của người dùng) của vai trò user và admin. Luôn loại trừ bản ghi của vai trò root.",
     "Not covered: Realtime voice sessions, images, files and audio content.": "Không áp dụng cho: phiên giọng nói Realtime, hình ảnh, tệp và nội dung âm thanh."
   }
 }

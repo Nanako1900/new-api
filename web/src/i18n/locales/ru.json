@@ -7732,8 +7732,8 @@
     "Client canceled": "Отменено клиентом",
     "Content safety log cleanup": "Очистка журнала модерации",
     "Invalid content safety log query": "Недопустимый запрос к журналу модерации",
-    "View other accounts' audit and content safety logs": "Просмотр аудита и журналов безопасности контента других аккаунтов",
-    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "Просмотр записей аудита и записей безопасности контента (включая фрагменты промптов пользователей) ролей user и admin. Записи роли root всегда исключены.",
+    "View other accounts' audit and content safety logs": "Просмотр журналов аудита и модерации других аккаунтов",
+    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "Просмотр записей аудита и журнала модерации (включая фрагменты промптов пользователей) ролей user и admin. Записи роли root всегда исключены.",
     "Not covered: Realtime voice sessions, images, files and audio content.": "Не охвачено: голосовые сессии Realtime, изображения, файлы и аудиоконтент."
   }
 }

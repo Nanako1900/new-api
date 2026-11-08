@@ -7732,8 +7732,8 @@
     "Client canceled": "客户端已取消",
     "Content safety log cleanup": "内容审核记录清理",
     "Invalid content safety log query": "内容审核记录查询参数无效",
-    "View other accounts' audit and content safety logs": "查看其他账户审计和内容安全日志",
-    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "查看 user 和 admin 角色的审计记录和内容安全记录（包含用户提示词的片段），始终排除 root 级别记录。",
+    "View other accounts' audit and content safety logs": "查看其他账户的审计日志和内容审核记录",
+    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "查看 user 和 admin 角色的审计记录和内容审核记录（包含用户提示词的片段），始终排除 root 级别记录。",
     "Not covered: Realtime voice sessions, images, files and audio content.": "未覆盖：Realtime 语音会话、图片、文件和音频内容。"
   }
 }
