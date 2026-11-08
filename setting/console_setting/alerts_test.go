@@ -26,6 +26,7 @@ func TestValidateAlerts(t *testing.T) {
 		{name: "empty value is valid", value: ""},
 		{name: "empty list is valid", value: `[]`},
 		{name: "minimal alert is valid", value: `[{"id":1,"content":"Maintenance tonight","level":"info"}]`},
+		{name: "time-based id from the web console is valid", value: `[{"id":1762588800000,"content":"c","level":"info"}]`},
 		{
 			// The web console sends Date.toISOString() values, which carry milliseconds.
 			name:  "full alert with milliseconds and offsets is valid",
@@ -100,11 +101,11 @@ func TestGetActiveAlertsFiltersByScheduleAndSortsBySeverity(t *testing.T) {
 
 	alerts := GetActiveAlerts(now)
 
-	ids := make([]int, 0, len(alerts))
+	ids := make([]int64, 0, len(alerts))
 	for _, alert := range alerts {
 		ids = append(ids, alert.Id)
 	}
-	assert.Equal(t, []int{8, 7, 6, 4, 5}, ids)
+	assert.Equal(t, []int64{8, 7, 6, 4, 5}, ids)
 }
 
 func TestGetActiveAlertsReturnsEmptySliceWhenUnset(t *testing.T) {

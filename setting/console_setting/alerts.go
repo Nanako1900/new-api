@@ -12,7 +12,7 @@ import (
 // Alert is a console banner the root user manages. It is shown at the top of
 // every signed-in console page while it is enabled and inside its schedule.
 type Alert struct {
-	Id          int    `json:"id"`
+	Id          int64  `json:"id"`
 	Title       string `json:"title,omitempty"`
 	Content     string `json:"content"`
 	Level       string `json:"level"`
@@ -53,7 +53,7 @@ func validateAlerts(value string) error {
 		return common.NewMessage("Alerts cannot exceed 20 entries")
 	}
 
-	seenIds := make(map[int]bool, len(alerts))
+	seenIds := make(map[int64]bool, len(alerts))
 	for i, alert := range alerts {
 		index := map[string]any{"index": i + 1}
 		if alert.Id <= 0 {
