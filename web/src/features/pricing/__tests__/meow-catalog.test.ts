@@ -75,10 +75,12 @@ describe('buildMeowCatalog', () => {
       GROUP_RATIO
     )
 
-    expect(families.map((family) => family.id)).toEqual([
-      'claude',
-      'gpt',
-      'other',
+    expect(
+      families.map((family) => [family.id, channelModels(family)])
+    ).toEqual([
+      ['claude', [['official', ['claude-sonnet']]]],
+      ['gpt', [['official', ['gpt-6-sol']]]],
+      ['other', [['official', ['gemini-pro']]]],
     ])
   })
 
@@ -125,15 +127,40 @@ describe('buildMeowCatalog', () => {
     ])
   })
 
-  it('skips the auto group and channels without models', () => {
+  it('skips the auto group even when a model enables it', () => {
     const families = buildMeowCatalog(
       [model('claude-sonnet', { enable_groups: ['official', 'auto'] })],
+      USABLE_GROUPS,
+      GROUP_RATIO
+    )
+
+    expect(channelModels(families[0])).toEqual([
+      ['official', ['claude-sonnet']],
+    ])
+  })
+
+  it('drops a channel that has no models', () => {
+    const families = buildMeowCatalog(
+      [model('claude-sonnet', { enable_groups: ['official'] })],
       { ...USABLE_GROUPS, idle: '空闲渠道' },
       GROUP_RATIO
     )
 
     expect(channelModels(families[0])).toEqual([
       ['official', ['claude-sonnet']],
+    ])
+  })
+
+  it('orders channels with equal ratios by group name', () => {
+    const families = buildMeowCatalog(
+      [model('claude-sonnet', { enable_groups: ['all'] })],
+      { beta: 'Beta', alpha: 'Alpha' },
+      { beta: 1, alpha: 1 }
+    )
+
+    expect(families[0].channels.map((channel) => channel.group)).toEqual([
+      'alpha',
+      'beta',
     ])
   })
 
@@ -184,7 +211,7 @@ describe('buildMeowCatalog', () => {
   it('labels a channel with its group description, falling back to the group name', () => {
     const families = buildMeowCatalog(
       [model('claude-sonnet', { enable_groups: ['all'] })],
-      { official: '官方渠道', kiro: { desc: '', ratio: 0.9 } },
+      { official: '官方渠道', kiro: { desc: '', ratio: 5 } },
       GROUP_RATIO
     )
 
@@ -207,6 +234,19 @@ describe('toStatusSlots', () => {
     expect(slots).toHaveLength(STATUS_SLOT_COUNT)
     expect(slots[0]).toEqual({ ts: LAST_HOUR - 23 * HOUR, successRate: 50 })
     expect(slots[23]).toEqual({ ts: LAST_HOUR, successRate: 100 })
+  })
+
+  it('averages sub-hour buckets into their hour', () => {
+    const slots = toStatusSlots(
+      [
+        point(LAST_HOUR, 100),
+        point(LAST_HOUR + 300, 100),
+        point(LAST_HOUR + 600, 70),
+      ],
+      LAST_HOUR + 900
+    )
+
+    expect(slots[23]).toEqual({ ts: LAST_HOUR, successRate: 90 })
   })
 
   it('leaves hours without samples empty and ignores samples outside the window', () => {

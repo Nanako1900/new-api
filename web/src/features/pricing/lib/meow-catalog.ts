@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { providerOf } from '@/features/home/lib/provider-models'
+import {
+  HOME_PROVIDERS,
+  type HomeProvider,
+  providerOf,
+} from '@/features/home/lib/provider-models'
 import type {
   PerformanceGroup,
   PerformanceSeriesPoint,
@@ -24,9 +28,10 @@ import type {
 
 import { EXCLUDED_GROUPS, QUOTA_TYPE_VALUES } from '../constants'
 import type { PricingModel } from '../types'
+import { isDynamicPricingModel } from './dynamic-price'
 import { getConfiguredGroupRatio } from './model-helpers'
 
-export type MeowFamilyId = 'claude' | 'gpt' | 'other'
+export type MeowFamilyId = HomeProvider | 'other'
 
 /** A token group shown as a channel: label, price multiplier and models. */
 export type MeowChannel = {
@@ -64,7 +69,7 @@ export type StatusSlot = {
 
 export const STATUS_SLOT_COUNT = 24
 
-const FAMILY_ORDER: MeowFamilyId[] = ['claude', 'gpt', 'other']
+const FAMILY_ORDER: MeowFamilyId[] = [...HOME_PROVIDERS, 'other']
 const ALL_GROUPS = 'all'
 const HOUR_SECONDS = 3600
 
@@ -73,7 +78,7 @@ const HOUR_SECONDS = 3600
  * per-request pricing; within each, the dearer base price first.
  */
 function catalogRank(model: PricingModel): [number, number] {
-  if (model.billing_mode === 'tiered_expr' && model.billing_expr) return [1, 0]
+  if (isDynamicPricingModel(model)) return [1, 0]
   if (model.quota_type === QUOTA_TYPE_VALUES.REQUEST) {
     return [2, model.model_price ?? 0]
   }
@@ -127,21 +132,32 @@ export function buildMeowCatalog(
   })
 }
 
-/** Map hourly samples onto the 24 hours ending with the hour of `windowEnd`. */
+/**
+ * Map samples onto the 24 hours ending with the hour of `windowEnd`.
+ * Sub-hour buckets (minute or 5-minute) are averaged per hour; the mean is
+ * unweighted because samples carry no request counts.
+ */
 export function toStatusSlots(
   series: PerformanceSeriesPoint[],
   windowEnd: number
 ): StatusSlot[] {
   const lastHour = windowEnd - (windowEnd % HOUR_SECONDS)
   const firstHour = lastHour - (STATUS_SLOT_COUNT - 1) * HOUR_SECONDS
-  const rates = new Map<number, number>()
+  const ratesByHour = new Map<number, number[]>()
   for (const point of series) {
-    if (point.ts < firstHour || point.ts > lastHour) continue
     if (!Number.isFinite(point.success_rate)) continue
-    rates.set(point.ts, point.success_rate)
+    const hour = point.ts - (point.ts % HOUR_SECONDS)
+    if (hour < firstHour || hour > lastHour) continue
+    ratesByHour.set(hour, [
+      ...(ratesByHour.get(hour) ?? []),
+      point.success_rate,
+    ])
   }
   return Array.from({ length: STATUS_SLOT_COUNT }, (_, index) => {
     const ts = firstHour + index * HOUR_SECONDS
-    return { ts, successRate: rates.get(ts) ?? null }
+    const rates = ratesByHour.get(ts)
+    if (!rates) return { ts, successRate: null }
+    const mean = rates.reduce((sum, rate) => sum + rate, 0) / rates.length
+    return { ts, successRate: mean }
   })
 }
