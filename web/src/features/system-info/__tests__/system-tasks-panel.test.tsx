@@ -282,3 +282,32 @@ it('refreshes history when the last running task finishes', async () => {
   expect(screen.getByText('history-runner')).toBeVisible()
   client.clear()
 })
+
+it('names content safety log cleanup tasks in history and offers them as a type filter', async () => {
+  vi.spyOn(api, 'get').mockImplementation(
+    async (_url, config?: ApiRequestConfig) => ({
+      data: {
+        success: true,
+        data:
+          config?.params?.scope === 'active'
+            ? []
+            : [
+                {
+                  ...task,
+                  task_id: 'cleanup-task',
+                  type: 'content_safety_log_cleanup',
+                },
+              ],
+        total: 1,
+      },
+    })
+  )
+  const client = renderPanel()
+  expect(
+    await screen.findByRole('row', { name: /Content safety log cleanup/ })
+  ).toBeVisible()
+  expect(
+    screen.getByRole('option', { name: 'Content safety log cleanup' })
+  ).toBeInTheDocument()
+  client.clear()
+})
