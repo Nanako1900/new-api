@@ -14,6 +14,10 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
+// globalMember is the user part of a site-wide stream's advertisement. Nodes
+// that predate site-wide streams fail to parse it as a user id and skip it.
+const globalMember = "global"
+
 const (
 	bridgeMaintainEvery = 2 * time.Second
 	bridgeOnlineTTL     = 60 * time.Second
@@ -36,7 +40,8 @@ func bridgeMAC(origin, event string) string {
 
 // bridge forwards events between nodes over Redis. Each node advertises the
 // users it streams to in a sorted set (member "user:origin", score = expiry),
-// so a node only publishes rows that another node is waiting for.
+// plus "global:origin" while it serves a site-wide stream, so a node only
+// publishes rows that another node is waiting for.
 type bridge struct {
 	rdb           *redis.Client
 	hub           *Hub
@@ -46,7 +51,10 @@ type bridge struct {
 	maintainEvery time.Duration
 	onlineTTL     time.Duration
 	remote        atomic.Pointer[map[int]struct{}]
-	lastErrorLog  atomic.Int64
+	remoteGlobal  atomic.Bool
+	// advertisedGlobal is owned by the maintain loop.
+	advertisedGlobal bool
+	lastErrorLog     atomic.Int64
 }
 
 func newBridge(rdb *redis.Client, hub *Hub, maintainEvery, onlineTTL time.Duration) *bridge {
@@ -109,7 +117,13 @@ func (b *bridge) receive(ctx context.Context, pubsub *redis.PubSub) {
 				continue
 			}
 			var event Event
-			if err := common.UnmarshalJsonStr(decoded.Event, &event); err != nil || event.UserID <= 0 {
+			if err := common.UnmarshalJsonStr(decoded.Event, &event); err != nil {
+				continue
+			}
+			if event.UserID <= 0 {
+				if event.Dropped > 0 {
+					b.hub.AddGlobalDropped(event.Dropped)
+				}
 				continue
 			}
 			b.hub.Deliver(event)
@@ -123,29 +137,47 @@ func (b *bridge) maintainOnline(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, bridgeRedisTimeout)
 	defer cancel()
 	now := time.Now()
-	if users := b.hub.Users(); len(users) > 0 {
-		expiresAt := float64(now.Add(b.onlineTTL).Unix())
-		members := make([]*redis.Z, 0, len(users))
-		for _, userID := range users {
-			members = append(members, &redis.Z{Score: expiresAt, Member: strconv.Itoa(userID) + ":" + b.origin})
-		}
+	users := b.hub.Users()
+	members := make([]*redis.Z, 0, len(users)+1)
+	expiresAt := float64(now.Add(b.onlineTTL).Unix())
+	for _, userID := range users {
+		members = append(members, &redis.Z{Score: expiresAt, Member: strconv.Itoa(userID) + ":" + b.origin})
+	}
+	global := b.hub.HasGlobalSubscribers()
+	if global {
+		members = append(members, &redis.Z{Score: expiresAt, Member: globalMember + ":" + b.origin})
+	}
+	if len(members) > 0 {
 		if err := b.rdb.ZAdd(ctx, b.onlineKey, members...).Err(); err != nil {
 			b.logError("failed to advertise monitor streams: %s", err)
 		}
 	}
+	// The last site-wide stream closed: stop the other nodes forwarding now,
+	// not when the advertisement expires.
+	if b.advertisedGlobal && !global {
+		if err := b.rdb.ZRem(ctx, b.onlineKey, globalMember+":"+b.origin).Err(); err != nil {
+			b.logError("failed to withdraw the site-wide stream advertisement: %s", err)
+		}
+	}
+	b.advertisedGlobal = global
 	nowScore := strconv.FormatInt(now.Unix(), 10)
 	if err := b.rdb.ZRemRangeByScore(ctx, b.onlineKey, "-inf", "("+nowScore).Err(); err != nil {
 		b.logError("failed to expire monitor stream advertisements: %s", err)
 	}
-	members, err := b.rdb.ZRangeByScore(ctx, b.onlineKey, &redis.ZRangeBy{Min: nowScore, Max: "+inf"}).Result()
+	advertised, err := b.rdb.ZRangeByScore(ctx, b.onlineKey, &redis.ZRangeBy{Min: nowScore, Max: "+inf"}).Result()
 	if err != nil {
 		b.logError("failed to read monitor stream advertisements: %s", err)
 		return
 	}
-	remote := make(map[int]struct{}, len(members))
-	for _, member := range members {
+	remote := make(map[int]struct{}, len(advertised))
+	remoteGlobal := false
+	for _, member := range advertised {
 		userPart, origin, ok := strings.Cut(member, ":")
 		if !ok || origin == b.origin {
+			continue
+		}
+		if userPart == globalMember {
+			remoteGlobal = true
 			continue
 		}
 		if userID, err := strconv.Atoi(userPart); err == nil {
@@ -153,6 +185,12 @@ func (b *bridge) maintainOnline(ctx context.Context) {
 		}
 	}
 	b.remote.Store(&remote)
+	b.remoteGlobal.Store(remoteGlobal)
+}
+
+// globalElsewhere reports whether another node advertised a site-wide stream.
+func (b *bridge) globalElsewhere() bool {
+	return b.remoteGlobal.Load()
 }
 
 // streamsElsewhere reports whether another node advertised a stream of userID.

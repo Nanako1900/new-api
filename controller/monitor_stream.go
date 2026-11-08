@@ -18,7 +18,8 @@ import (
 const monitorStreamWriteTimeout = 10 * time.Second
 
 // MonitorStream serves the live event stream (SSE) of the signed-in monitor
-// user: new log rows, balance changes and session lifecycle events.
+// user: new log rows, balance changes and session lifecycle events. With
+// scope=global it streams every user's request rows to the root user instead.
 func MonitorStream(c *gin.Context) {
 	identity, ok := middleware.GetMonitorIdentity(c)
 	hub := monitorstream.ActiveHub()
@@ -26,12 +27,29 @@ func MonitorStream(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "code": "MONITOR_STREAM_UNAVAILABLE", "message": http.StatusText(http.StatusServiceUnavailable)})
 		return
 	}
-	subscriber, err := hub.Subscribe(identity.UserID)
+	scope := c.Query("scope")
+	if scope != "" && scope != "global" {
+		writeMonitorError(c, errMonitorRequestInvalid)
+		return
+	}
+	global := scope == "global"
+	if global && !middleware.AllowMonitorGlobal(c) {
+		return
+	}
+	subscribe := hub.Subscribe
+	if global {
+		subscribe = hub.SubscribeGlobal
+	}
+	subscriber, err := subscribe(identity.UserID)
 	if err != nil {
 		c.JSON(http.StatusTooManyRequests, gin.H{"success": false, "code": "MONITOR_STREAM_LIMIT", "message": http.StatusText(http.StatusTooManyRequests)})
 		return
 	}
 	defer hub.Unsubscribe(subscriber)
+
+	if global {
+		logger.LogInfo(c.Request.Context(), common.LogText("monitor global stream opened: user=%d ip=%s", identity.UserID, c.ClientIP()))
+	}
 
 	since, _ := strconv.ParseInt(c.Query("since"), 10, 64)
 	header := c.Writer.Header()
@@ -48,8 +66,10 @@ func MonitorStream(c *gin.Context) {
 	out := monitorStreamWriter{writer: c.Writer, controller: responseController}
 	source := monitorstream.StreamSource{
 		SessionState: func() monitorstream.SessionState {
-			_, _, err := service.ValidateMonitorAccess(identity)
+			_, user, err := service.ValidateMonitorAccess(identity)
 			switch {
+			case err == nil && global && user.Role < common.RoleRootUser:
+				return monitorstream.SessionForbidden
 			case err == nil:
 				return monitorstream.SessionActive
 			case errors.Is(err, service.ErrMonitorSessionInvalid):
@@ -63,7 +83,24 @@ func MonitorStream(c *gin.Context) {
 			return model.GetUserLogsSince(identity.UserID, since, limit)
 		},
 	}
-	_ = monitorstream.Serve(c.Request.Context(), out, flush, subscriber, source, monitorstream.DefaultStreamOptions(since, time.Now()))
+	options := monitorstream.DefaultStreamOptions(since, time.Now())
+	if global {
+		source.Replay = model.GetGlobalLogsSince
+		// Name each channel once per replay.
+		channelNames := map[int]string{}
+		source.ReplayEvent = func(stored model.Log) monitorstream.Event {
+			name, ok := channelNames[stored.ChannelId]
+			if !ok && stored.ChannelId != 0 {
+				if channel, err := model.CacheGetChannel(stored.ChannelId); err == nil {
+					name = channel.Name
+				}
+				channelNames[stored.ChannelId] = name
+			}
+			return monitorstream.NewGlobalStreamEvent(stored, name)
+		}
+		options = monitorstream.GlobalStreamOptions(since, time.Now())
+	}
+	_ = monitorstream.Serve(c.Request.Context(), out, flush, subscriber, source, options)
 }
 
 // monitorStreamWriter bounds every write, so a client that stops reading is

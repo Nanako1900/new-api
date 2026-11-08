@@ -161,7 +161,9 @@ func monitorBundleData(bundle *service.MonitorBundle, user *model.User) gin.H {
 // monitorUserData reads the balance from the quota cache when Redis is on: the
 // database copy lags behind spending while batch updates are enabled.
 // Of the user setting only the picked avatar is shared (null: the console
-// draws the default cat from the user id, as the main site does).
+// draws the default cat from the user id, as the main site does). global_view
+// tells the console to offer the site-wide view; the server checks the role
+// again on every site-wide request.
 func monitorUserData(user *model.User) gin.H {
 	quota := user.Quota
 	if cached, err := model.GetUserQuota(user.Id, false); err == nil {
@@ -176,6 +178,7 @@ func monitorUserData(user *model.User) gin.H {
 		"used_quota":    user.UsedQuota,
 		"request_count": user.RequestCount,
 		"avatar":        user.GetSetting().Avatar,
+		"global_view":   user.Role >= common.RoleRootUser,
 	}
 }
 

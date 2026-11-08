@@ -3,6 +3,7 @@ package monitorstream
 import (
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,13 +20,17 @@ const (
 // StreamOptions are the timings of one stream.
 type StreamOptions struct {
 	// Since replays rows created at or after this unix second; 0 replays none.
-	Since        int64
-	Heartbeat    time.Duration
-	Revalidate   time.Duration
+	Since      int64
+	Heartbeat  time.Duration
+	Revalidate time.Duration
+	// BalanceEvery 0 sends no balance events.
 	BalanceEvery time.Duration
 	BalanceDelay time.Duration
 	BatchWindow  time.Duration
-	MaxLifetime  time.Duration
+	// MaxBatch caps the live rows of one batch, keeping the newest; the batch
+	// says how many it left out. 0 sends every row.
+	MaxBatch    int
+	MaxLifetime time.Duration
 }
 
 // DefaultStreamOptions clamps since to the replay window.
@@ -44,6 +49,23 @@ func DefaultStreamOptions(since int64, now time.Time) StreamOptions {
 	}
 }
 
+// GlobalStreamMaxBatch and GlobalStreamBatchWindow bound what a site-wide
+// stream sends: at most 50 rows a second, however busy the site is.
+const (
+	GlobalStreamMaxBatch    = 25
+	GlobalStreamBatchWindow = 500 * time.Millisecond
+)
+
+// GlobalStreamOptions are DefaultStreamOptions for a site-wide stream: capped
+// batches and no balance events.
+func GlobalStreamOptions(since int64, now time.Time) StreamOptions {
+	options := DefaultStreamOptions(since, now)
+	options.BalanceEvery = 0
+	options.BatchWindow = GlobalStreamBatchWindow
+	options.MaxBatch = GlobalStreamMaxBatch
+	return options
+}
+
 // SessionState is the result of re-checking a stream's monitor session.
 type SessionState int
 
@@ -54,6 +76,9 @@ const (
 	// a row, then asks the client to reconnect rather than trust a session it
 	// cannot verify.
 	SessionUnknown
+	// SessionForbidden means the session is valid but may no longer read this
+	// stream (a site-wide stream of a user who is no longer the root user).
+	SessionForbidden
 )
 
 const maxUnknownSessionChecks = 3
@@ -63,6 +88,10 @@ type StreamSource struct {
 	SessionState func() SessionState
 	Quota        func() (int, error)
 	Replay       func(since int64, limit int) ([]*model.Log, error)
+	// ReplayEvent turns a replayed row into what the stream sends. Nil means
+	// the owner's view (NewEvent), or the site-wide view without channel
+	// names on a site-wide stream.
+	ReplayEvent func(stored model.Log) Event
 }
 
 type streamItem struct {
@@ -78,6 +107,7 @@ type stream struct {
 	options    StreamOptions
 	replayed   map[string]struct{}
 	pending    []streamItem
+	dropped    int64
 	quota      int
 	quotaKnown bool
 }
@@ -114,9 +144,18 @@ func (s *stream) open() error {
 		common.SysError(common.LogText("failed to replay monitor logs: %s", err.Error()))
 		return s.send("resync", map[string]any{})
 	}
+	replayEvent := s.source.ReplayEvent
+	switch {
+	case replayEvent != nil:
+	case s.subscriber.global:
+		// Never the owner's view on a site-wide stream, even without channel names.
+		replayEvent = func(stored model.Log) Event { return NewGlobalStreamEvent(stored, "") }
+	default:
+		replayEvent = NewEvent
+	}
 	items := make([]streamItem, 0, len(logs))
 	for _, stored := range logs {
-		event := NewEvent(*stored)
+		event := replayEvent(*stored)
 		s.replayed[event.Key] = struct{}{}
 		items = append(items, streamItem{Log: event.Log, Key: event.Key})
 	}
@@ -136,8 +175,12 @@ func (s *stream) loop(ctx context.Context) error {
 	defer heartbeat.Stop()
 	revalidate := time.NewTicker(s.options.Revalidate)
 	defer revalidate.Stop()
-	balance := time.NewTicker(s.options.BalanceEvery)
-	defer balance.Stop()
+	var balance <-chan time.Time
+	if s.options.BalanceEvery > 0 {
+		ticker := time.NewTicker(s.options.BalanceEvery)
+		defer ticker.Stop()
+		balance = ticker.C
+	}
 	lifetime := time.NewTimer(s.options.MaxLifetime)
 	defer lifetime.Stop()
 	var batch, balanceSoon <-chan time.Time
@@ -155,6 +198,8 @@ func (s *stream) loop(ctx context.Context) error {
 			switch s.source.SessionState() {
 			case SessionEnded:
 				return s.send("revoked", map[string]any{"reason": "session_revoked"})
+			case SessionForbidden:
+				return s.send("revoked", map[string]any{"reason": "forbidden"})
 			case SessionUnknown:
 				if unknownChecks++; unknownChecks >= maxUnknownSessionChecks {
 					return s.send("reconnect", map[string]any{})
@@ -167,10 +212,14 @@ func (s *stream) loop(ctx context.Context) error {
 				continue
 			}
 			s.pending = append(s.pending, streamItem{Log: event.Log, Key: event.Key})
+			if s.options.MaxBatch > 0 && len(s.pending) > s.options.MaxBatch {
+				s.pending = slices.Delete(s.pending, 0, 1)
+				s.dropped++
+			}
 			if batch == nil {
 				batch = time.After(s.options.BatchWindow)
 			}
-			if balanceSoon == nil {
+			if balanceSoon == nil && balance != nil {
 				balanceSoon = time.After(s.options.BalanceDelay)
 			}
 		case <-batch:
@@ -179,7 +228,7 @@ func (s *stream) loop(ctx context.Context) error {
 		case <-balanceSoon:
 			balanceSoon = nil
 			err = s.sendBalanceIfChanged()
-		case <-balance.C:
+		case <-balance:
 			err = s.sendBalanceIfChanged()
 		case <-s.subscriber.Overflow():
 			s.pending, batch = nil, nil
@@ -194,12 +243,19 @@ func (s *stream) loop(ctx context.Context) error {
 }
 
 func (s *stream) flushPending() error {
-	if len(s.pending) == 0 {
+	dropped := s.dropped + s.subscriber.TakeDropped()
+	if len(s.pending) == 0 && dropped == 0 {
 		return nil
 	}
-	items := s.pending
-	s.pending = nil
-	return s.send("logs", map[string]any{"items": items})
+	data := map[string]any{"items": s.pending}
+	if s.pending == nil {
+		data["items"] = []streamItem{}
+	}
+	if dropped > 0 {
+		data["dropped"] = dropped
+	}
+	s.pending, s.dropped = nil, 0
+	return s.send("logs", data)
 }
 
 func (s *stream) sendBalanceIfChanged() error {

@@ -687,6 +687,8 @@
   "models.dev parse failed from %s: %s": "解析 %s 返回的 models.dev 数据失败: %s",
   "monitor auth rejected (%s %s): %v; ip=%s": "监控台鉴权被拒绝（%s %s）: %v; ip=%s",
   "monitor authentication error: %v": "监控台鉴权出错: %v",
+  "monitor global access rejected: user=%d role=%d ip=%s": "监控台全站视图访问被拒绝：user=%d role=%d ip=%s",
+  "monitor global stream opened: user=%d ip=%s": "监控台全站实时推送已打开：user=%d ip=%s",
   "monitor preferences rejected: %s; user=%d ip=%s": "监控台偏好被拒绝：%s；user=%d ip=%s",
   "monitor request internal error (%s %s): %v": "监控台请求内部错误（%s %s）: %v",
   "monitor stream revalidation error: %v": "监控推送复核会话时出错: %v",

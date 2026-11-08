@@ -50,22 +50,24 @@ type monitorTheme struct {
 	Mode string `json:"mode"`
 }
 
+// monitorPreferences is what the console saves. GlobalLayout is the root
+// user's site-wide view; any user may store one, it only arranges widgets.
 type monitorPreferences struct {
-	Version  int                       `json:"version"`
-	Layout   []monitorLayoutItem       `json:"layout"`
-	Settings map[string]map[string]any `json:"settings"`
-	Theme    monitorTheme              `json:"theme"`
+	Version      int                       `json:"version"`
+	Layout       []monitorLayoutItem       `json:"layout"`
+	Settings     map[string]map[string]any `json:"settings"`
+	Theme        monitorTheme              `json:"theme"`
+	GlobalLayout []monitorLayoutItem       `json:"global_layout,omitempty"`
 }
 
-// valid reports whether the preferences have the stored shape: version 1, a
-// layout of uniquely named whole-cell items, widget settings that are
-// booleans or short lowercase tokens, and a theme id with a known mode.
-func (p *monitorPreferences) valid() bool {
-	if p.Version != monitorPreferencesVersion || p.Layout == nil || len(p.Layout) > monitorPreferencesMaxWidgets {
+// validMonitorLayout reports whether a layout has at most 32 uniquely named
+// whole-cell items inside the grid bounds.
+func validMonitorLayout(layout []monitorLayoutItem) bool {
+	if len(layout) > monitorPreferencesMaxWidgets {
 		return false
 	}
-	seen := make(map[string]bool, len(p.Layout))
-	for _, item := range p.Layout {
+	seen := make(map[string]bool, len(layout))
+	for _, item := range layout {
 		if !monitorPreferenceIDPattern.MatchString(item.I) || seen[item.I] {
 			return false
 		}
@@ -77,6 +79,17 @@ func (p *monitorPreferences) valid() bool {
 			item.X+item.W > monitorPreferencesMaxCell || item.Y+item.H > monitorPreferencesMaxCell {
 			return false
 		}
+	}
+	return true
+}
+
+// valid reports whether the preferences have the stored shape: version 1,
+// layouts of uniquely named whole-cell items (the site-wide one optional),
+// widget settings that are booleans or short lowercase tokens, and a theme id
+// with a known mode.
+func (p *monitorPreferences) valid() bool {
+	if p.Version != monitorPreferencesVersion || p.Layout == nil || !validMonitorLayout(p.Layout) || !validMonitorLayout(p.GlobalLayout) {
+		return false
 	}
 	if len(p.Settings) > monitorPreferencesMaxWidgets {
 		return false
