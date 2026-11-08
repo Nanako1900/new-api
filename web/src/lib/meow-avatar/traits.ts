@@ -47,12 +47,23 @@ function contrastsWithAll(
   return others.every((other) => colorDistance(color, other) >= min)
 }
 
+/**
+ * The first option of a catalog list (every list has at least one). Written
+ * out so the file also type-checks with noUncheckedIndexedAccess: the monitor
+ * console (my.meowapi.dev) copies this folder unchanged.
+ */
+function firstOption<T>(options: readonly T[]): T {
+  const first = options[0]
+  if (first === undefined) throw new Error('meow-avatar: empty catalog list')
+  return first
+}
+
 /** Returns the option with this id, or the first option for an unknown id. */
 function findOption<T extends MeowOption>(
   options: readonly T[],
   id: string | null | undefined
 ): T {
-  return options.find((option) => option.id === id) ?? options[0]
+  return options.find((option) => option.id === id) ?? firstOption(options)
 }
 
 function coatUnder(coat: CoatOption, patternId: string | null): EyeUnderColors {
@@ -96,7 +107,7 @@ function pickBackgroundId(
   )
   const picked = pickOption(seed, 'background', clear, userId)
   if (picked) return picked.id
-  let best = catalog.backgrounds[0]
+  let best = firstOption(catalog.backgrounds)
   let bestGap = -1
   for (const bg of catalog.backgrounds) {
     const gap = Math.min(
@@ -147,10 +158,11 @@ export function chooseMeowParts(
   const numericId = Number(seed)
   const userId = Number.isInteger(numericId) ? numericId : null
   const coat =
-    pickOption(seed, 'coat', catalog.coats, userId) ?? catalog.coats[0]
+    pickOption(seed, 'coat', catalog.coats, userId) ??
+    firstOption(catalog.coats)
   const pattern = coat.patterns
     ? (pickOption(seed, `coat:${coat.id}`, coat.patterns, userId) ??
-      coat.patterns[0])
+      firstOption(coat.patterns))
     : null
   const accessory =
     pickOption(
@@ -158,7 +170,7 @@ export function chooseMeowParts(
       'accessory',
       catalog.accessories.filter((option) => fitsCoat(option, coat)),
       userId
-    ) ?? catalog.accessories[0]
+    ) ?? firstOption(catalog.accessories)
   const accessoryColor =
     pickOption(
       seed,
@@ -167,7 +179,7 @@ export function chooseMeowParts(
         contrastsWithAll(option.color, coat.edge, MIN_CONTRAST)
       ),
       userId
-    ) ?? catalog.accessoryColors[0]
+    ) ?? firstOption(catalog.accessoryColors)
   const [eyeLeft, eyeRight] = pickEyeLooks(seed, coat, catalog, userId)
   const avoid = getBackgroundAvoidColors({
     coat,
@@ -178,12 +190,17 @@ export function chooseMeowParts(
   return {
     coat: coat.id,
     pattern: pattern?.id ?? null,
-    ear: (pickOption(seed, 'ear', catalog.ears, userId) ?? catalog.ears[0]).id,
-    eye: (pickOption(seed, 'eye', catalog.eyes, userId) ?? catalog.eyes[0]).id,
+    ear: (
+      pickOption(seed, 'ear', catalog.ears, userId) ?? firstOption(catalog.ears)
+    ).id,
+    eye: (
+      pickOption(seed, 'eye', catalog.eyes, userId) ?? firstOption(catalog.eyes)
+    ).id,
     eyeLeft,
     eyeRight,
     mouth: (
-      pickOption(seed, 'mouth', catalog.mouths, userId) ?? catalog.mouths[0]
+      pickOption(seed, 'mouth', catalog.mouths, userId) ??
+      firstOption(catalog.mouths)
     ).id,
     cheeks: chance(seed, 'cheeks', 0.5),
     accessory: accessory.id,

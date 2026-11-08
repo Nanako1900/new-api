@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/monitorstream"
 	"github.com/gin-gonic/gin"
@@ -178,6 +179,42 @@ func TestMonitorSSORoundTripThroughRoutes(t *testing.T) {
 	assert.Equal(t, "MONITOR_AUTH_INVALID", responseJSON(t, afterLogout)["code"])
 	dashboard := env.do(monitorTestRequest{method: http.MethodGet, path: "/api/user/self", bearer: env.dashboardToken})
 	assert.Equal(t, http.StatusOK, dashboard.Code, "monitor logout must leave the main site signed in")
+}
+
+func TestMonitorUserCarriesTheAvatarOnly(t *testing.T) {
+	env := setupMonitorRouterTest(t)
+	require.NoError(t, model.UpdateUserSetting(env.user.Id, dto.UserSetting{
+		WebhookUrl: "https://hooks.example/secret-path", WebhookSecret: "webhook-secret-value",
+		NotificationEmail: "private@example.com", GotifyToken: "gotify-token-value",
+	}))
+	accessToken, refreshCookie := env.signIn(t)
+
+	self := env.do(monitorTestRequest{method: http.MethodGet, path: "/api/monitor/self", bearer: accessToken})
+	require.Equal(t, http.StatusOK, self.Code, self.Body.String())
+	user := responseJSON(t, self)["data"].(map[string]any)
+	assert.Contains(t, user, "avatar")
+	assert.Nil(t, user["avatar"], "no picked avatar: the console draws the default cat")
+
+	saved := env.do(monitorTestRequest{method: http.MethodPut, path: "/api/user/self/avatar", bearer: env.dashboardToken,
+		body: `{"kind":"cat","cat":{"coat":"calico","eye":"big"}}`})
+	require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
+	require.Equal(t, true, responseJSON(t, saved)["success"], saved.Body.String())
+	wantAvatar := map[string]any{"kind": "cat", "cat": map[string]any{"coat": "calico", "eye": "big"}}
+
+	self = env.do(monitorTestRequest{method: http.MethodGet, path: "/api/monitor/self", bearer: accessToken})
+	require.Equal(t, http.StatusOK, self.Code, self.Body.String())
+	assert.Equal(t, wantAvatar, responseJSON(t, self)["data"].(map[string]any)["avatar"])
+
+	refresh := env.do(monitorTestRequest{method: http.MethodPost, path: "/api/monitor/auth/refresh", origin: monitorTestOrigin,
+		cookies: []*http.Cookie{refreshCookie}})
+	require.Equal(t, http.StatusOK, refresh.Code, refresh.Body.String())
+	assert.Equal(t, wantAvatar, responseJSON(t, refresh)["data"].(map[string]any)["user"].(map[string]any)["avatar"])
+
+	for _, response := range []*httptest.ResponseRecorder{self, refresh} {
+		for _, secret := range []string{"secret-path", "webhook-secret-value", "private@example.com", "gotify-token-value", "setting"} {
+			assert.NotContains(t, response.Body.String(), secret, "only the avatar of the user setting is shared")
+		}
+	}
 }
 
 func TestMonitorAndDashboardCredentialsDoNotCross(t *testing.T) {
