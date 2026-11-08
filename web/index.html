@@ -59,7 +59,7 @@
     <!--umami-->
     <!--Google Analytics-->
     <!-- MeowAPI splash. It shows only when the app is not ready after 0.2s
-         (0.8s for returning visitors), so quick loads never flash it. Once
+         (0.5s for returning visitors), so quick loads never flash it. Once
          shown, the logo and name always finish (0.5s) and pause (0.15s)
          before src/lib/meow-splash.ts flies the logo into the header.
          Keep the timings in sync with that file. -->
@@ -81,7 +81,7 @@
           forwards;
       }
       #meow-splash.is-returning {
-        --meow-splash-delay: 0.8s;
+        --meow-splash-delay: 0.5s;
       }
       #meow-splash.is-shown {
         pointer-events: auto;
