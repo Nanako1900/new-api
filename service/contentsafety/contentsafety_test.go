@@ -1,6 +1,7 @@
 package contentsafety_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/service/contentsafety"
@@ -102,4 +103,44 @@ func TestCollectJSONTextSkipsInlineMedia(t *testing.T) {
 	body := `{"prompt":"a cat","metadata":{"negative":"blur","tags":["x","y"]},"image":"data:image/png;base64,AAAA","n":2}`
 	assert.Equal(t, "blur\nx\ny\na cat\n", contentsafety.CollectJSONText([]byte(body)))
 	assert.Equal(t, "plain words", contentsafety.CollectJSONText([]byte("plain words")))
+}
+
+func TestVerdictCacheHonorsTTLSetting(t *testing.T) {
+	key := contentsafety.CacheKey("judge", "prompt", "a knife on the table")
+	assert.NotEqual(t, key, contentsafety.CacheKey("other-judge", "prompt", "a knife on the table"), "changing the model invalidates conclusions")
+	assert.NotEqual(t, key, contentsafety.CacheKey("judge", "other prompt", "a knife on the table"), "changing the prompt invalidates conclusions")
+
+	contentsafety.StoreVerdict(key, contentsafety.CachedVerdict{Safe: false, Category: "violence"}, 60)
+	cached, found := contentsafety.LoadVerdict(key, 60)
+	require.True(t, found)
+	assert.False(t, cached.Safe)
+	assert.Equal(t, "violence", cached.Category)
+
+	_, found = contentsafety.LoadVerdict(key, 0)
+	assert.False(t, found, "a zero TTL disables cache reads")
+	disabledKey := contentsafety.CacheKey("judge", "prompt", "never stored")
+	contentsafety.StoreVerdict(disabledKey, contentsafety.CachedVerdict{Safe: true}, 0)
+	_, found = contentsafety.LoadVerdict(disabledKey, 60)
+	assert.False(t, found, "a zero TTL disables cache writes")
+}
+
+func TestAcquireSlotWaitsForCapacity(t *testing.T) {
+	release, err := contentsafety.AcquireSlot(context.Background(), 1)
+	require.NoError(t, err)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = contentsafety.AcquireSlot(cancelled, 1)
+	assert.ErrorIs(t, err, context.Canceled, "a full pool waits until the caller gives up")
+	release()
+	again, err := contentsafety.AcquireSlot(context.Background(), 1)
+	require.NoError(t, err, "a released slot is reusable")
+	again()
+}
+
+func TestAllowReviewCountsPerUser(t *testing.T) {
+	ctx := context.Background()
+	assert.True(t, contentsafety.AllowReview(ctx, 910001, 2))
+	assert.True(t, contentsafety.AllowReview(ctx, 910001, 2))
+	assert.False(t, contentsafety.AllowReview(ctx, 910001, 2))
+	assert.True(t, contentsafety.AllowReview(ctx, 910002, 2), "another user has its own budget")
 }
