@@ -3,6 +3,8 @@ package contentsafety
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,6 +56,14 @@ func getVerdictCache() *cachex.HybridCache[CachedVerdict] {
 func CacheKey(model, prompt, text string) string {
 	sum := sha256.Sum256([]byte(model + "\x00" + prompt + "\x00" + outputContract + "\x00" + text))
 	return hex.EncodeToString(sum[:])
+}
+
+// BatchCacheKey identifies a set of windows reviewed together, by their window
+// keys in any order, under one review model and prompt. The marker after the
+// model keeps it apart from the key of a single window, whose text a client
+// chooses and could make spell out the window keys of a batch.
+func BatchCacheKey(model, prompt string, windowKeys []string) string {
+	return CacheKey(model+"\x00batch", prompt, strings.Join(slices.Sorted(slices.Values(windowKeys)), "\n"))
 }
 
 // LoadVerdict returns a cached conclusion. A zero ttlSeconds disables the cache.

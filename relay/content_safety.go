@@ -197,6 +197,13 @@ func reviewContentWindows(c *gin.Context, info *relaycommon.RelayInfo, windows [
 	if len(pending) == 0 {
 		return nil
 	}
+	batchKey := ""
+	if len(pending) > 1 {
+		batchKey = contentsafety.BatchCacheKey(cfg.ReviewModel, prompt, pendingKeys)
+		if cached, found := contentsafety.LoadVerdict(batchKey, cfg.CacheTTLSeconds); found && cached.Safe {
+			return nil
+		}
+	}
 	review := contentReview{failure: model.ContentSafetyFailureRateLimited}
 	if contentsafety.AllowReview(c.Request.Context(), info.UserId, cfg.ReviewRateLimitPerMinute) {
 		review = callContentReviewer(c, cfg, prompt, pending)
@@ -210,9 +217,11 @@ func reviewContentWindows(c *gin.Context, info *relaycommon.RelayInfo, windows [
 	}
 	entry.Decision = model.ContentSafetyDecisionReviewPassed
 	for i, verdict := range review.verdicts {
-		// Only a single-window batch is cached. In a larger batch, text injected
-		// into one window can sway the verdict of another either way, and a
-		// cached verdict would then decide that window for everyone.
+		// Only a single-window batch is cached per window. In a larger batch,
+		// text injected into one window can sway the verdict of another either
+		// way, and a cached verdict would then decide that window for everyone.
+		// A larger batch is cached whole, and only when every window is safe,
+		// so it lets nothing but the same set of windows pass unasked.
 		if len(review.verdicts) == 1 {
 			contentsafety.StoreVerdict(pendingKeys[i], contentsafety.CachedVerdict{Safe: verdict.IsSafe(), Category: verdict.Category, Reason: verdict.Reason}, cfg.CacheTTLSeconds)
 		}
@@ -223,6 +232,9 @@ func reviewContentWindows(c *gin.Context, info *relaycommon.RelayInfo, windows [
 	recordContentSafetyLog(c, info, entry, pending)
 	if entry.Decision == model.ContentSafetyDecisionReviewRejected {
 		return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
+	}
+	if batchKey != "" {
+		contentsafety.StoreVerdict(batchKey, contentsafety.CachedVerdict{Safe: true}, cfg.CacheTTLSeconds)
 	}
 	return nil
 }

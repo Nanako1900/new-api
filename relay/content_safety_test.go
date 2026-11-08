@@ -306,18 +306,56 @@ func TestContentSafetyReviewCachesVerdictPerWindow(t *testing.T) {
 	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
 }
 
-func TestContentSafetyReviewDoesNotCacheMultiWindowVerdicts(t *testing.T) {
-	calls := setupContentSafetyReview(t, reviewerReply(`{"results":[{"id":1,"safe":true},{"id":2,"safe":false,"category":"violence","reason":"`+unsafeReason+`"}]}`))
-	operation_setting.GetContentSafetySetting().WindowChars = 50
-	userId, text := nextContentSafetyUser(), saltedText("knife"+strings.Repeat(".", 120)+"knife")
-	for range 2 {
-		c, info := newContentSafetyContext(userId)
-		apiErr := checkContent(c, info, text)
-		require.NotNil(t, apiErr)
-		assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
+// A batch of several windows is cached only as a whole and only when every
+// window is safe, so a stable multi-window history is reviewed once, an
+// unsafe batch is asked again on every repeat, and no verdict of a batch ever
+// decides one of its windows on its own.
+func TestContentSafetyReviewCachesAMultiWindowBatchOnlyWhenAllSafe(t *testing.T) {
+	passed, rejected := model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewRejected
+	for _, tc := range []struct {
+		name          string
+		reply         string
+		wantCode      types.ErrorCode
+		wantCalls     int32
+		wantDecisions []string
+	}{
+		{name: "an all-safe batch is reviewed once", reply: `{"results":[{"id":1,"safe":true},{"id":2,"safe":true}]}`, wantCalls: 1, wantDecisions: []string{passed}},
+		{name: "a batch with an unsafe window is reviewed every time", reply: `{"results":[{"id":1,"safe":true},{"id":2,"safe":false,"category":"violence","reason":"` + unsafeReason + `"}]}`, wantCode: types.ErrorCodeContentReviewRejected, wantCalls: 3, wantDecisions: []string{rejected, rejected, rejected}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := setupContentSafetyReview(t, func(w http.ResponseWriter, r *http.Request) {
+				// A lone window gets a one-item reply.
+				body, _ := io.ReadAll(r.Body)
+				if !bytes.Contains(body, []byte(`\"id\":2`)) {
+					reviewerReply(safeReply)(w, r)
+					return
+				}
+				reviewerReply(tc.reply)(w, r)
+			})
+			operation_setting.GetContentSafetySetting().WindowChars = 50
+			userId, text := nextContentSafetyUser(), saltedText("knife"+strings.Repeat(".", 120)+"knife")
+			var windows []contentsafety.Window
+			for range 3 {
+				c, info := newContentSafetyContext(userId)
+				apiErr := checkContent(c, info, text)
+				windows, _ = common.GetContextKeyType[[]contentsafety.Window](c, constant.ContextKeyContentSafetyWindows)
+				if tc.wantCode == "" {
+					require.Nil(t, apiErr)
+					continue
+				}
+				require.NotNil(t, apiErr)
+				assert.Equal(t, tc.wantCode, apiErr.GetErrorCode())
+			}
+			require.Len(t, windows, 2)
+			assert.Equal(t, tc.wantCalls, calls.Load())
+			requireContentSafetyDecisions(t, userId, tc.wantDecisions...)
+
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			require.Nil(t, checkContent(c, info, windows[1].Text))
+			assert.Equal(t, tc.wantCalls+1, calls.Load(), "the second window alone is reviewed on its own")
+			requireContentSafetyDecisions(t, info.UserId, passed)
+		})
 	}
-	assert.Equal(t, int32(2), calls.Load(), "neither verdict of a two-window batch answers a later request")
-	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewRejected, model.ContentSafetyDecisionReviewRejected)
 }
 
 func TestContentSafetyReviewRejectsACachedUnsafeWindowWithoutAsking(t *testing.T) {

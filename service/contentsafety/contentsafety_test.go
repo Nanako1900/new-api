@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,19 @@ func TestVerdictCacheHonorsTTLSetting(t *testing.T) {
 	contentsafety.StoreVerdict(disabledKey, contentsafety.CachedVerdict{Safe: true}, 0)
 	_, found = contentsafety.LoadVerdict(disabledKey, 60)
 	assert.False(t, found, "a zero TTL disables cache writes")
+}
+
+func TestBatchCacheKeyIgnoresWindowOrderAndStaysApartFromWindowKeys(t *testing.T) {
+	knife, fork := contentsafety.CacheKey("judge", "prompt", "a knife"), contentsafety.CacheKey("judge", "prompt", "a fork")
+	keys := []string{knife, fork}
+	batch := contentsafety.BatchCacheKey("judge", "prompt", keys)
+	assert.Equal(t, batch, contentsafety.BatchCacheKey("judge", "prompt", []string{fork, knife}), "the order of the windows does not matter")
+	assert.Equal(t, []string{knife, fork}, keys, "the caller's keys keep their order")
+	assert.NotEqual(t, batch, contentsafety.BatchCacheKey("judge", "prompt", []string{knife, contentsafety.CacheKey("judge", "prompt", "a spoon")}), "another set of windows is another batch")
+	assert.NotEqual(t, batch, contentsafety.BatchCacheKey("other-judge", "prompt", keys), "changing the model invalidates conclusions")
+	assert.NotEqual(t, batch, contentsafety.BatchCacheKey("judge", "other prompt", keys), "changing the prompt invalidates conclusions")
+	sorted := slices.Sorted(slices.Values(keys))
+	assert.NotEqual(t, batch, contentsafety.CacheKey("judge", "prompt", strings.Join(sorted, "\n")), "a window whose text spells out the batch never shares its key")
 }
 
 func TestAcquireSlotWaitsForCapacity(t *testing.T) {
