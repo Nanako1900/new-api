@@ -19,6 +19,7 @@ const (
 	ContentSafetyFailureTooManyWindows = "too_many_windows"
 	ContentSafetyFailureRateLimited    = "rate_limited"
 	ContentSafetyFailureUpstreamError  = "upstream_error"
+	ContentSafetyFailureClientCanceled = "client_canceled"
 )
 
 const contentSafetyDeleteBatch = 1000

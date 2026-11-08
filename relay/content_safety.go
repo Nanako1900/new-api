@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,7 +53,7 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, text string
 	}
 	result := contentsafety.Scan(text, setting.SensitiveWords, reviewWords, cfg.WindowChars)
 	if len(result.Blocked) > 0 {
-		logger.LogWarn(c, "content safety blocked words: %s", strings.Join(contentsafety.Words(result.Blocked), ", "))
+		logger.LogWarn(c, common.LogText("content safety blocked words: %s", strings.Join(contentsafety.Words(result.Blocked), ", ")))
 		recordContentSafetyLog(c, info, model.ContentSafetyLog{Decision: model.ContentSafetyDecisionKeywordBlocked}, result.Blocked)
 		return rejectContent(c, types.ErrorCodeSensitiveWordsDetected, http.StatusBadRequest, i18n.MsgContentSafetyBlocked)
 	}
@@ -66,24 +67,33 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, text string
 	return nil
 }
 
-// EnforceContentSafety is the AI review tier. It runs once per request after
-// pre-consume, so the caller's existing refund path returns the reservation
-// when the review rejects the request or cannot conclude.
+// EnforceContentSafety is the AI review tier. It runs after pre-consume, so
+// the caller's existing refund path returns the reservation when the review
+// rejects the request or cannot conclude. Only a pass is remembered as
+// checked; a rejection is returned again on every retry of the request.
 func EnforceContentSafety(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
+	if rejection, ok := common.GetContextKeyType[*types.NewAPIError](c, constant.ContextKeyContentSafetyRejection); ok {
+		return rejection
+	}
 	if common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked) {
 		return nil
 	}
-	common.SetContextKey(c, constant.ContextKeyContentSafetyChecked, true)
 	windows, _ := common.GetContextKeyType[[]contentsafety.Window](c, constant.ContextKeyContentSafetyWindows)
-	if len(windows) == 0 {
-		return nil
+	if len(windows) > 0 {
+		if apiErr := reviewContentWindows(c, info, windows); apiErr != nil {
+			return apiErr
+		}
 	}
-	return reviewContentWindows(c, info, windows)
+	common.SetContextKey(c, constant.ContextKeyContentSafetyChecked, true)
+	return nil
 }
 
 // EnforceContentSafetyText runs both tiers in one step for submissions that
 // do not pass through PrepareRequestBilling (async tasks and Midjourney).
 func EnforceContentSafetyText(c *gin.Context, info *relaycommon.RelayInfo, text string) *types.NewAPIError {
+	if rejection, ok := common.GetContextKeyType[*types.NewAPIError](c, constant.ContextKeyContentSafetyRejection); ok {
+		return rejection
+	}
 	if !setting.ShouldCheckPromptSensitive() || common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked) {
 		return nil
 	}
@@ -132,10 +142,10 @@ func reviewContentWindows(c *gin.Context, info *relaycommon.RelayInfo, windows [
 	}
 	entry.Decision = model.ContentSafetyDecisionReviewPassed
 	for i, verdict := range review.verdicts {
-		// A safe verdict from a multi-window batch is not cached: text injected
-		// into one window could sway the verdict of another, which would then be
-		// reused for other requests on its own.
-		if !verdict.IsSafe() || len(review.verdicts) == 1 {
+		// Only a single-window batch is cached. In a larger batch, text injected
+		// into one window can sway the verdict of another either way, and a
+		// cached verdict would then decide that window for everyone.
+		if len(review.verdicts) == 1 {
 			contentsafety.StoreVerdict(pendingKeys[i], contentsafety.CachedVerdict{Safe: verdict.IsSafe(), Category: verdict.Category, Reason: verdict.Reason}, cfg.CacheTTLSeconds)
 		}
 		if !verdict.IsSafe() && entry.Decision == model.ContentSafetyDecisionReviewPassed {
@@ -149,44 +159,64 @@ func reviewContentWindows(c *gin.Context, info *relaycommon.RelayInfo, windows [
 	return nil
 }
 
-// callContentReviewer runs one review within the review timeout. The call
-// keeps its concurrency slot until it truly returns, because the relay HTTP
-// client is not bound to this context and keeps running after a timeout.
+// callContentReviewer runs one review within the review timeout. The upstream
+// call is bound to the same context, so it ends with the timeout or with the
+// client request; the concurrency slot is held until the call truly returns.
 func callContentReviewer(c *gin.Context, cfg operation_setting.ContentSafetySetting, prompt string, windows []contentsafety.Window) contentReview {
-	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(cfg.ReviewTimeoutSeconds)*time.Second)
+	parent := c.Request.Context()
+	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.ReviewTimeoutSeconds)*time.Second)
 	defer cancel()
 	release, err := contentsafety.AcquireSlot(ctx, cfg.ReviewMaxConcurrency)
 	if err != nil {
-		return contentReview{failure: model.ContentSafetyFailureTimeout}
+		return contentReview{failure: interruptedReviewFailure(parent)}
 	}
 	done := make(chan contentReview, 1)
 	requestId, group, modelName := c.GetString(common.RequestIdKey), cfg.ReviewGroup, cfg.ReviewModel
 	gopool.Go(func() {
 		defer release()
-		done <- runContentReview(requestId, group, modelName, prompt, windows)
+		done <- runContentReview(ctx, requestId, group, modelName, prompt, windows)
 	})
 	select {
 	case review := <-done:
+		// A call cut short by the context fails because of the context.
+		if review.failure != "" && ctx.Err() != nil {
+			review.failure = interruptedReviewFailure(parent)
+		}
 		return review
 	case <-ctx.Done():
-		return contentReview{failure: model.ContentSafetyFailureTimeout}
+		return contentReview{failure: interruptedReviewFailure(parent)}
 	}
 }
 
-// runContentReview tries up to two channels that serve the review model.
-func runContentReview(requestId, group, modelName, prompt string, windows []contentsafety.Window) contentReview {
+// interruptedReviewFailure names why a review ended before it concluded:
+// the client request went away, or the review timeout passed.
+func interruptedReviewFailure(parent context.Context) string {
+	if parent.Err() != nil {
+		return model.ContentSafetyFailureClientCanceled
+	}
+	return model.ContentSafetyFailureTimeout
+}
+
+// runContentReview tries up to two channels that serve the review model, and
+// stops as soon as ctx ends because nobody waits for the answer any more.
+func runContentReview(ctx context.Context, requestId, group, modelName, prompt string, windows []contentsafety.Window) contentReview {
 	system, user, err := contentsafety.ReviewMessages(prompt, windows, rand.Text())
 	if err != nil {
 		return contentReview{failure: model.ContentSafetyFailureUpstreamError}
 	}
-	maxTokens := uint(min(2048, 128+64*len(windows)))
+	// Reasoning models spend part of max_tokens on hidden reasoning before the
+	// JSON reply, so the budget leaves room well beyond the reply itself.
+	maxTokens := uint(min(4096, 512+64*len(windows)))
 	review := contentReview{failure: model.ContentSafetyFailureNoChannel}
 	for retry := range 2 {
+		if ctx.Err() != nil {
+			return review
+		}
 		channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, nil)
 		if err != nil || channel == nil {
 			return review
 		}
-		reply, tokens, err := askContentReviewer(requestId, channel, modelName, system, user, maxTokens)
+		reply, tokens, err := askContentReviewer(ctx, requestId, channel, modelName, system, user, maxTokens)
 		if err != nil {
 			common.SysError(common.LogText("content safety review via channel %d failed (request_id=%s): %s", channel.Id, requestId, err.Error()))
 			review = contentReview{channelId: channel.Id, failure: model.ContentSafetyFailureUpstreamError}
@@ -203,13 +233,15 @@ func runContentReview(requestId, group, modelName, prompt string, windows []cont
 
 // askContentReviewer sends one non-stream chat completion to channel through
 // its adaptor, the way a channel test does, and returns the assistant reply.
-// It never touches the requesting user's billing.
-func askContentReviewer(requestId string, channel *model.Channel, modelName, system, user string, maxTokens uint) (string, int, error) {
+// The upstream request ends with ctx. It never touches the requesting user's
+// billing.
+func askContentReviewer(ctx context.Context, requestId string, channel *model.Channel, modelName, system, user string, maxTokens uint) (string, int, error) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", nil)
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(common.RequestIdKey, requestId)
+	common.SetContextKey(c, constant.ContextKeyBindUpstreamToRequestContext, true)
 	if apiErr := middleware.SetupContextForSelectedChannel(c, channel, modelName); apiErr != nil {
 		return "", 0, apiErr
 	}
@@ -243,16 +275,24 @@ func askContentReviewer(requestId string, channel *model.Channel, modelName, sys
 			return "", 0, err
 		}
 	}
+	// Pass-through adaptors such as AWS read the body from the request.
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	resp, err := adaptor.DoRequest(c, info, bytes.NewReader(body))
 	if err != nil {
 		return "", 0, err
 	}
-	httpResp, ok := resp.(*http.Response)
-	if !ok || httpResp == nil {
-		return "", 0, errors.New("review channel returned no response")
+	// Some adaptors (AWS) send the request inside DoResponse and return no
+	// response here, as in the relay and channel test paths.
+	var httpResp *http.Response
+	if resp != nil {
+		response, ok := resp.(*http.Response)
+		if !ok {
+			return "", 0, fmt.Errorf("review channel returned an unexpected response type %T", resp)
+		}
+		httpResp = response
 	}
-	if httpResp.StatusCode != http.StatusOK {
-		return "", 0, service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+	if httpResp != nil && httpResp.StatusCode != http.StatusOK {
+		return "", 0, service.RelayErrorHandler(c, httpResp, false)
 	}
 	usage, apiErr := adaptor.DoResponse(c, httpResp, info)
 	if apiErr != nil {
@@ -272,25 +312,28 @@ func askContentReviewer(requestId string, channel *model.Channel, modelName, sys
 	return completion.Choices[0].Message.StringContent(), tokens, nil
 }
 
-// rejectContent builds the client error for a content safety decision and
-// records it as a local request policy rejection.
+// rejectContent builds the client error for a content safety decision,
+// records it as a local request policy rejection and keeps it in the context,
+// so a retry of the request gets the same rejection.
 func rejectContent(c *gin.Context, code types.ErrorCode, status int, messageKey string) *types.NewAPIError {
 	service.RequestPolicy(c).AddEvent(service.PolicyEvent{ErrorCode: string(code), ErrorSource: "local", Decision: service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
-	return types.NewErrorWithStatusCode(errors.New(i18n.T(c, messageKey)), code, status, types.ErrOptionWithSkipRetry())
+	rejection := types.NewErrorWithStatusCode(errors.New(i18n.T(c, messageKey)), code, status, types.ErrOptionWithSkipRetry())
+	common.SetContextKey(c, constant.ContextKeyContentSafetyRejection, rejection)
+	return rejection
 }
 
 // recordContentSafetyLog stores one decision with short excerpts around the
 // hits, without delaying the request.
 func recordContentSafetyLog(c *gin.Context, info *relaycommon.RelayInfo, entry model.ContentSafetyLog, windows []contentsafety.Window) {
-	windows = windows[:min(len(windows), maxLoggedWindows)]
-	snippets := make([]string, len(windows))
-	for i, window := range windows {
-		snippets[i] = window.Snippet(contentsafety.SnippetRadius)
-	}
 	hitWords, err := common.Marshal(contentsafety.Words(windows))
 	if err != nil {
 		logger.LogError(c, common.LogText("content safety log encode failed: %s", err.Error()))
 		return
+	}
+	logged := windows[:min(len(windows), maxLoggedWindows)]
+	snippets := make([]string, len(logged))
+	for i, window := range logged {
+		snippets[i] = window.Snippet(contentsafety.SnippetRadius)
 	}
 	encodedSnippets, err := common.Marshal(snippets)
 	if err != nil {
@@ -309,7 +352,8 @@ func recordContentSafetyLog(c *gin.Context, info *relaycommon.RelayInfo, entry m
 }
 
 // taskRequestText is the prompt-bearing text of a task submission: every
-// string value of a JSON body, or every value of a multipart form.
+// string value of a JSON body, or every value of a multipart form, without
+// inline media.
 func taskRequestText(c *gin.Context) (string, error) {
 	contentType := c.Request.Header.Get("Content-Type")
 	if saved, ok := c.Get("_original_multipart_ct"); ok {
@@ -321,14 +365,7 @@ func taskRequestText(c *gin.Context) (string, error) {
 			return "", err
 		}
 		defer form.RemoveAll()
-		var builder strings.Builder
-		for _, values := range form.Value {
-			for _, value := range values {
-				builder.WriteString(value)
-				builder.WriteByte('\n')
-			}
-		}
-		return builder.String(), nil
+		return contentsafety.CollectFormText(form.Value), nil
 	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {

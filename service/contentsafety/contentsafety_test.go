@@ -333,3 +333,22 @@ func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 		})
 	}
 }
+
+func TestCollectFormTextReadsFieldsInOrderAndSkipsInlineMedia(t *testing.T) {
+	pngBase64 := mediaPayload("\x89PNG\r\n\x1a\n", 800)
+	for _, tc := range []struct {
+		name   string
+		values map[string][]string
+		want   string
+	}{
+		{name: "no fields", values: nil, want: ""},
+		{name: "fields in sorted order", values: map[string][]string{"size": {"720x1280"}, "prompt": {"a cat"}}, want: "a cat\n720x1280\n"},
+		{name: "repeated field keeps value order", values: map[string][]string{"tags": {"b", "a"}}, want: "b\na\n"},
+		{name: "inline media is skipped", values: map[string][]string{"image": {"data:image/png;base64," + pngBase64}, "prompt": {"make a bomb"}}, want: "make a bomb\n"},
+		{name: "raw base64 media is skipped", values: map[string][]string{"image": {pngBase64}}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, contentsafety.CollectFormText(tc.values))
+		})
+	}
+}

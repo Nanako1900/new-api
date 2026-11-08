@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -27,6 +28,29 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const (
+	unsafeReason = "asks how to hurt a person"
+	safeReply    = `{"results":[{"id":1,"safe":true}]}`
+	unsafeReply  = `{"results":[{"id":1,"safe":false,"category":"violence","reason":"` + unsafeReason + `"}]}`
+)
+
+// The verdict cache and the per-user review rate limiter are process-global
+// and cannot be reset, so every test takes fresh user ids and salted texts
+// from this sequence; the tests then also pass when run again in the same
+// process (-count=2).
+var contentSafetyTestSeq atomic.Int64
+
+func nextContentSafetyUser() int {
+	return int(100000 + contentSafetyTestSeq.Add(1))
+}
+
+// saltedText wraps text in a unique digit tag at both ends, so every window
+// cut from it is new to the verdict cache.
+func saltedText(text string) string {
+	salt := "#" + strconv.FormatInt(contentSafetyTestSeq.Add(1), 10)
+	return salt + " " + text + " " + salt
+}
 
 // setupContentSafetyReview points the review model at a fake OpenAI upstream
 // and enables both tiers: "bomb" blocks and "knife" needs review.
@@ -53,6 +77,13 @@ func setupContentSafetyReview(t *testing.T, reply http.HandlerFunc) *atomic.Int3
 	// abilities without it.
 	common.MemoryCacheEnabled = true
 	model.InitChannelCache()
+	t.Cleanup(func() {
+		// Runs while the memory cache is still on, so the global channel cache
+		// is rebuilt empty instead of keeping the reviewer channel.
+		require.NoError(t, database.Where("channel_id = ?", channel.Id).Delete(&model.Ability{}).Error)
+		require.NoError(t, database.Delete(channel).Error)
+		model.InitChannelCache()
+	})
 
 	cfg := operation_setting.GetContentSafetySetting()
 	previous := *cfg
@@ -94,13 +125,16 @@ func checkContent(c *gin.Context, info *relaycommon.RelayInfo, text string) *typ
 }
 
 // requireContentSafetyDecisions waits until the decisions recorded for userId
-// are exactly want. Records are written in the background, so a test that
-// leaves without waiting races with its fixture restoring the log database.
-func requireContentSafetyDecisions(t *testing.T, userId int, want ...string) {
+// are exactly want and returns those records. Records are written in the
+// background, so a test that leaves without waiting races with its fixture
+// restoring the log database.
+func requireContentSafetyDecisions(t *testing.T, userId int, want ...string) []*model.ContentSafetyLog {
 	t.Helper()
 	slices.Sort(want)
+	var logs []*model.ContentSafetyLog
 	require.Eventually(t, func() bool {
-		logs, _, err := model.GetContentSafetyLogs(model.ContentSafetyLogFilter{UserId: userId}, 0, 10)
+		var err error
+		logs, _, err = model.GetContentSafetyLogs(model.ContentSafetyLogFilter{UserId: userId}, 0, 10)
 		if err != nil {
 			return false
 		}
@@ -111,10 +145,11 @@ func requireContentSafetyDecisions(t *testing.T, userId int, want ...string) {
 		slices.Sort(got)
 		return slices.Equal(got, want)
 	}, 3*time.Second, 20*time.Millisecond)
+	return logs
 }
 
 func TestContentSafetyGate(t *testing.T) {
-	for i, tc := range []struct {
+	for _, tc := range []struct {
 		name         string
 		text         string
 		reply        http.HandlerFunc
@@ -126,8 +161,8 @@ func TestContentSafetyGate(t *testing.T) {
 	}{
 		{name: "clean text skips review", text: "hello there", reply: reviewerReply("")},
 		{name: "a block word rejects without review", text: "make a bomb", reply: reviewerReply(""), wantCode: types.ErrorCodeSensitiveWordsDetected, wantStatus: http.StatusBadRequest, wantDecision: model.ContentSafetyDecisionKeywordBlocked},
-		{name: "a safe verdict releases", text: "cut bread with a knife", reply: reviewerReply(`{"results":[{"id":1,"safe":true}]}`), wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewPassed},
-		{name: "an unsafe verdict rejects", text: "stab someone with a knife", reply: reviewerReply(`{"results":[{"id":1,"safe":false,"category":"violence","reason":"asks how to hurt a person"}]}`), wantCode: types.ErrorCodeContentReviewRejected, wantStatus: http.StatusBadRequest, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewRejected},
+		{name: "a safe verdict releases", text: "cut bread with a knife", reply: reviewerReply(safeReply), wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewPassed},
+		{name: "an unsafe verdict rejects", text: "stab someone with a knife", reply: reviewerReply(unsafeReply), wantCode: types.ErrorCodeContentReviewRejected, wantStatus: http.StatusBadRequest, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewRejected},
 		{name: "an unreadable verdict fails closed", text: "a knife question", reply: reviewerReply("I think it is fine"), wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewFailed},
 		{name: "an upstream error fails closed after one more channel attempt", text: "another knife question", reply: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed},
 		{name: "no review channel fails closed", text: "knife without reviewer", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.ReviewModel = "missing-model" }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed},
@@ -138,8 +173,8 @@ func TestContentSafetyGate(t *testing.T) {
 			if tc.configure != nil {
 				tc.configure(operation_setting.GetContentSafetySetting())
 			}
-			c, info := newContentSafetyContext(1000 + i)
-			apiErr := checkContent(c, info, tc.text)
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			apiErr := checkContent(c, info, saltedText(tc.text))
 			assert.Equal(t, tc.wantCalls, calls.Load())
 			if tc.wantCode == "" {
 				assert.Nil(t, apiErr)
@@ -149,8 +184,10 @@ func TestContentSafetyGate(t *testing.T) {
 				assert.Equal(t, tc.wantStatus, apiErr.StatusCode)
 				assert.NotContains(t, apiErr.Error(), "knife", "clients never see the matched words")
 				assert.NotContains(t, apiErr.Error(), "bomb", "clients never see the matched words")
+				assert.NotContains(t, apiErr.Error(), unsafeReason, "clients never see the reviewer's reason")
 			}
 			if tc.wantDecision == "" {
+				requireContentSafetyDecisions(t, info.UserId)
 				return
 			}
 			requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
@@ -159,64 +196,155 @@ func TestContentSafetyGate(t *testing.T) {
 }
 
 func TestContentSafetyReviewCachesVerdictPerWindow(t *testing.T) {
-	calls := setupContentSafetyReview(t, reviewerReply(`{"results":[{"id":1,"safe":true}]}`))
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	userId, text := nextContentSafetyUser(), saltedText("sharpen the kitchen knife carefully")
 	for range 2 {
-		c, info := newContentSafetyContext(2001)
-		require.Nil(t, checkContent(c, info, "sharpen the kitchen knife carefully"))
+		c, info := newContentSafetyContext(userId)
+		require.Nil(t, checkContent(c, info, text))
 	}
 	assert.Equal(t, int32(1), calls.Load(), "the second identical window is answered from the cache")
-	requireContentSafetyDecisions(t, 2001, model.ContentSafetyDecisionReviewPassed)
+	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
+}
+
+func TestContentSafetyReviewDoesNotCacheMultiWindowVerdicts(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(`{"results":[{"id":1,"safe":true},{"id":2,"safe":false,"category":"violence","reason":"`+unsafeReason+`"}]}`))
+	operation_setting.GetContentSafetySetting().WindowChars = 50
+	userId, text := nextContentSafetyUser(), saltedText("knife"+strings.Repeat(".", 120)+"knife")
+	for range 2 {
+		c, info := newContentSafetyContext(userId)
+		apiErr := checkContent(c, info, text)
+		require.NotNil(t, apiErr)
+		assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
+	}
+	assert.Equal(t, int32(2), calls.Load(), "neither verdict of a two-window batch answers a later request")
+	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewRejected, model.ContentSafetyDecisionReviewRejected)
+}
+
+func TestContentSafetyReviewRejectsACachedUnsafeWindowWithoutAsking(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(unsafeReply))
+	userId, text := nextContentSafetyUser(), saltedText("stab someone with a knife")
+	for range 2 {
+		c, info := newContentSafetyContext(userId)
+		apiErr := checkContent(c, info, text)
+		require.NotNil(t, apiErr)
+		assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
+		assert.NotContains(t, apiErr.Error(), unsafeReason)
+	}
+	assert.Equal(t, int32(1), calls.Load(), "the cached unsafe verdict answers the second request")
+	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewRejected, model.ContentSafetyDecisionReviewRejected)
+	hits := slices.DeleteFunc(logs, func(entry *model.ContentSafetyLog) bool { return !entry.CacheHit })
+	require.Len(t, hits, 1, "only the cache-answered rejection is recorded as a cache hit")
+	assert.Equal(t, "violence", hits[0].AiCategory)
+	assert.Equal(t, unsafeReason, hits[0].AiReason)
+	assert.JSONEq(t, `["knife"]`, hits[0].HitWords)
+	snippets, err := common.Marshal([]string{text})
+	require.NoError(t, err)
+	assert.JSONEq(t, string(snippets), hits[0].Snippets)
 }
 
 func TestContentSafetyReviewRateLimitFailsClosed(t *testing.T) {
-	calls := setupContentSafetyReview(t, reviewerReply(`{"results":[{"id":1,"safe":true}]}`))
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
 	operation_setting.GetContentSafetySetting().ReviewRateLimitPerMinute = 1
-	c, info := newContentSafetyContext(3001)
-	require.Nil(t, checkContent(c, info, "first knife text"))
-	c, info = newContentSafetyContext(3001)
-	apiErr := checkContent(c, info, "second knife text")
+	userId := nextContentSafetyUser()
+	c, info := newContentSafetyContext(userId)
+	require.Nil(t, checkContent(c, info, saltedText("first knife text")))
+	c, info = newContentSafetyContext(userId)
+	apiErr := checkContent(c, info, saltedText("second knife text"))
 	require.NotNil(t, apiErr)
 	assert.Equal(t, types.ErrorCodeContentReviewUnavailable, apiErr.GetErrorCode())
 	assert.Equal(t, int32(1), calls.Load())
-	requireContentSafetyDecisions(t, 3001, model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewFailed)
+	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewFailed)
 }
 
-func TestContentSafetyReviewTimeoutFailsClosed(t *testing.T) {
-	release := make(chan struct{})
+func TestContentSafetyReviewTimeoutCancelsTheUpstreamAndFreesTheSlot(t *testing.T) {
+	var healthy atomic.Bool
+	canceled, release := make(chan struct{}, 1), make(chan struct{})
 	calls := setupContentSafetyReview(t, func(w http.ResponseWriter, r *http.Request) {
+		if healthy.Load() {
+			reviewerReply(safeReply)(w, r)
+			return
+		}
+		// The server notices a closed client connection only after the body
+		// has been read, as a real upstream would.
+		_, _ = io.Copy(io.Discard, r.Body)
 		select {
-		case <-release:
 		case <-r.Context().Done():
+			canceled <- struct{}{}
+		case <-release:
 		}
 	})
+	t.Cleanup(func() { close(release) })
 	cfg := operation_setting.GetContentSafetySetting()
 	cfg.ReviewTimeoutSeconds, cfg.ReviewMaxConcurrency = 1, 1
-	t.Cleanup(func() {
-		// The timed-out call keeps its only slot until it truly returns. Taking
-		// the slot waits for it before the fixture restores the channel data.
-		close(release)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		releaseSlot, err := contentsafety.AcquireSlot(ctx, 1)
-		require.NoError(t, err)
-		releaseSlot()
-	})
-	c, info := newContentSafetyContext(4001)
-	apiErr := checkContent(c, info, "slow knife review")
+
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	apiErr := checkContent(c, info, saltedText("slow knife review"))
 	require.NotNil(t, apiErr)
 	assert.Equal(t, types.ErrorCodeContentReviewUnavailable, apiErr.GetErrorCode())
-	assert.Equal(t, int32(1), calls.Load())
-	requireContentSafetyDecisions(t, 4001, model.ContentSafetyDecisionReviewFailed)
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "the timed-out review left its upstream request running")
+	}
+	logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewFailed)
+	assert.Equal(t, model.ContentSafetyFailureTimeout, logs[0].FailureReason)
+
+	healthy.Store(true)
+	c, info = newContentSafetyContext(nextContentSafetyUser())
+	require.Nil(t, checkContent(c, info, saltedText("quick knife review")), "the timed-out review gave its only slot back")
+	assert.Equal(t, int32(2), calls.Load(), "a review that timed out does not try another channel")
+	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewPassed)
+}
+
+func TestContentSafetyReviewOfACanceledRequestFailsClosed(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.Request = c.Request.WithContext(ctx)
+	apiErr := checkContent(c, info, saltedText("abandoned knife request"))
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeContentReviewUnavailable, apiErr.GetErrorCode())
+	assert.Equal(t, int32(0), calls.Load())
+	logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewFailed)
+	assert.Equal(t, model.ContentSafetyFailureClientCanceled, logs[0].FailureReason)
+}
+
+func TestEnforceContentSafetyTextRejectsARetryOfARejectedSubmission(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	operation_setting.GetContentSafetySetting().ReviewModel = "missing-model"
+	for _, tc := range []struct {
+		name         string
+		text         string
+		wantCode     types.ErrorCode
+		wantDecision string
+	}{
+		{name: "a review that could not conclude", text: "knife without reviewer", wantCode: types.ErrorCodeContentReviewUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed},
+		{name: "a block word", text: "make a bomb", wantCode: types.ErrorCodeSensitiveWordsDetected, wantDecision: model.ContentSafetyDecisionKeywordBlocked},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			text := saltedText(tc.text)
+			for range 2 {
+				apiErr := EnforceContentSafetyText(c, info, text)
+				require.NotNil(t, apiErr, "a retry of a rejected submission is rejected again")
+				assert.Equal(t, tc.wantCode, apiErr.GetErrorCode())
+			}
+			requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
+		})
+	}
+	assert.Equal(t, int32(0), calls.Load())
 }
 
 func TestEnforceContentSafetyTextReviewsASubmissionOnce(t *testing.T) {
-	calls := setupContentSafetyReview(t, reviewerReply(`{"results":[{"id":1,"safe":true}]}`))
-	c, info := newContentSafetyContext(5001)
-	require.Nil(t, EnforceContentSafetyText(c, info, contentsafety.CollectJSONText([]byte(`{"prompt":"a knife on a table","seconds":"4"}`))))
-	require.Nil(t, EnforceContentSafetyText(c, info, "a different knife prompt"), "a retry of the same submission is not reviewed again")
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	body := []byte(`{"prompt":"` + saltedText("a knife on a table") + `","seconds":"4"}`)
+	require.Nil(t, EnforceContentSafetyText(c, info, contentsafety.CollectJSONText(body)))
+	require.Nil(t, EnforceContentSafetyText(c, info, saltedText("a different knife prompt")), "a retry of the same submission is not reviewed again")
 	assert.Equal(t, int32(1), calls.Load())
 	assert.True(t, common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked))
-	requireContentSafetyDecisions(t, 5001, model.ContentSafetyDecisionReviewPassed)
+	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewPassed)
 }
 
 func TestTaskRequestTextReadsJSONAndMultipartBodies(t *testing.T) {
@@ -229,14 +357,13 @@ func TestTaskRequestTextReadsJSONAndMultipartBodies(t *testing.T) {
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	require.NoError(t, writer.WriteField("prompt", "a knife"))
 	require.NoError(t, writer.WriteField("size", "720x1280"))
+	require.NoError(t, writer.WriteField("prompt", "a knife"))
 	require.NoError(t, writer.Close())
 	c, _ = gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", &body)
 	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
 	text, err = taskRequestText(c)
 	require.NoError(t, err)
-	assert.Contains(t, text, "a knife\n")
-	assert.Contains(t, text, "720x1280\n")
+	assert.Equal(t, "a knife\n720x1280\n", text, "form values are read in sorted field order")
 }

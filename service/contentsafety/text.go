@@ -65,6 +65,19 @@ func CollectJSONText(body []byte) string {
 	return builder.String()
 }
 
+// CollectFormText joins every value of a form, one per line, with field names
+// visited in sorted order so the result is stable. Inline media is skipped as
+// in CollectJSONText.
+func CollectFormText(values map[string][]string) string {
+	var builder strings.Builder
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		for _, value := range values[key] {
+			collectStrings(value, &builder)
+		}
+	}
+	return builder.String()
+}
+
 func collectStrings(value any, builder *strings.Builder) {
 	switch v := value.(type) {
 	case string:
