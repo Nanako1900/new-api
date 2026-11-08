@@ -32,6 +32,7 @@ import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
 import { installMeowPreview, isMeowPreviewEnabled } from './dev/meow-preview'
+import { readMeowSplashPreviewDelay } from './lib/meow-splash'
 import { cleanUpDrawerAppearance } from './lib/meow-theme'
 import './i18n/config'
 // Generated Routes
@@ -52,6 +53,13 @@ cleanUpDrawerAppearance()
 if (import.meta.env.MODE === 'development' && isMeowPreviewEnabled()) {
   installMeowPreview()
 }
+
+// MeowAPI splash preview: `?meow-splash` holds the app back so the splash
+// shows on a fast localhost, development only.
+const splashPreviewDelay =
+  import.meta.env.MODE === 'development'
+    ? readMeowSplashPreviewDelay(window.location.search)
+    : 0
 
 const queryClient = createAppQueryClient(() => {
   void router.navigate({ to: '/500' })
@@ -112,17 +120,23 @@ if (!rootElement) {
 })()
 if (!rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement)
-  root.render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          <FontProvider>
-            <DirectionProvider>
-              <RouterProvider router={router} />
-            </DirectionProvider>
-          </FontProvider>
-        </ThemeProvider>
-      </QueryClientProvider>
-    </StrictMode>
-  )
+  const renderApp = () =>
+    root.render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <FontProvider>
+              <DirectionProvider>
+                <RouterProvider router={router} />
+              </DirectionProvider>
+            </FontProvider>
+          </ThemeProvider>
+        </QueryClientProvider>
+      </StrictMode>
+    )
+  if (splashPreviewDelay > 0) {
+    window.setTimeout(renderApp, splashPreviewDelay)
+  } else {
+    renderApp()
+  }
 }

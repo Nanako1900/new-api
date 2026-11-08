@@ -44,6 +44,8 @@ services:
 #      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
 #      - SESSION_COOKIE_SECURE=true  # true：启用 Secure Refresh Cookie 和严格 refresh/logout OriginGuard；false/未配置：关闭 OriginGuard，仅用于本地 HTTP (true: Secure cookie + strict refresh/logout OriginGuard; false/unset: guard disabled for local HTTP only)
 #      - SESSION_COOKIE_TRUSTED_URL=https://example.com,https://admin.example.com  # Secure=true 时必填的精确 HTTPS Origin；不是 relay CORS 白名单，不支持通配符/路径 (Required exact HTTPS origins when Secure=true; not a relay CORS allowlist, no wildcard/path)
+#      - MONITOR_SSO_ENABLED=true  # 开启用户监控台静默 SSO 与只读 API；须所有节点升级后再开启 (Enable the read-only user monitor console SSO and API; enable only after every node is upgraded)
+#      - MONITOR_REDIRECT_URIS=https://my.meowapi.dev/auth/callback  # 监控台精确回调地址，其 Origin 即监控 API 的 CORS 白名单；须与主站同站 (Exact monitor callback URLs; their origins are the monitor API CORS allowlist; must be same-site with this host)
 #      - TRUSTED_PROXIES=172.20.0.0/16  # 未配置时信任回环/RFC1918/fc00::/7 并告警，none 为严格模式，显式列表替代默认值 (Unset trusts loopback/RFC 1918/fc00::/7 with a warning; none trusts no proxies; an explicit list replaces defaults)
 #      - USER_SESSION_ACTIVE_LIMIT=50
 #      - USER_SESSION_ISSUANCE_LIMIT=100

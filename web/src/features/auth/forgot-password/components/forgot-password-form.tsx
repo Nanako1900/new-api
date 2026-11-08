@@ -35,12 +35,11 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { sendPasswordResetEmail } from '@/features/auth/api'
-import { AuthCaptcha } from '@/features/auth/components/auth-captcha'
 import {
   forgotPasswordFormSchema,
   PASSWORD_RESET_COUNTDOWN,
 } from '@/features/auth/constants'
-import { useAuthCaptcha } from '@/features/auth/hooks/use-auth-captcha'
+import { useCaptcha } from '@/hooks/use-captcha'
 import { useCountdown } from '@/hooks/use-countdown'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
@@ -57,7 +56,7 @@ export function ForgotPasswordForm({
   const [isLoading, setIsLoading] = useState(false)
   // The address the last link was sent to; set, the form shows the result.
   const [sentTo, setSentTo] = useState('')
-  const captcha = useAuthCaptcha()
+  const captcha = useCaptcha()
   const {
     secondsLeft,
     isActive,
@@ -70,13 +69,13 @@ export function ForgotPasswordForm({
   })
 
   async function onSubmit(data: ForgotPasswordFormValues) {
-    const captchaToken = captcha.takeToken()
-    if (captchaToken === null) return
-
     setIsLoading(true)
     try {
-      const res = await sendPasswordResetEmail(data.email, captchaToken)
-      if (res?.success) {
+      const res = await captcha.run((captchaToken) =>
+        sendPasswordResetEmail(data.email, captchaToken)
+      )
+      if (!res) return
+      if (res.success) {
         setSentTo(data.email)
         startCountdown()
         toast.success(t('Reset email sent, please check your inbox'))
@@ -101,8 +100,7 @@ export function ForgotPasswordForm({
     <Button
       type='submit'
       className='w-full justify-center gap-2'
-      disabled={isLoading || isActive || !captcha.ready}
-      {...captcha.gateProps}
+      disabled={isLoading || isActive}
     >
       {submitLabel}
       {isLoading ? (
@@ -140,7 +138,6 @@ export function ForgotPasswordForm({
                 <p className='font-medium break-all'>{sentTo}</p>
               </div>
             </div>
-            <AuthCaptcha captcha={captcha} />
             {submitButton}
             <Button
               type='button'
@@ -171,7 +168,6 @@ export function ForgotPasswordForm({
                 </FormItem>
               )}
             />
-            <AuthCaptcha captcha={captcha} />
             {submitButton}
           </>
         )}

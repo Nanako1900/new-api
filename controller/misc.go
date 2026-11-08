@@ -71,6 +71,7 @@ func GetStatus(c *gin.Context) {
 		"server_address":              system_setting.ServerAddress,
 		"geetest_check":               common.GeetestCheckEnabled,
 		"geetest_captcha_id":          common.GeetestCaptchaId,
+		"geetest_check_mode":          common.GeetestCheckMode,
 		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
 		"quota_per_unit":              common.QuotaPerUnit,
 		// 兼容旧前端：保留 display_in_currency，同时提供新的 quota_display_type

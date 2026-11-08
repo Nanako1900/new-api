@@ -33,7 +33,7 @@ export function MeowHero(props: MeowHeroProps) {
   const { t } = useTranslation()
 
   return (
-    <section className='mx-auto flex max-w-6xl flex-col gap-16 px-4 pt-20 pb-20 sm:px-8 lg:flex-row lg:items-center lg:pb-24'>
+    <section className='meow-hero-enter mx-auto flex max-w-6xl flex-col gap-16 px-4 pt-20 pb-20 sm:px-8 lg:flex-row lg:items-center lg:pb-24'>
       <div className='flex min-w-0 flex-1 flex-col items-start gap-6'>
         <span className='border-border inline-flex items-center gap-2.5 rounded-full border py-1.5 pr-3.5 pl-2.5 text-sm font-bold'>
           <CatEyes />

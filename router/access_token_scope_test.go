@@ -72,6 +72,22 @@ var accessTokenExemptRoutes = []string{
 	// API key authentication (TokenAuthReadOnly).
 	"GET /api/usage/token/",
 	"GET /api/log/token",
+
+	// Monitor console API: monitor-session authentication only (MonitorAuth,
+	// or the monitor refresh cookie); dashboard credentials never apply.
+	"OPTIONS /api/monitor/*path",
+	"POST /api/monitor/auth/token",
+	"POST /api/monitor/auth/refresh",
+	"POST /api/monitor/auth/logout",
+	"GET /api/monitor/self",
+	"GET /api/monitor/logs",
+	"GET /api/monitor/logs/stat",
+	"GET /api/monitor/quota_dates",
+	"GET /api/monitor/models",
+	"GET /api/monitor/subscription",
+	"GET /api/monitor/perf-metrics/summary",
+	"GET /api/monitor/status",
+	"GET /api/monitor/stream",
 }
 
 // accessTokenHelperRoutes are declared through handlePermissionRoute outside
@@ -88,6 +104,7 @@ func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {
 	// A permission route that is also in the static table panics here.
 	require.NotPanics(t, func() {
 		SetApiRouter(engine)
+		SetMonitorRouter(engine)
 		SetDashboardRouter(engine)
 		SetRelayRouter(engine)
 		SetTaskPluginProtocolRouter(engine)

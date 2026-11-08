@@ -931,4 +931,9 @@ export const STATIC_I18N_KEYS = [
   'Content must be at most 500 characters',
   'Title must be at most 100 characters',
   'End time must be after start time',
+  // Monitor console sign-in messages chosen from server error codes.
+  'This sign-in link is invalid. Open the monitor console again to sign in.',
+  'The monitor console is not enabled on this site.',
+  'This monitor console address is not allowed to sign in.',
+  'Could not sign in to the monitor console. Please try again.',
 ] as const

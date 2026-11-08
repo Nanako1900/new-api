@@ -260,6 +260,11 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorT(c, "Disable GeeTest verification before clearing the captcha ID or captcha key.")
 			return
 		}
+	case "GeetestCheckMode":
+		if option.Value != common.GeetestCheckModeAlways && option.Value != common.GeetestCheckModeRisk {
+			common.ApiErrorT(c, "Invalid GeeTest verification mode")
+			return
+		}
 	case "TelegramOAuthEnabled":
 		if option.Value == "true" && !system_setting.GetTelegramSettings().IsConfigured() {
 			c.JSON(http.StatusOK, gin.H{

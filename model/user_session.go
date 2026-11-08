@@ -18,7 +18,19 @@ const (
 	UserSessionStatusRevoking = "revoking"
 	UserSessionStatusRevoked  = "revoked"
 
-	userSessionCacheSchema      = 1
+	// UserSessionKindDashboard is a full console login session.
+	UserSessionKindDashboard = ""
+	// UserSessionKindMonitor is a read-only monitor console session issued
+	// through SSO by the dashboard session named in ParentSID.
+	UserSessionKindMonitor = "monitor"
+
+	// UserSessionRevokedReasonParent marks a monitor session ended together
+	// with the dashboard session that issued it.
+	UserSessionRevokedReasonParent = "parent_session_revoked"
+
+	// Schema 2 added Kind and ParentSID; older entries are read from the
+	// database so a cached snapshot can never drop a session's kind.
+	userSessionCacheSchema      = 2
 	userSessionListLimit        = 100
 	userSessionRevokeBatchSize  = 500
 	userSessionCleanupScanLimit = 1000
@@ -56,6 +68,8 @@ type UserSession struct {
 	ExpiresAt           int64  `json:"expires_at" gorm:"type:bigint;not null;column:expires_at;index:idx_user_sessions_user_status_expiry,priority:3;index:idx_user_sessions_expires_at"`
 	RevokedAt           int64  `json:"revoked_at,omitempty" gorm:"type:bigint;not null;default:0;column:revoked_at;index:idx_user_sessions_status_revoked,priority:2"`
 	RevokedReason       string `json:"revoked_reason,omitempty" gorm:"type:varchar(64);column:revoked_reason"`
+	Kind                string `json:"kind" gorm:"type:varchar(16);not null;default:''"`
+	ParentSID           string `json:"-" gorm:"column:parent_sid;type:varchar(64);not null;default:''"`
 }
 
 func (UserSession) TableName() string {
@@ -81,6 +95,8 @@ type userSessionCacheEntry struct {
 	ExpiresAt       int64
 	RevokedAt       int64
 	RevokedReason   string
+	Kind            string
+	ParentSID       string
 	CacheSchema     int
 	CacheExpiresAt  int64
 	CacheMAC        string `json:"-"`
@@ -101,6 +117,8 @@ func (session *UserSession) cacheEntry() *userSessionCacheEntry {
 		ExpiresAt:       session.ExpiresAt,
 		RevokedAt:       session.RevokedAt,
 		RevokedReason:   session.RevokedReason,
+		Kind:            session.Kind,
+		ParentSID:       session.ParentSID,
 		CacheSchema:     userSessionCacheSchema,
 	}
 }
@@ -120,6 +138,8 @@ func (entry *userSessionCacheEntry) session() *UserSession {
 		ExpiresAt:       entry.ExpiresAt,
 		RevokedAt:       entry.RevokedAt,
 		RevokedReason:   entry.RevokedReason,
+		Kind:            entry.Kind,
+		ParentSID:       entry.ParentSID,
 	}
 }
 
@@ -154,6 +174,14 @@ func createUserSessionWithTx(tx *gorm.DB, session *UserSession) error {
 	if session.Status != UserSessionStatusActive || session.RevokedAt != 0 {
 		return ErrUserSessionInvalid
 	}
+	// The empty kind grants dashboard access, so a parent link is what proves a
+	// session was meant to be a monitor session; the two must agree.
+	if session.Kind != UserSessionKindDashboard && session.Kind != UserSessionKindMonitor {
+		return ErrUserSessionInvalid
+	}
+	if (session.Kind == UserSessionKindMonitor) != (session.ParentSID != "") {
+		return ErrUserSessionInvalid
+	}
 	if session.LastActiveAt == 0 {
 		session.LastActiveAt = now
 	}
@@ -176,6 +204,9 @@ func publishCreatedUserSession(session *UserSession, cacheDeadline time.Time) er
 	return nil
 }
 
+// CountActiveUserSessions counts active dashboard sessions. Monitor sessions
+// are bounded separately (one per parent session) so monitor sign-ins can
+// never use up the dashboard session limit.
 func CountActiveUserSessions(userID int, now int64) (int64, error) {
 	if userID <= 0 {
 		return 0, ErrUserSessionInvalid
@@ -185,18 +216,32 @@ func CountActiveUserSessions(userID int, now int64) (int64, error) {
 	}
 	var count int64
 	err := DB.Model(&UserSession{}).
-		Where("user_id = ? AND status = ? AND expires_at > ?", userID, UserSessionStatusActive, now).
+		Where("user_id = ? AND status = ? AND expires_at > ? AND kind = ?", userID, UserSessionStatusActive, now, UserSessionKindDashboard).
 		Count(&count).Error
 	return count, err
 }
 
-// CountUserSessionsCreatedSince counts every issued row, regardless of its
-// current status or expiry. userID zero selects the global count.
+// CountUserSessionsCreatedSince counts every issued dashboard session row,
+// regardless of its current status or expiry. userID zero selects the global
+// count.
 func CountUserSessionsCreatedSince(userID int, createdAfter int64) (int64, error) {
+	return countUserSessionsCreatedSince(userID, UserSessionKindDashboard, createdAfter)
+}
+
+// CountMonitorSessionsCreatedSince counts every issued monitor session row;
+// it bounds monitor sign-ins the way the dashboard issuance limit bounds logins.
+func CountMonitorSessionsCreatedSince(userID int, createdAfter int64) (int64, error) {
+	if userID <= 0 {
+		return 0, ErrUserSessionInvalid
+	}
+	return countUserSessionsCreatedSince(userID, UserSessionKindMonitor, createdAfter)
+}
+
+func countUserSessionsCreatedSince(userID int, kind string, createdAfter int64) (int64, error) {
 	if userID < 0 || createdAfter <= 0 {
 		return 0, ErrUserSessionInvalid
 	}
-	query := DB.Model(&UserSession{}).Where("created_at > ?", createdAfter)
+	query := DB.Model(&UserSession{}).Where("created_at > ? AND kind = ?", createdAfter, kind)
 	if userID > 0 {
 		query = query.Where("user_id = ?", userID)
 	}
@@ -346,7 +391,8 @@ redis.call('HSET', KEYS[1],
   'LoginMethod', ARGV[6], 'IP', ARGV[7], 'UserAgent', ARGV[8],
   'CreatedAt', ARGV[9], 'LastActiveAt', ARGV[10], 'ExpiresAt', ARGV[11],
   'RevokedAt', ARGV[12], 'RevokedReason', ARGV[13], 'CacheSchema', ARGV[14],
-  'CacheExpiresAt', ARGV[16], 'CacheMAC', ARGV[17])
+  'CacheExpiresAt', ARGV[16], 'CacheMAC', ARGV[17],
+  'Kind', ARGV[18], 'ParentSID', ARGV[19])
 if ARGV[5] == 'active' then
   redis.call('PEXPIREAT', KEYS[1], ARGV[15])
 else
@@ -357,7 +403,7 @@ return 1`
 		entry.SID, entry.UserID, entry.Version, entry.UserAuthVersion, entry.Status,
 		entry.LoginMethod, entry.IP, entry.UserAgent, entry.CreatedAt, entry.LastActiveAt,
 		entry.ExpiresAt, entry.RevokedAt, entry.RevokedReason, entry.CacheSchema, redisExpiration,
-		entry.CacheExpiresAt, mac,
+		entry.CacheExpiresAt, mac, entry.Kind, entry.ParentSID,
 	).Int()
 	if err != nil {
 		return err
@@ -558,6 +604,7 @@ func RotateUserSessionRefresh(userID int, sid, presentedHash, nextHash string, n
 		if err := writeUserSessionCache(session.cacheEntry(), time.Time{}); err != nil {
 			common.SysLog(common.LogText("failed to cache refresh-reuse session revoke: %s", err.Error()))
 		}
+		revokeChildUserSessions(userID, sid)
 		return nil, ErrUserSessionRefreshReuse
 	}
 	return nil, ErrUserSessionRefreshInvalid
@@ -612,6 +659,7 @@ func RevokeUserSession(userID int, sid, reason string) (bool, error) {
 		if err := writeUserSessionCache(candidate.cacheEntry(), time.Time{}); err != nil {
 			common.SysLog(common.LogText("failed to finalize user session revoke tombstone: %s", err.Error()))
 		}
+		revokeChildUserSessions(userID, sid)
 	}
 	return revoked, nil
 }
@@ -668,6 +716,7 @@ func RevokeUserSessionByRefreshHash(sid, presentedHash, reason string) (bool, er
 		if err := writeUserSessionCache(session.cacheEntry(), time.Time{}); err != nil {
 			common.SysLog(common.LogText("failed to finalize refresh-authenticated session revoke tombstone: %s", err.Error()))
 		}
+		revokeChildUserSessions(session.UserID, sid)
 	}
 	return revoked, nil
 }
@@ -723,15 +772,44 @@ func AdvanceUserSessionAuthVersion(userID int, sid string, expectedSessionVersio
 	return &session, nil
 }
 
+// userSessionRevokeScope selects which active sessions of one user a bulk
+// revoke ends: all of them, all but excludedSID, or the monitor sessions that
+// parentSID issued.
+type userSessionRevokeScope struct {
+	excludedSID string
+	parentSID   string
+}
+
+// RevokeOtherUserSessions ends every session but currentSID, including the
+// monitor sessions currentSID issued: those run in another browser context.
 func RevokeOtherUserSessions(userID int, currentSID, reason string) (int64, error) {
-	return revokeUserSessions(userID, currentSID, reason)
+	return revokeUserSessions(userID, userSessionRevokeScope{excludedSID: currentSID}, reason)
 }
 
 func RevokeAllUserSessions(userID int, reason string) (int64, error) {
-	return revokeUserSessions(userID, "", reason)
+	return revokeUserSessions(userID, userSessionRevokeScope{}, reason)
 }
 
-func revokeUserSessions(userID int, excludedSID, reason string) (int64, error) {
+// RevokeChildUserSessions ends the active monitor sessions that parentSID
+// issued.
+func RevokeChildUserSessions(userID int, parentSID, reason string) (int64, error) {
+	if parentSID == "" {
+		return 0, ErrUserSessionInvalid
+	}
+	return revokeUserSessions(userID, userSessionRevokeScope{parentSID: parentSID}, reason)
+}
+
+// revokeChildUserSessions ends the monitor sessions issued by a session that
+// was just revoked. The parent revoke has already committed, so a failure is
+// logged instead of returned; monitor access also re-checks the parent session
+// whenever a monitor session is used.
+func revokeChildUserSessions(userID int, parentSID string) {
+	if _, err := RevokeChildUserSessions(userID, parentSID, UserSessionRevokedReasonParent); err != nil {
+		common.SysError(common.LogText("failed to revoke the monitor sessions of a revoked session: %s", err.Error()))
+	}
+}
+
+func revokeUserSessions(userID int, scope userSessionRevokeScope, reason string) (int64, error) {
 	if userID <= 0 {
 		return 0, ErrUserSessionInvalid
 	}
@@ -739,8 +817,11 @@ func revokeUserSessions(userID int, excludedSID, reason string) (int64, error) {
 	var totalAffected int64
 	for {
 		query := DB.Where("user_id = ? AND status = ? AND expires_at > ?", userID, UserSessionStatusActive, now)
-		if excludedSID != "" {
-			query = query.Where("sid <> ?", excludedSID)
+		if scope.excludedSID != "" {
+			query = query.Where("sid <> ?", scope.excludedSID)
+		}
+		if scope.parentSID != "" {
+			query = query.Where("parent_sid = ?", scope.parentSID)
 		}
 		var candidates []UserSession
 		if err := query.Order("sid").Limit(userSessionRevokeBatchSize).Find(&candidates).Error; err != nil {
@@ -751,7 +832,14 @@ func revokeUserSessions(userID int, excludedSID, reason string) (int64, error) {
 		}
 		for i := range candidates {
 			if err := writeUserSessionDenyFence(&candidates[i], UserSessionStatusRevoking, now, reason); err != nil {
-				return totalAffected, err
+				// A cascade runs after its parent revoke committed and has no
+				// caller left to retry it, so it still revokes the rows; any
+				// active cache entry it could not fence expires within the
+				// short session cache window.
+				if scope.parentSID == "" {
+					return totalAffected, err
+				}
+				common.SysError(common.LogText("failed to fence a monitor session before revoking it: %s", err.Error()))
 			}
 		}
 

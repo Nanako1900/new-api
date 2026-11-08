@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 import { captchaHeaders } from '@/lib/captcha'
+import type { UserAvatar } from '@/lib/meow-avatar'
 import type { CustomOAuthBinding } from '@/lib/oauth'
 import { authRequestOptions, authResult } from '@/lib/secure-verification'
 import type { LoginSession } from '@/stores/auth-store'
@@ -86,6 +87,18 @@ export async function updateUserSettings(
   }
   const settings = normalizeUserSettings(profile.data.setting)
   const res = await api.put('/api/user/setting', { ...settings, ...data })
+  return res.data
+}
+
+/**
+ * Save the avatar the user built or uploaded; null goes back to the default cat
+ */
+export async function saveUserAvatar(
+  avatar: UserAvatar | null
+): Promise<ApiResponse<{ avatar: UserAvatar | null }>> {
+  const res = avatar
+    ? await api.put('/api/user/self/avatar', avatar)
+    : await api.delete('/api/user/self/avatar')
   return res.data
 }
 

@@ -300,6 +300,67 @@ header nav.backdrop-blur-2xl {
 }
 
 /*
+ * Rolling numbers (components/rolling-number.tsx): a changed character
+ * slides in from below when the value grows (from above when it shrinks)
+ * while the old one slides out the other way, both fading, like an
+ * odometer. Reduced motion swaps the characters without moving.
+ */
+@keyframes meow-roll-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(0.6em);
+  }
+}
+@keyframes meow-roll-out-up {
+  to {
+    opacity: 0;
+    transform: translateY(-0.6em);
+  }
+}
+@keyframes meow-roll-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-0.6em);
+  }
+}
+@keyframes meow-roll-out-down {
+  to {
+    opacity: 0;
+    transform: translateY(0.6em);
+  }
+}
+.meow-roll-in-up,
+.meow-roll-out-up,
+.meow-roll-in-down,
+.meow-roll-out-down {
+  animation-duration: 0.55s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+.meow-roll-in-up {
+  animation-name: meow-roll-in-up;
+}
+.meow-roll-out-up {
+  animation-name: meow-roll-out-up;
+}
+.meow-roll-in-down {
+  animation-name: meow-roll-in-down;
+}
+.meow-roll-out-down {
+  animation-name: meow-roll-out-down;
+}
+@media (prefers-reduced-motion: reduce) {
+  .meow-roll-in-up,
+  .meow-roll-in-down {
+    animation: none;
+  }
+  .meow-roll-out-up,
+  .meow-roll-out-down {
+    display: none;
+  }
+}
+
+/*
  * Sleeping cat (components/cat-art.tsx): the tail layer swings from the
  * point where it comes out from behind the cat's rear (percentages of the
  * drawing, so it holds at any size).
@@ -319,6 +380,45 @@ header nav.backdrop-blur-2xl {
 }
 @media (prefers-reduced-motion: reduce) {
   .meow-cat-tail {
+    animation: none;
+  }
+}
+
+/*
+ * Home hero (meow-hero.tsx): the badge, headline, subtitle, buttons and the
+ * visual rise in one after another. While the splash from index.html is on
+ * screen (html.meow-splash-active) they wait at the start, so they rise as
+ * it leaves. Backwards fill only: no transform stays on the elements after.
+ */
+.meow-hero-enter > :first-child > *,
+.meow-hero-enter > :last-child {
+  animation: meow-hero-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.meow-hero-enter > :first-child > :nth-child(2) {
+  animation-delay: 70ms;
+}
+.meow-hero-enter > :first-child > :nth-child(3) {
+  animation-delay: 140ms;
+}
+.meow-hero-enter > :first-child > :nth-child(4) {
+  animation-delay: 210ms;
+}
+.meow-hero-enter > :last-child {
+  animation-delay: 280ms;
+}
+html.meow-splash-active .meow-hero-enter > :first-child > *,
+html.meow-splash-active .meow-hero-enter > :last-child {
+  animation-play-state: paused;
+}
+@keyframes meow-hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .meow-hero-enter > :first-child > *,
+  .meow-hero-enter > :last-child {
     animation: none;
   }
 }
@@ -372,10 +472,28 @@ header nav.backdrop-blur-2xl {
 }
 
 /*
+ * Public header avatar on phones and tablets: 2rem instead of the upstream
+ * 1.5rem, close to the 2.25rem icon buttons beside it; the 3rem floating
+ * bar still leaves room around it.
+ */
+header.pointer-events-none.fixed
+  nav
+  .lg\:hidden
+  button:has(> [data-slot='avatar']),
+header.pointer-events-none.fixed nav .lg\:hidden button > [data-slot='avatar'] {
+  width: 2rem;
+  height: 2rem;
+}
+header.pointer-events-none.fixed nav .lg\:hidden button > [data-slot='avatar'] {
+  font-size: 0.8125rem;
+}
+
+/*
  * Public header bar on desktop (upstream public-header.tsx): taller, with
- * a larger brand, links, icon buttons and avatar. The floating bar shown
- * after scrolling (max-w-[52rem] / h-12 upstream) is wider and taller to
- * fit them. Phones keep the upstream sizes.
+ * a larger brand, links, icon buttons and avatar (as tall as the icon
+ * buttons). The floating bar shown after scrolling (max-w-[52rem] / h-12
+ * upstream) is wider and taller to fit them. Phones keep the upstream
+ * sizes apart from the avatar above.
  */
 @media (min-width: 64rem) {
   [class~='@container/system-brand'] > a > div:first-child {
@@ -418,11 +536,11 @@ header nav.backdrop-blur-2xl {
     .lg\:flex
     button:has(> [data-slot='avatar']),
   header.pointer-events-none.fixed nav .lg\:flex button > [data-slot='avatar'] {
-    width: 2.125rem;
-    height: 2.125rem;
+    width: 2.5rem;
+    height: 2.5rem;
   }
   header.pointer-events-none.fixed nav .lg\:flex button > [data-slot='avatar'] {
-    font-size: 0.875rem;
+    font-size: 1rem;
   }
   header.pointer-events-none.fixed nav .lg\:flex > .h-4.w-px {
     height: 1.25rem;
@@ -475,19 +593,22 @@ header nav.backdrop-blur-2xl {
 
 /*
  * Brand in the console header (upstream SystemBrand, variant "inline").
+ * Not the public header (header.fixed), which keeps its larger brand above;
+ * there this rule only matched once the logo image had loaded, so the logo
+ * shrank from 2.625rem to 1.875rem right after the page appeared.
  */
-header a[href='/']:has(> div > img[alt]) {
+header:not(.fixed) a[href='/']:has(> div > img[alt]) {
   height: 2.25rem;
   gap: 0.55rem;
   font-size: 1.0625rem;
   font-weight: 800;
   letter-spacing: -0.01em;
 }
-header a[href='/']:has(> div > img[alt]) > div:first-child {
+header:not(.fixed) a[href='/']:has(> div > img[alt]) > div:first-child {
   width: 1.875rem;
   height: 1.875rem;
 }
-header a[href='/']:has(> div > img[alt]) > div:first-child > img {
+header:not(.fixed) a[href='/']:has(> div > img[alt]) > div:first-child > img {
   border-radius: 0.5rem;
 }
 
