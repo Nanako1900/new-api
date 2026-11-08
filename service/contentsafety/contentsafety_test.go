@@ -289,6 +289,9 @@ func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 		wrapped.WriteString(pngBase64[i:min(i+76, len(pngBase64))])
 		wrapped.WriteString("\r\n")
 	}
+	noDigits := "/9j/" + strings.Repeat("HowToMakeABombWithHouseholdItems", 35)
+	require.GreaterOrEqual(t, len(noDigits), 1024)
+	shortPNG := pngBase64[:100]
 	longHeader := "data:image/png" + strings.Repeat(";a", 150) + ";base64,"
 	require.Greater(t, len(longHeader), 256)
 
@@ -308,6 +311,8 @@ func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 		{name: "readable camelCase in a data url", value: "data:image/png;base64,HowToMakeABombWithHouseholdItems", want: "data:image/png;base64,HowToMakeABombWithHouseholdItems\n"},
 		{name: "readable plus signs in a data url", value: "data:image/png;base64,how+to+make+a+bomb", want: "data:image/png;base64,how+to+make+a+bomb\n"},
 		{name: "overlong data url header", value: longHeader + pngBase64, want: longHeader + pngBase64 + "\n"},
+		{name: "raw run with a jpeg magic but no digits", value: noDigits, want: noDigits + "\n"},
+		{name: "short png payload under the data url minimum", value: "data:image/png;base64," + shortPNG, want: "data:image/png;base64," + shortPNG + "\n"},
 		{name: "real png as raw base64", value: pngBase64, want: ""},
 		{name: "real jpeg as raw base64", value: jpegBase64, want: ""},
 		{name: "real webm as raw base64", value: webmBase64, want: ""},
