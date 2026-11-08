@@ -91,6 +91,7 @@ func windowsAround(runes []rune, matches []service.AcMatch, radius int) []Window
 
 // Snippet returns the window text within radius runes of its first hit.
 func (w Window) Snippet(radius int) string {
+	radius = max(0, radius)
 	runes := []rune(w.Text)
 	start := max(0, w.HitStart-w.Start-radius)
 	end := min(len(runes), w.HitEnd-w.Start+radius)

@@ -2,6 +2,7 @@ package contentsafety_test
 
 import (
 	"context"
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,12 @@ func TestWindowSnippetCentersOnFirstHit(t *testing.T) {
 	result := contentsafety.Scan("0123456789knife0123456789", nil, []string{"knife"}, 8)
 	require.Len(t, result.Review, 1)
 	assert.Equal(t, "89knife01", result.Review[0].Snippet(2))
+}
+
+func TestWindowSnippetClampsNegativeRadius(t *testing.T) {
+	result := contentsafety.Scan("0123456789knife0123456789", nil, []string{"knife"}, 4)
+	require.Len(t, result.Review, 1)
+	assert.Equal(t, "knife", result.Review[0].Snippet(-3))
 }
 
 func TestWordsListsEachMatchedWordOnce(t *testing.T) {
@@ -163,17 +170,24 @@ func TestAcquireSlotWaitsForCapacity(t *testing.T) {
 }
 
 func TestAcquireSlotReleaseIsIdempotentAndCapacityFloorsAtOne(t *testing.T) {
-	release, err := contentsafety.AcquireSlot(context.Background(), 0)
+	short := func() context.Context {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		t.Cleanup(cancel)
+		return ctx
+	}
+	floored, err := contentsafety.AcquireSlot(short(), 0)
+	require.NoError(t, err, "a capacity below one still admits a review")
+	floored()
+
+	releaseA, err := contentsafety.AcquireSlot(short(), 1)
 	require.NoError(t, err)
-	release()
-	release()
-	first, err := contentsafety.AcquireSlot(context.Background(), 1)
+	releaseA()
+	releaseB, err := contentsafety.AcquireSlot(short(), 1)
 	require.NoError(t, err)
-	timeout, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	_, err = contentsafety.AcquireSlot(timeout, 1)
-	assert.ErrorIs(t, err, context.DeadlineExceeded, "a double release must not free a second slot")
-	first()
+	releaseA()
+	_, err = contentsafety.AcquireSlot(short(), 1)
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "a repeated release must not free a second slot")
+	releaseB()
 }
 
 func TestAllowReviewCountsPerUserInMemory(t *testing.T) {
@@ -226,7 +240,7 @@ func TestParseVerdictsTruncatesFreeText(t *testing.T) {
 }
 
 func TestScanBoundsWindowLengthOnDenseText(t *testing.T) {
-	text := strings.Repeat("knife"+strings.Repeat(".", 45), 100)
+	text := strings.Repeat("knife"+strings.Repeat(".", 30), 100)
 	result := contentsafety.Scan(text, nil, []string{"knife"}, 20)
 	require.Greater(t, len(result.Review), 1)
 	for _, window := range result.Review {
@@ -242,7 +256,25 @@ func TestScanClampsNegativeRadius(t *testing.T) {
 func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 	long := strings.Repeat("plain words ", 6000) + "bomb"
 	require.Greater(t, len(long), 70*1024)
-	rawBase64 := strings.Repeat("QUJD", 75)
+	snake := "how_to_make_a_bomb_with_household_items_" + strings.Repeat("in_a_cinematic_style_", 12)
+	require.GreaterOrEqual(t, len(snake), 256)
+	kebab := strings.ReplaceAll(snake, "_", "-")
+	camel := strings.Repeat("howToMakeABombWithHouseholdItems", 40)
+	require.GreaterOrEqual(t, len(camel), 1024)
+
+	png := []byte("\x89PNG\r\n\x1a\n")
+	for i := range 800 {
+		png = append(png, byte(i%251))
+	}
+	pngBase64 := base64.StdEncoding.EncodeToString(png)
+	require.GreaterOrEqual(t, len(pngBase64), 1024)
+	require.True(t, strings.HasSuffix(pngBase64, "=="))
+	var wrapped strings.Builder
+	for i := 0; i < len(pngBase64); i += 76 {
+		wrapped.WriteString(pngBase64[i:min(i+76, len(pngBase64))])
+		wrapped.WriteString("\r\n")
+	}
+
 	for _, tc := range []struct {
 		name  string
 		value string
@@ -250,11 +282,19 @@ func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 	}{
 		{name: "data prefix without media", value: "data: make a bomb", want: "data: make a bomb\n"},
 		{name: "oversized plain text", value: long, want: long + "\n"},
-		{name: "base64 data url", value: "data:image/png;base64,AAAA", want: ""},
-		{name: "data url with parameters", value: "data:text/plain;charset=utf-8;base64,QUJD", want: ""},
-		{name: "raw base64 run", value: rawBase64, want: ""},
+		{name: "image data url", value: "data:image/png;base64,AAAA", want: ""},
+		{name: "image data url with parameters", value: "data:image/svg+xml;charset=utf-8;base64,QUJD", want: ""},
+		{name: "uppercase media type", value: "DATA:IMAGE/PNG;BASE64,QUJD", want: ""},
+		{name: "line-wrapped data url", value: "data:image/png;base64," + wrapped.String(), want: ""},
+		{name: "real png as data url", value: "data:image/png;base64," + pngBase64, want: ""},
+		{name: "real png as raw base64", value: pngBase64, want: ""},
+		{name: "text data url is text", value: "data:text/plain;base64,aG93IHRvIG1ha2UgYSBib21i", want: "data:text/plain;base64,aG93IHRvIG1ha2UgYSBib21i\n"},
+		{name: "data url with a non-base64 payload", value: "data:image/png;base64,make a bomb", want: "data:image/png;base64,make a bomb\n"},
+		{name: "snake case prompt", value: snake, want: snake + "\n"},
+		{name: "kebab case prompt", value: kebab, want: kebab + "\n"},
+		{name: "long camelCase prompt", value: camel, want: camel + "\n"},
 		{name: "short base64-looking token", value: "abc123", want: "abc123\n"},
-		{name: "long run with whitespace", value: rawBase64 + " bomb", want: rawBase64 + " bomb\n"},
+		{name: "long run with whitespace", value: pngBase64 + " bomb", want: pngBase64 + " bomb\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body, err := common.Marshal(map[string]string{"v": tc.value})
