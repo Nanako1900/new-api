@@ -25,8 +25,9 @@ import {
   within,
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 
+import { PageFooterProvider } from '@/components/layout/components/page-footer'
 import { api } from '@/lib/api'
 
 import { ContentSafetyLogTable } from '../components/content-safety-log-table'
@@ -57,23 +58,35 @@ const rejected: ContentSafetyLog = {
   cache_hit: false,
 }
 
-function mockLogs(items: ContentSafetyLog[]) {
+function mockLogs(items: ContentSafetyLog[], total = items.length) {
   return vi.spyOn(api, 'get').mockResolvedValue({
     data: {
       success: true,
-      data: { items, total: items.length, page: 1, page_size: 20 },
+      data: { items, total, page: 1, page_size: 20 },
     },
   })
 }
+
+// The table renders its pagination into the page footer slot of the layout.
+const footers: HTMLDivElement[] = []
+
+afterEach(() => {
+  footers.splice(0).forEach((footer) => footer.remove())
+  vi.restoreAllMocks()
+})
 
 function renderTable() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
+  const footer = document.body.appendChild(document.createElement('div'))
+  footers.push(footer)
   render(
-    <QueryClientProvider client={client}>
-      <ContentSafetyLogTable />
-    </QueryClientProvider>
+    <PageFooterProvider container={footer}>
+      <QueryClientProvider client={client}>
+        <ContentSafetyLogTable />
+      </QueryClientProvider>
+    </PageFooterProvider>
   )
 }
 
@@ -89,7 +102,7 @@ it('shows each record returned by the content safety log API as a row', async ()
   })
 })
 
-it('choosing a decision requests only that decision from the first page', async () => {
+it('choosing a decision requests only that decision', async () => {
   const get = mockLogs([rejected])
   renderTable()
   const user = userEvent.setup()
@@ -131,7 +144,7 @@ it('typing a request id sends request_id from the first page', async () => {
   )
 })
 
-it('a request id longer than 64 characters pauses loading and explains why', async () => {
+it('a request id longer than 64 bytes pauses loading and explains why', async () => {
   const get = mockLogs([rejected])
   renderTable()
   await screen.findByRole('row', { name: /alice/ })
@@ -139,9 +152,7 @@ it('a request id longer than 64 characters pauses loading and explains why', asy
   fireEvent.change(screen.getByRole('textbox', { name: 'Request ID' }), {
     target: { value: tooLong },
   })
-  expect(
-    await screen.findByText('Request ID must be at most 64 characters')
-  ).toBeVisible()
+  expect(await screen.findByText('Request ID is too long')).toBeVisible()
   expect(get).not.toHaveBeenCalledWith('/api/content_safety/logs', {
     params: expect.objectContaining({ request_id: tooLong }),
   })
@@ -169,4 +180,150 @@ it('keeps rows whose log ids are all zero as separate rows', async () => {
   renderTable()
   expect(await screen.findByRole('row', { name: /alice/ })).toBeVisible()
   expect(screen.getByRole('row', { name: /bob/ })).toBeVisible()
+})
+
+it('a multibyte request id over 64 bytes is rejected even though it has fewer than 64 characters', async () => {
+  const get = mockLogs([rejected])
+  renderTable()
+  await screen.findByRole('row', { name: /alice/ })
+  const tooLong = '拦'.repeat(22)
+  const input = screen.getByRole('textbox', { name: 'Request ID' })
+  fireEvent.change(input, { target: { value: tooLong } })
+  expect(await screen.findByText('Request ID is too long')).toBeVisible()
+  expect(input).toHaveAttribute('aria-invalid', 'true')
+  expect(get).not.toHaveBeenCalledWith('/api/content_safety/logs', {
+    params: expect.objectContaining({ request_id: tooLong }),
+  })
+})
+
+it('a model name over 255 bytes pauses loading and explains why', async () => {
+  const get = mockLogs([rejected])
+  renderTable()
+  await screen.findByRole('row', { name: /alice/ })
+  const tooLong = 'm'.repeat(256)
+  fireEvent.change(screen.getByRole('textbox', { name: 'Model' }), {
+    target: { value: tooLong },
+  })
+  expect(await screen.findByText('Model name is too long')).toBeVisible()
+  expect(get).not.toHaveBeenCalledWith('/api/content_safety/logs', {
+    params: expect.objectContaining({ model: tooLong }),
+  })
+})
+
+it('a user ID with more than 18 digits pauses loading and explains why', async () => {
+  const get = mockLogs([rejected])
+  renderTable()
+  await screen.findByRole('row', { name: /alice/ })
+  const tooLong = '1'.repeat(19)
+  fireEvent.change(screen.getByRole('textbox', { name: 'User ID' }), {
+    target: { value: tooLong },
+  })
+  expect(await screen.findByText('User ID is too long')).toBeVisible()
+  expect(get).not.toHaveBeenCalledWith('/api/content_safety/logs', {
+    params: expect.objectContaining({ user_id: tooLong }),
+  })
+})
+
+it('an invalid user ID is flagged on its input and linked to its message', async () => {
+  mockLogs([rejected])
+  renderTable()
+  await screen.findByRole('row', { name: /alice/ })
+  const input = screen.getByRole('textbox', { name: 'User ID' })
+  fireEvent.change(input, { target: { value: 'abc' } })
+  const message = await screen.findByText('User ID must be a positive integer')
+  expect(input).toHaveAttribute('aria-invalid', 'true')
+  expect(input.getAttribute('aria-describedby')).toBe(message.id)
+})
+
+it('a model filter is trimmed before it is sent', async () => {
+  const get = mockLogs([rejected])
+  renderTable()
+  await screen.findByRole('row', { name: /alice/ })
+  fireEvent.change(screen.getByRole('textbox', { name: 'Model' }), {
+    target: { value: '  judge-model ' },
+  })
+  await waitFor(() =>
+    expect(get).toHaveBeenLastCalledWith('/api/content_safety/logs', {
+      params: { p: 1, page_size: 20, model: 'judge-model' },
+    })
+  )
+})
+
+it('a failed response shows the error with its message and Retry loads the rows', async () => {
+  const get = vi
+    .spyOn(api, 'get')
+    .mockResolvedValueOnce({
+      data: { success: false, message: 'Invalid content safety log query' },
+    })
+    .mockResolvedValue({
+      data: {
+        success: true,
+        data: { items: [rejected], total: 1, page: 1, page_size: 20 },
+      },
+    })
+  renderTable()
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('Failed to load content safety logs')
+  expect(get).toHaveBeenCalledTimes(1)
+  await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+  expect(await screen.findByRole('row', { name: /alice/ })).toBeVisible()
+  expect(get).toHaveBeenCalledTimes(2)
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+it('an end time before the start time shows an alert and pauses the query', async () => {
+  const get = mockLogs([rejected])
+  renderTable()
+  const user = userEvent.setup()
+  await screen.findByRole('row', { name: /alice/ })
+  await user.click(screen.getByRole('button', { name: 'Date Range' }))
+  fireEvent.change(await screen.findByLabelText('Start Time'), {
+    target: { value: '2026-11-08T12:00:00' },
+  })
+  fireEvent.change(screen.getByLabelText('End Time'), {
+    target: { value: '2026-11-08T10:00:00' },
+  })
+  const callsBefore = get.mock.calls.length
+  await user.click(screen.getByRole('button', { name: 'Confirm' }))
+  expect(
+    await screen.findByText('End time must be after start time')
+  ).toBeVisible()
+  expect(get).toHaveBeenCalledTimes(callsBefore)
+})
+
+it('moving to the next page requests page 2, and changing a filter returns to page 1', async () => {
+  const get = mockLogs([rejected], 45)
+  renderTable()
+  const user = userEvent.setup()
+  await screen.findByRole('row', { name: /alice/ })
+  await user.click(
+    screen.getAllByRole('button', { name: 'Go to next page' })[0]
+  )
+  await waitFor(() =>
+    expect(get).toHaveBeenLastCalledWith('/api/content_safety/logs', {
+      params: { p: 2, page_size: 20 },
+    })
+  )
+  await user.click(screen.getByRole('combobox', { name: 'Decision' }))
+  await user.click(await screen.findByRole('option', { name: 'Review failed' }))
+  await waitFor(() =>
+    expect(get).toHaveBeenLastCalledWith('/api/content_safety/logs', {
+      params: { p: 1, page_size: 20, decision: 'review_failed' },
+    })
+  )
+})
+
+it('keeps the previous rows on screen while a changed filter loads', async () => {
+  const get = mockLogs([rejected])
+  renderTable()
+  const user = userEvent.setup()
+  await screen.findByRole('row', { name: /alice/ })
+  get.mockReturnValue(new Promise(() => undefined))
+  await user.type(screen.getByRole('textbox', { name: 'Request ID' }), 'r')
+  await waitFor(() =>
+    expect(get).toHaveBeenLastCalledWith('/api/content_safety/logs', {
+      params: { p: 1, page_size: 20, request_id: 'r' },
+    })
+  )
+  expect(screen.getByRole('row', { name: /alice/ })).toBeVisible()
 })

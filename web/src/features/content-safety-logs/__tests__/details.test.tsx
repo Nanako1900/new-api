@@ -128,3 +128,34 @@ it('shows server text containing interpolation braces exactly as stored', async 
   expect(within(dialog).getByText('Said {{name}} twice')).toBeVisible()
   expect(within(dialog).getByText('{{category}}')).toBeVisible()
 })
+
+it('gives each long snippet its own numbered copy button', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    snippets: JSON.stringify(['a'.repeat(60), 'b'.repeat(60)]),
+  })
+  expect(
+    within(dialog).getByRole('button', { name: 'Copy Snippet 1' })
+  ).toBeVisible()
+  expect(
+    within(dialog).getByRole('button', { name: 'Copy Snippet 2' })
+  ).toBeVisible()
+})
+
+it('lets a long hit word wrap and keeps its full text as the title', async () => {
+  const word = 'x'.repeat(120)
+  const dialog = await openDetails({
+    ...rejected,
+    hit_words: JSON.stringify([word]),
+  })
+  const badge = within(dialog).getByTitle(word)
+  expect(badge).toHaveClass('whitespace-normal', 'h-auto')
+})
+
+it('omits the time of a record whose timestamp is not a number', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    created_at: Number.NaN,
+  })
+  expect(within(dialog).queryByText('Invalid Date')).not.toBeInTheDocument()
+})

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { Table } from '@tanstack/react-table'
+import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Combobox } from '@/components/ui/combobox'
@@ -29,17 +30,36 @@ import {
 
 import { CONTENT_SAFETY_DECISIONS, DECISION_PRESENTATION } from '../constants'
 import { isContentSafetyDecision } from '../lib/log-fields'
-import type { ContentSafetyLog, ContentSafetyLogFilters } from '../types'
+import type {
+  ContentSafetyLog,
+  ContentSafetyLogFieldErrors,
+  ContentSafetyLogFilters,
+} from '../types'
+
+// Shown under its input so it is also visible inside the mobile filter drawer.
+function FieldError(props: { id: string; message?: string }) {
+  if (!props.message) return null
+  return (
+    <p id={props.id} className='text-destructive mt-1 text-xs'>
+      {props.message}
+    </p>
+  )
+}
 
 export function ContentSafetyLogFilterBar(props: {
   table: Table<ContentSafetyLog>
   filters: ContentSafetyLogFilters
+  errors: ContentSafetyLogFieldErrors
   onChange: (patch: Partial<ContentSafetyLogFilters>) => void
   isFetching: boolean
   onSearch: () => void
   onReset: () => void
 }) {
   const { t } = useTranslation()
+  const idPrefix = useId()
+  const userIdErrorId = `${idPrefix}-user-id-error`
+  const requestIdErrorId = `${idPrefix}-request-id-error`
+  const modelErrorId = `${idPrefix}-model-error`
   const decisionOptions = [
     { value: 'all', label: t('All decisions') },
     ...CONTENT_SAFETY_DECISIONS.map((decision) => ({
@@ -92,16 +112,23 @@ export function ContentSafetyLogFilterBar(props: {
           aria-label={t('User ID')}
           placeholder={t('User ID')}
           inputMode='numeric'
+          aria-invalid={props.errors.user_id ? true : undefined}
+          aria-describedby={props.errors.user_id ? userIdErrorId : undefined}
           value={props.filters.user_id ?? ''}
           onChange={(event) =>
             props.onChange({ user_id: event.target.value.trim() || undefined })
           }
         />
+        <FieldError id={userIdErrorId} message={props.errors.user_id} />
       </LogsFilterField>
       <LogsFilterField>
         <LogsFilterInput
           aria-label={t('Request ID')}
           placeholder={t('Request ID')}
+          aria-invalid={props.errors.request_id ? true : undefined}
+          aria-describedby={
+            props.errors.request_id ? requestIdErrorId : undefined
+          }
           value={props.filters.request_id ?? ''}
           onChange={(event) =>
             props.onChange({
@@ -109,16 +136,20 @@ export function ContentSafetyLogFilterBar(props: {
             })
           }
         />
+        <FieldError id={requestIdErrorId} message={props.errors.request_id} />
       </LogsFilterField>
       <LogsFilterField>
         <LogsFilterInput
           aria-label={t('Model')}
           placeholder={t('Model')}
+          aria-invalid={props.errors.model ? true : undefined}
+          aria-describedby={props.errors.model ? modelErrorId : undefined}
           value={props.filters.model ?? ''}
           onChange={(event) =>
-            props.onChange({ model: event.target.value || undefined })
+            props.onChange({ model: event.target.value.trim() || undefined })
           }
         />
+        <FieldError id={modelErrorId} message={props.errors.model} />
       </LogsFilterField>
     </>
   )

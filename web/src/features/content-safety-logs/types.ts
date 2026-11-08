@@ -88,3 +88,10 @@ export type DecisionPresentation = {
   labelKey: string
   variant: StatusVariant
 }
+
+/** Inline validation messages of the filter inputs; a field is set while invalid. */
+export type ContentSafetyLogFieldErrors = {
+  user_id?: string
+  request_id?: string
+  model?: string
+}

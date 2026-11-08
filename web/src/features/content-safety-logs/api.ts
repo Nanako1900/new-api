@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { t } from 'i18next'
 
 import type { ApiResponse } from '@/features/profile/types'
@@ -50,6 +50,7 @@ export function useContentSafetyLogs(
     queryKey: ['content-safety-logs', params],
     queryFn: () => getContentSafetyLogs(params),
     enabled,
+    placeholderData: keepPreviousData,
     retry: false,
   })
 }

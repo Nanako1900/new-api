@@ -48,7 +48,11 @@ export function useContentSafetyLogColumns(): ColumnDef<ContentSafetyLog>[] {
         size: 170,
         cell: ({ row }) => (
           <span className='font-mono tabular-nums'>
-            {dayjs.unix(row.original.created_at).format('YYYY-MM-DD HH:mm:ss')}
+            {Number.isFinite(row.original.created_at)
+              ? dayjs
+                  .unix(row.original.created_at)
+                  .format('YYYY-MM-DD HH:mm:ss')
+              : '—'}
           </span>
         ),
         meta: { label: t('Time'), mobileTitle: true },

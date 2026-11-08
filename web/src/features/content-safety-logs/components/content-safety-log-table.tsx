@@ -25,15 +25,25 @@ import { Button } from '@/components/ui/button'
 
 import { useContentSafetyLogs } from '../api'
 import { CONTENT_SAFETY_LOG_PAGE_SIZE } from '../constants'
-import type { ContentSafetyLog, ContentSafetyLogFilters } from '../types'
+import type {
+  ContentSafetyLog,
+  ContentSafetyLogFieldErrors,
+  ContentSafetyLogFilters,
+} from '../types'
 import { useContentSafetyLogColumns } from './content-safety-log-columns'
 import { ContentSafetyLogFilterBar } from './content-safety-log-filter-bar'
 
 const EMPTY_LOGS: ContentSafetyLog[] = []
-// The backend accepts only positive integer user IDs.
+// The backend accepts only positive integer user IDs that fit an int64.
 const USER_ID_PATTERN = /^[1-9]\d*$/
-// The backend rejects request ids longer than 64 bytes.
+const USER_ID_MAX_DIGITS = 18
+// The backend measures these limits in bytes.
 const REQUEST_ID_MAX_BYTES = 64
+const MODEL_MAX_BYTES = 255
+
+function byteLength(value: string): number {
+  return new TextEncoder().encode(value).length
+}
 
 export function ContentSafetyLogTable() {
   const { t } = useTranslation()
@@ -45,12 +55,27 @@ export function ContentSafetyLogTable() {
     filters.start_timestamp !== undefined &&
     filters.end_timestamp !== undefined &&
     filters.start_timestamp > filters.end_timestamp
-  const invalidUserId =
-    filters.user_id !== undefined && !USER_ID_PATTERN.test(filters.user_id)
-  const invalidRequestId =
+  const fieldErrors: ContentSafetyLogFieldErrors = {}
+  if (filters.user_id !== undefined) {
+    if (!USER_ID_PATTERN.test(filters.user_id)) {
+      fieldErrors.user_id = t('User ID must be a positive integer')
+    } else if (filters.user_id.length > USER_ID_MAX_DIGITS) {
+      fieldErrors.user_id = t('User ID is too long')
+    }
+  }
+  if (
     filters.request_id !== undefined &&
-    new TextEncoder().encode(filters.request_id).length > REQUEST_ID_MAX_BYTES
-  const canQuery = !invalidRange && !invalidUserId && !invalidRequestId
+    byteLength(filters.request_id) > REQUEST_ID_MAX_BYTES
+  ) {
+    fieldErrors.request_id = t('Request ID is too long')
+  }
+  if (
+    filters.model !== undefined &&
+    byteLength(filters.model) > MODEL_MAX_BYTES
+  ) {
+    fieldErrors.model = t('Model name is too long')
+  }
+  const canQuery = !invalidRange && Object.keys(fieldErrors).length === 0
   const query = useContentSafetyLogs(filters, canQuery)
   const columns = useContentSafetyLogColumns()
   const { table } = useDataTable({
@@ -103,6 +128,7 @@ export function ContentSafetyLogTable() {
             <ContentSafetyLogFilterBar
               table={table}
               filters={filters}
+              errors={fieldErrors}
               onChange={update}
               isFetching={query.isFetching}
               onSearch={() => {
@@ -114,20 +140,6 @@ export function ContentSafetyLogTable() {
               <Alert variant='destructive'>
                 <AlertDescription>
                   {t('End time must be after start time')}
-                </AlertDescription>
-              </Alert>
-            )}
-            {invalidUserId && (
-              <Alert variant='destructive'>
-                <AlertDescription>
-                  {t('User ID must be a positive integer')}
-                </AlertDescription>
-              </Alert>
-            )}
-            {invalidRequestId && (
-              <Alert variant='destructive'>
-                <AlertDescription>
-                  {t('Request ID must be at most 64 characters')}
                 </AlertDescription>
               </Alert>
             )}

@@ -49,7 +49,11 @@ export function ContentSafetyLogDetailsDialog(props: {
   const hitWords = parseStringList(props.entry.hit_words, { unique: true })
   // Every stored snippet is listed in order, so repeated text needs an index key.
   const snippets = parseStringList(props.entry.snippets).map(
-    (text, position) => ({ key: `snippet-${position}`, text })
+    (text, position) => ({
+      key: `snippet-${position}`,
+      number: position + 1,
+      text,
+    })
   )
   const reviewed = props.entry.decision !== 'keyword_blocked'
 
@@ -84,9 +88,11 @@ export function ContentSafetyLogDetailsDialog(props: {
             )}
           </span>
         )}
-        <span className='text-muted-foreground tabular-nums'>
-          {dayjs.unix(props.entry.created_at).format('YYYY-MM-DD HH:mm:ss')}
-        </span>
+        {Number.isFinite(props.entry.created_at) && (
+          <span className='text-muted-foreground tabular-nums'>
+            {dayjs.unix(props.entry.created_at).format('YYYY-MM-DD HH:mm:ss')}
+          </span>
+        )}
       </div>
       <DetailSection label={t('Request')}>
         <DetailRow
@@ -127,10 +133,13 @@ export function ContentSafetyLogDetailsDialog(props: {
                 {hitWords.map((word) => (
                   <li key={word}>
                     <StatusBadge
-                      label={word}
                       variant='neutral'
                       copyable={false}
-                    />
+                      title={word}
+                      className='h-auto wrap-anywhere whitespace-normal'
+                    >
+                      {word}
+                    </StatusBadge>
                   </li>
                 ))}
               </ul>
@@ -147,7 +156,7 @@ export function ContentSafetyLogDetailsDialog(props: {
                 {snippets.map((snippet) => (
                   <li key={snippet.key}>
                     <AuditDetailValue
-                      label={t('Snippets')}
+                      label={t('Snippet {{index}}', { index: snippet.number })}
                       value={snippet.text}
                     />
                   </li>
