@@ -399,6 +399,12 @@ func UpdateOption(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+	case "console_setting.alerts":
+		err = console_setting.ValidateConsoleSettings(option.Value.(string), "Alerts")
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	case "console_setting.faq":
 		err = console_setting.ValidateConsoleSettings(option.Value.(string), "FAQ")
 		if err != nil {

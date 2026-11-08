@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -183,6 +184,14 @@ func GetNotice(c *gin.Context) {
 	notice := common.OptionMap["Notice"]
 	common.OptionMapRWMutex.RUnlock()
 	serveRevalidatedJSON(c, notice)
+}
+
+// GetAlerts returns the console alerts that are live right now.
+func GetAlerts(c *gin.Context) {
+	common.OptionMapRWMutex.RLock()
+	alerts := console_setting.GetActiveAlerts(time.Now())
+	common.OptionMapRWMutex.RUnlock()
+	common.ApiSuccess(c, alerts)
 }
 
 func GetAbout(c *gin.Context) {
