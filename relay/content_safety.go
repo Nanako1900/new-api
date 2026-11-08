@@ -84,6 +84,23 @@ func requestScanText(request dto.Request, combineText string) string {
 	parts := []string{combineText}
 	switch r := request.(type) {
 	case *dto.GeneralOpenAIRequest:
+		// Token counting reads custom tools, and the tools and tool calls of a
+		// message, raw. A request with any is counted again on a copy without
+		// them.
+		counted, decoded := *r, []string(nil)
+		counted.Tools = slices.DeleteFunc(slices.Clone(r.Tools), func(tool dto.ToolCallRequest) bool { return len(tool.Custom) > 0 })
+		for _, tool := range r.Tools {
+			decoded = append(decoded, contentsafety.CollectJSONText(tool.Custom))
+		}
+		counted.Messages = slices.Clone(r.Messages)
+		for i, message := range r.Messages {
+			counted.Messages[i].Tools, counted.Messages[i].ToolCalls = nil, nil
+			decoded = append(decoded, contentsafety.CollectJSONText(message.Tools), contentsafety.CollectJSONText(message.ToolCalls))
+		}
+		if slices.ContainsFunc(decoded, func(text string) bool { return text != "" }) {
+			parts = []string{counted.GetTokenCountMeta().CombineText}
+		}
+		parts = append(parts, decoded...)
 		parts = append(parts, contentsafety.CollectJSONText(r.Functions))
 		if r.ResponseFormat != nil {
 			parts = append(parts, contentsafety.CollectJSONText(r.ResponseFormat.JsonSchema))
@@ -107,21 +124,14 @@ func requestScanText(request dto.Request, combineText string) string {
 		counted.Tools = nil
 		parts = []string{counted.GetTokenCountMeta().CombineText, contentsafety.CollectJSONText(r.Tools)}
 	case *dto.ClaudeRequest:
-		// Token counting skips document blocks; their title and context, and
-		// the data of a text source, are plain text the model reads.
+		// Token counting skips the legacy prompt, which a Claude channel still
+		// forwards, and document blocks.
+		parts = append(parts, r.Prompt)
 		for _, message := range r.Messages {
 			blocks, _ := message.Content.([]any)
 			for _, block := range blocks {
-				document, _ := block.(map[string]any)
-				if document["type"] != "document" {
-					continue
-				}
-				title, _ := document["title"].(string)
-				documentContext, _ := document["context"].(string)
-				parts = append(parts, title, documentContext)
-				if source, _ := document["source"].(map[string]any); source["type"] == "text" {
-					data, _ := source["data"].(string)
-					parts = append(parts, data)
+				if document, _ := block.(map[string]any); document["type"] == "document" {
+					parts = append(parts, claudeDocumentText(document)...)
 				}
 			}
 		}
@@ -133,6 +143,34 @@ func requestScanText(request dto.Request, combineText string) string {
 		parts = []string{contentsafety.CollectJSONText([]byte(combineText))}
 	}
 	return strings.Join(slices.DeleteFunc(parts, func(part string) bool { return part == "" }), "\n")
+}
+
+// claudeDocumentText is the plain text a model reads from a Claude document
+// block: its title and context, and the text of a text or content source. A
+// base64 or URL source is a file, not text.
+func claudeDocumentText(document map[string]any) []string {
+	title, _ := document["title"].(string)
+	documentContext, _ := document["context"].(string)
+	texts := []string{title, documentContext}
+	source, _ := document["source"].(map[string]any)
+	switch source["type"] {
+	case "text":
+		data, _ := source["data"].(string)
+		texts = append(texts, data)
+	case "content":
+		// The content is a string or a list of content blocks.
+		if content, ok := source["content"].(string); ok {
+			texts = append(texts, content)
+		}
+		blocks, _ := source["content"].([]any)
+		for _, block := range blocks {
+			if item, _ := block.(map[string]any); item["type"] == "text" {
+				text, _ := item["text"].(string)
+				texts = append(texts, text)
+			}
+		}
+	}
+	return texts
 }
 
 // EnforceContentSafety is the AI review tier. It runs after pre-consume, so
