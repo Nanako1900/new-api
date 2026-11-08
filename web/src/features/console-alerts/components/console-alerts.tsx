@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { MAIN_CONTENT_ID } from '@/components/layout/constants'
 import { RichContent } from '@/components/rich-content'
 import {
   Alert,
@@ -29,8 +30,6 @@ import type { ConsoleAlert } from '../types'
 
 const ALERTS_STALE_TIME_MS = 60 * 1000
 const ALERTS_REFETCH_INTERVAL_MS = 5 * 60 * 1000
-/** Console main landmark set in AuthenticatedLayout; also the SkipToMain target. */
-const MAIN_CONTENT_ID = 'content'
 
 /**
  * Live site alerts pinned above every signed-in console page. Failed fetches

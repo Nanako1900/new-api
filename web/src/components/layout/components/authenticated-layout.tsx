@@ -29,6 +29,7 @@ import { getCookie } from '@/lib/cookies'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { MAIN_CONTENT_ID } from '../constants'
 import { AppHeader } from './app-header'
 import { AppSidebar } from './app-sidebar'
 
@@ -52,16 +53,14 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
           <div className='flex min-h-0 w-full flex-1'>
             <AppSidebar />
             <SidebarInset
-              id='content'
-              tabIndex={-1}
               className={cn(
-                'outline-none',
                 '@container/content',
                 'h-[calc(100svh-var(--app-header-height,0px))]',
                 'min-h-0 overflow-hidden',
                 'peer-data-[variant=inset]:h-[calc(100svh-var(--app-header-height,0px)-(var(--spacing)*4))]'
               )}
             >
+              <div id={MAIN_CONTENT_ID} tabIndex={-1} className='sr-only' />
               <ConsoleAlerts />
               {props.children ?? <AnimatedOutlet />}
             </SidebarInset>

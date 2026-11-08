@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, expect, test, vi } from 'vitest'
 
+import { MAIN_CONTENT_ID } from '@/components/layout/constants'
 import { api } from '@/lib/api'
 import { createAppQueryClient } from '@/lib/query-client'
 import { useAlertDismissalStore } from '@/stores/alert-dismissal-store'
@@ -196,7 +197,7 @@ test('dismissing with the keyboard moves focus to the next dismiss button', asyn
   expect(screen.getByRole('button', { name: 'Dismiss alert' })).toHaveFocus()
 })
 
-test('dismissing the last alert moves focus to the main content', async () => {
+test('dismissing the last alert moves focus to the main content target', async () => {
   const user = userEvent.setup()
   mockAlerts([makeAlert()])
   const client = new QueryClient({
@@ -205,7 +206,11 @@ test('dismissing the last alert moves focus to the main content', async () => {
   render(
     <QueryClientProvider client={client}>
       <ConsoleAlerts />
-      <main id='content' tabIndex={-1} />
+      <div
+        id={MAIN_CONTENT_ID}
+        tabIndex={-1}
+        data-testid='main-content-target'
+      />
     </QueryClientProvider>
   )
 
@@ -216,7 +221,7 @@ test('dismissing the last alert moves focus to the main content', async () => {
   await user.keyboard('{Enter}')
 
   expect(screen.queryByText('Maintenance')).not.toBeInTheDocument()
-  expect(screen.getByRole('main')).toHaveFocus()
+  expect(screen.getByTestId('main-content-target')).toHaveFocus()
 })
 
 test('a dismissed alert shows again when it is made non-dismissible', async () => {
