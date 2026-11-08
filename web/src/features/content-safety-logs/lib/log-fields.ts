@@ -26,10 +26,15 @@ import type {
 /**
  * Reads a JSON-encoded string array stored in a log column (`hit_words`,
  * `snippets`). Text that is not a JSON array is returned as the only entry,
- * so a damaged record still shows what was stored. Empty, non-string and
- * repeated entries are dropped.
+ * so a damaged record still shows what was stored; JSON `null` is an empty
+ * list. Empty, whitespace-only and non-string entries are dropped. Repeated
+ * entries are kept unless `unique` is set, which hit words use and snippets
+ * do not.
  */
-export function parseStringList(raw: string | null | undefined): string[] {
+export function parseStringList(
+  raw: string | null | undefined,
+  options?: { unique?: boolean }
+): string[] {
   const text = (raw ?? '').trim()
   if (!text) return []
   let parsed: unknown
@@ -38,11 +43,12 @@ export function parseStringList(raw: string | null | undefined): string[] {
   } catch {
     return [text]
   }
+  if (parsed === null) return []
   if (!Array.isArray(parsed)) return [text]
   const entries = parsed.filter(
-    (item): item is string => typeof item === 'string' && item !== ''
+    (item): item is string => typeof item === 'string' && item.trim() !== ''
   )
-  return [...new Set(entries)]
+  return options?.unique ? [...new Set(entries)] : entries
 }
 
 export function isContentSafetyDecision(
@@ -59,8 +65,16 @@ export function decisionPresentation(decision: string): DecisionPresentation {
   return { labelKey: decision, variant: 'neutral' }
 }
 
+export function isContentSafetyFailureReason(
+  value: string
+): value is ContentSafetyFailureReason {
+  return Object.hasOwn(FAILURE_REASON_LABEL_KEYS, value)
+}
+
 /** Label key of a failure reason; unknown values keep their text. */
 export function failureReasonLabelKey(reason: string): string {
-  if (!Object.hasOwn(FAILURE_REASON_LABEL_KEYS, reason)) return reason
-  return FAILURE_REASON_LABEL_KEYS[reason as ContentSafetyFailureReason]
+  if (isContentSafetyFailureReason(reason)) {
+    return FAILURE_REASON_LABEL_KEYS[reason]
+  }
+  return reason
 }

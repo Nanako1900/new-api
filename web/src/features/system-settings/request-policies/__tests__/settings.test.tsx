@@ -194,22 +194,26 @@ afterEach(() => {
 })
 
 describe('request policy settings', () => {
-  it.each([
-    ['retry', 'Save Changes'],
-    ['health', 'Save Changes'],
-    ['filtering', 'Save sensitive words'],
-    ['affinity', 'Save Changes'],
-  ])(
+  it.each(['retry', 'health', 'filtering', 'affinity'])(
     'opening %s and saving unchanged values does not write options',
-    async (section, saveLabel) => {
+    async (section) => {
       await renderPolicies(`/system-settings/request-policies/${section}`)
-      const save = await screen.findByRole('button', { name: saveLabel })
-      expect(api.put).not.toHaveBeenCalled()
+      const save = await screen.findByRole('button', { name: 'Save Changes' })
+      expect(api.patch).not.toHaveBeenCalled()
       await userEvent.click(save)
       await waitFor(() => expect(save).toBeEnabled())
-      expect(api.put).not.toHaveBeenCalled()
+      expect(api.patch).not.toHaveBeenCalled()
     }
   )
+
+  it('saving request checks whose stored review model has surrounding spaces without edits writes nothing', async () => {
+    settings['content_safety_setting.review_model'] = ' judge-model '
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const save = await screen.findByRole('button', { name: 'Save Changes' })
+    await userEvent.click(save)
+    await waitFor(() => expect(save).toBeEnabled())
+    expect(api.patch).not.toHaveBeenCalled()
+  })
 
   it.each([
     [
@@ -249,9 +253,7 @@ describe('request policy settings', () => {
     expect(screen.getByRole('textbox', { name: 'Block words' })).toHaveValue(
       'blocked'
     )
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save sensitive words' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(api.patch).toHaveBeenCalledExactlyOnceWith(
         '/api/option/request_policy',
@@ -281,9 +283,7 @@ describe('request policy settings', () => {
       }),
       { target: { value: '45' } }
     )
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save sensitive words' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(api.patch).toHaveBeenCalledExactlyOnceWith(
         '/api/option/request_policy',
@@ -325,9 +325,7 @@ describe('request policy settings', () => {
     await userEvent.click(
       await screen.findByRole('switch', { name: 'Enable AI review' })
     )
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save sensitive words' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(
         screen.getByRole('textbox', { name: 'Review words' })
@@ -338,6 +336,11 @@ describe('request policy settings', () => {
     ).toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByText('Enter at least one review word')).toBeVisible()
     expect(screen.getByText('Select a review model')).toBeVisible()
+    const modelInput = screen.getByRole('combobox', { name: 'Review model' })
+    expect(modelInput).toHaveAccessibleDescription(
+      expect.stringContaining('Select a review model')
+    )
+    expect(modelInput).toHaveFocus()
     expect(api.patch).not.toHaveBeenCalled()
   })
 
@@ -356,9 +359,7 @@ describe('request policy settings', () => {
       screen.getByRole('spinbutton', { name: 'Review timeout (seconds)' }),
       { target: { value: '20' } }
     )
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save sensitive words' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(api.patch).toHaveBeenCalledExactlyOnceWith(
         '/api/option/request_policy',
@@ -384,12 +385,74 @@ describe('request policy settings', () => {
       name: 'Review timeout (seconds)',
     })
     fireEvent.change(timeout, { target: { value: '61' } })
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save sensitive words' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => expect(timeout).toHaveAttribute('aria-invalid', 'true'))
     expect(screen.getByText('Enter an integer from 1 to 60')).toBeVisible()
     expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('an invalid option revealed by saving stays open and focused while it is corrected', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    expect(
+      await screen.findByRole('switch', { name: 'Enable AI review' })
+    ).not.toBeChecked()
+    // The timeout is invalid while AI review is off, so saving must open the
+    // group that holds it and focus the field.
+    await userEvent.click(
+      screen.getByRole('switch', { name: 'Enable AI review' })
+    )
+    const timeout = screen.getByRole('spinbutton', {
+      name: 'Review timeout (seconds)',
+    })
+    fireEvent.change(timeout, { target: { value: '61' } })
+    await userEvent.click(
+      screen.getByRole('switch', { name: 'Enable AI review' })
+    )
+    expect(
+      screen.queryByRole('group', { name: 'AI review options' })
+    ).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    const options = await screen.findByRole('group', {
+      name: 'AI review options',
+    })
+    const invalid = within(options).getByRole('spinbutton', {
+      name: 'Review timeout (seconds)',
+    })
+    await waitFor(() => expect(invalid).toHaveFocus())
+    expect(invalid).toHaveAttribute('aria-invalid', 'true')
+    expect(api.patch).not.toHaveBeenCalled()
+
+    fireEvent.change(invalid, { target: { value: '20' } })
+    await waitFor(() =>
+      expect(invalid).toHaveAttribute('aria-invalid', 'false')
+    )
+
+    expect(
+      screen.getByRole('group', { name: 'AI review options' })
+    ).toBeVisible()
+    expect(invalid).toHaveFocus()
+    expect(invalid).toHaveValue(20)
+  })
+
+  it('numeric review options state their allowed range from one shared message', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('switch', { name: 'Enable AI review' })
+    )
+    expect(screen.getByText(/Allowed range: 1–60/)).toBeVisible()
+    expect(screen.getByText(/Allowed range: 0–604800/)).toBeVisible()
+    expect(screen.getByText(/Allowed range: 1–3650/)).toBeVisible()
+  })
+
+  it('the AI review notes are one static note, not a live alert', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('switch', { name: 'Enable AI review' })
+    )
+    const options = screen.getByRole('group', { name: 'AI review options' })
+    expect(within(options).queryByRole('alert')).not.toBeInTheDocument()
+    expect(within(options).getByText(/fails closed/)).toBeVisible()
+    expect(within(options).getByText(/prompt injection/)).toBeVisible()
   })
 
   it('changing only the review words still sends the review switch and group', async () => {
@@ -401,9 +464,7 @@ describe('request policy settings', () => {
       await screen.findByRole('textbox', { name: 'Review words' }),
       { target: { value: 'knife\ngun' } }
     )
-    await userEvent.click(
-      screen.getByRole('button', { name: 'Save sensitive words' })
-    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(api.patch).toHaveBeenCalledExactlyOnceWith(
         '/api/option/request_policy',

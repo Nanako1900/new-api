@@ -30,14 +30,27 @@ describe('parseStringList', () => {
     ['an empty value', '', []],
     ['an empty JSON array', '[]', []],
     [
-      'an array with repeated, empty and non-string entries',
-      '["knife",1,"knife",null,""]',
-      ['knife'],
+      'an array with empty, whitespace-only and non-string entries',
+      '["knife",1," ",null,"","gun"]',
+      ['knife', 'gun'],
     ],
+    ['JSON null', 'null', []],
     ['invalid JSON', '["knife"', ['["knife"']],
     ['JSON that is not an array', '{"word":"knife"}', ['{"word":"knife"}']],
   ])('turns %s into the stored entries', (_case, raw, expected) => {
     expect(parseStringList(raw)).toEqual(expected)
+  })
+})
+
+describe('parseStringList repeated entries', () => {
+  const raw = '["knife","knife","gun"]'
+
+  it('keeps repeated entries by default so every snippet shows', () => {
+    expect(parseStringList(raw)).toEqual(['knife', 'knife', 'gun'])
+  })
+
+  it('drops repeated entries when unique is requested for hit words', () => {
+    expect(parseStringList(raw, { unique: true })).toEqual(['knife', 'gun'])
   })
 })
 
@@ -47,6 +60,14 @@ describe('content safety labels', () => {
       labelKey: 'future_decision',
       variant: 'neutral',
     })
+  })
+
+  it('a client canceled failure has its own label', () => {
+    expect(failureReasonLabelKey('client_canceled')).toBe('Client canceled')
+  })
+
+  it('an inherited object key is not treated as a failure reason', () => {
+    expect(failureReasonLabelKey('toString')).toBe('toString')
   })
 
   it('an unknown failure reason keeps its raw text', () => {

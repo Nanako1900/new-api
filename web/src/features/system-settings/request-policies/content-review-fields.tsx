@@ -17,10 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useFormContext, useFormState, useWatch } from 'react-hook-form'
+import { useEffect, useMemo } from 'react'
+import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Combobox } from '@/components/ui/combobox'
 import {
   FormControl,
@@ -57,23 +57,49 @@ type ReviewNumberField = {
   description: string
 }
 
-export function ContentReviewFields() {
+// DOM order of the options, used to focus the first invalid one.
+type ReviewOptionName = keyof RequestChecksFormValues['content_safety_setting']
+
+const REVIEW_OPTION_ORDER: readonly ReviewOptionName[] = [
+  'review_model',
+  'review_group',
+  'review_words',
+  'review_prompt',
+  'review_timeout_seconds',
+  'review_max_concurrency',
+  'review_rate_limit_per_minute',
+  'window_chars',
+  'max_windows',
+  'cache_ttl_seconds',
+]
+
+type ContentReviewFieldsProps = {
+  // True after a save was refused because of an invalid value; keeps the
+  // options open while the value is corrected.
+  revealed: boolean
+}
+
+export function ContentReviewFields(props: ContentReviewFieldsProps) {
   const { t } = useTranslation()
   const form = useFormContext<RequestChecksFormValues>()
   const reviewEnabled = useWatch({
     control: form.control,
     name: 'content_safety_setting.review_enabled',
   })
-  const { errors } = useFormState({
-    control: form.control,
-    name: 'content_safety_setting',
-  })
-  // Log retention is shown outside this group. Any other invalid option keeps
-  // the group open, so a value typed before switching AI review off cannot
-  // block saving without a visible message.
-  const hasOptionError = Object.keys(errors.content_safety_setting ?? {}).some(
-    (key) => key !== 'log_retention_days'
-  )
+  const open = reviewEnabled || props.revealed
+
+  // The group was not mounted when the form tried to focus the invalid
+  // field, so focus it once the group is open.
+  useEffect(() => {
+    if (!props.revealed) return
+    const invalid = REVIEW_OPTION_ORDER.find(
+      (key) => form.getFieldState(`content_safety_setting.${key}`).invalid
+    )
+    if (invalid) {
+      form.setFocus(`content_safety_setting.${invalid}`)
+    }
+    // Only the moment the group opens matters, not later error changes.
+  }, [props.revealed, form])
 
   return (
     <SettingsControlGroup>
@@ -96,7 +122,7 @@ export function ContentReviewFields() {
           </SettingsSwitchItem>
         )}
       />
-      {(reviewEnabled || hasOptionError) && (
+      {open && (
         <SettingsControlChildren
           role='group'
           aria-label={t('AI review options')}
@@ -120,69 +146,62 @@ function ReviewOptionFields() {
     queryKey: ['groups'],
     queryFn: async () => requireServerSuccess(await getGroups()),
   })
-  const modelOptions = (models.data?.data ?? []).map((model) => ({
-    value: model,
-    label: model,
-  }))
-  const groupOptions = (groups.data?.data ?? []).map((group) => ({
-    value: group,
-    label: group,
-  }))
+  const modelOptions = useMemo(
+    () =>
+      (models.data?.data ?? []).map((model) => ({
+        value: model,
+        label: model,
+      })),
+    [models.data]
+  )
+  const groupOptions = useMemo(
+    () =>
+      (groups.data?.data ?? []).map((group) => ({
+        value: group,
+        label: group,
+      })),
+    [groups.data]
+  )
   const numberFields: ReviewNumberField[] = [
     {
       name: 'review_timeout_seconds',
       label: t('Review timeout (seconds)'),
-      description: t('Includes waiting for a free review slot (1-60).'),
+      description: t('Includes waiting for a free review slot.'),
     },
     {
       name: 'review_max_concurrency',
       label: t('Maximum concurrent reviews'),
-      description: t(
-        'Reviews running at the same time on each server node (1-256).'
-      ),
+      description: t('Reviews running at the same time on each server node.'),
     },
     {
       name: 'review_rate_limit_per_minute',
       label: t('Reviews per user per minute'),
-      description: t('Cached verdicts do not count (1-10000).'),
+      description: t('Cached verdicts do not count.'),
     },
     {
       name: 'window_chars',
       label: t('Context characters'),
-      description: t(
-        'Characters reviewed before and after each match (50-2000).'
-      ),
+      description: t('Characters reviewed before and after each match.'),
     },
     {
       name: 'max_windows',
       label: t('Maximum review windows'),
-      description: t(
-        'Requests with more text windows to review are rejected (1-100).'
-      ),
+      description: t('Requests with more text windows to review are rejected.'),
     },
     {
       name: 'cache_ttl_seconds',
       label: t('Verdict cache lifetime (seconds)'),
-      description: t('Set to 0 to disable the cache (0-604800).'),
+      description: t('Set to 0 to disable the cache.'),
     },
   ]
 
   return (
     <>
-      <Alert>
-        <AlertDescription>
-          {t(
-            'AI review fails closed: if the review times out, no review channel is available, or the answer cannot be read, the request is rejected with HTTP 503.'
-          )}
-        </AlertDescription>
-      </Alert>
-      <Alert>
-        <AlertDescription>
-          {t(
-            'Request content can try to manipulate the review model through prompt injection. Choose a model that is robust against it.'
-          )}
-        </AlertDescription>
-      </Alert>
+      <p className='text-muted-foreground text-sm'>
+        {t(
+          'AI review fails closed: if the review times out, no review channel is available, or the answer cannot be read, the request is rejected with HTTP 503. Request content can try to manipulate the review model through prompt injection, so choose a model that is robust against it.'
+        )}
+      </p>
       <SettingsFormGrid>
         <FormField
           control={form.control}
@@ -196,6 +215,8 @@ function ReviewOptionFields() {
                   allowCustomValue
                   value={field.value}
                   onValueChange={(value) => field.onChange(value ?? '')}
+                  ref={field.ref}
+                  onBlur={field.onBlur}
                   aria-label={t('Review model')}
                   placeholder={t('Select or enter a model')}
                   emptyText={t('No models found')}
@@ -220,6 +241,8 @@ function ReviewOptionFields() {
                   options={groupOptions}
                   value={field.value}
                   onValueChange={(value) => field.onChange(value ?? '')}
+                  ref={field.ref}
+                  onBlur={field.onBlur}
                   aria-label={t('Review group')}
                   placeholder={t('Select a group')}
                   emptyText={t('No group found.')}
@@ -294,7 +317,13 @@ function ReviewOptionFields() {
                     {...safeNumberFieldProps(field)}
                   />
                 </FormControl>
-                <FormDescription>{item.description}</FormDescription>
+                <FormDescription>
+                  {item.description}{' '}
+                  {t(
+                    'Allowed range: {{min}}–{{max}}',
+                    CONTENT_SAFETY_INT_LIMITS[item.name]
+                  )}
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}

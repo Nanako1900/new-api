@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useMemo } from 'react'
-import { useForm } from 'react-hook-form'
+import { useEffect, useMemo, useState } from 'react'
+import { useForm, useWatch, type Control } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -64,6 +64,29 @@ type RequestChecksSectionProps = {
   defaultValues: RequestChecksSettings
 }
 
+function PromptFilteringStatus(props: {
+  control: Control<RequestChecksFormValues>
+}) {
+  const { t } = useTranslation()
+  const values = useWatch({ control: props.control })
+  const active =
+    !!values.CheckSensitiveEnabled &&
+    !!values.CheckSensitiveOnPromptEnabled &&
+    ((values.SensitiveWords ?? '').trim() !== '' ||
+      !!values.content_safety_setting?.review_enabled)
+  return (
+    <Alert>
+      <AlertDescription>
+        {active
+          ? t('Prompt text filtering is active with the current form values.')
+          : t(
+              'Prompt text filtering needs both switches enabled and a non-empty block word list or AI review.'
+            )}
+      </AlertDescription>
+    </Alert>
+  )
+}
+
 export function RequestChecksSection(props: RequestChecksSectionProps) {
   const { t } = useTranslation()
   const updateOption = useSavePolicy()
@@ -79,6 +102,15 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
   // Refreshing another policy passes equal values again; only a real change
   // of the saved values resets unsaved edits.
   useResetForm(form, formDefaults)
+  // An invalid save opens the AI review options even while review is off, so
+  // the error is visible. They stay open until the saved values change or a
+  // save succeeds, which keeps the field being corrected from disappearing.
+  const [optionsRevealed, setOptionsRevealed] = useState(false)
+  useEffect(() => {
+    setOptionsRevealed(false)
+  }, [formDefaults])
+
+  const onInvalid = () => setOptionsRevealed(true)
 
   const onSubmit = async (values: RequestChecksFormValues) => {
     const saved = requestChecksOptions(formDefaults)
@@ -98,16 +130,11 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
     }
     try {
       await updateOption.mutateAsync(updates)
+      setOptionsRevealed(false)
     } catch (error) {
       handleServerError(error)
     }
   }
-
-  const promptFilteringActive =
-    form.watch('CheckSensitiveEnabled') &&
-    form.watch('CheckSensitiveOnPromptEnabled') &&
-    (form.watch('SensitiveWords').trim() !== '' ||
-      form.watch('content_safety_setting.review_enabled'))
 
   return (
     <SettingsSection title={t('Request checks')}>
@@ -121,23 +148,13 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
         )}
       </p>
       <Form {...form}>
-        <SettingsForm onSubmit={form.handleSubmit(onSubmit)}>
+        <SettingsForm onSubmit={form.handleSubmit(onSubmit, onInvalid)}>
           <SettingsPageFormActions
-            onSave={form.handleSubmit(onSubmit)}
+            onSave={form.handleSubmit(onSubmit, onInvalid)}
             isSaving={form.formState.isSubmitting}
-            saveLabel='Save sensitive words'
+            saveLabel='Save Changes'
           />
-          <Alert>
-            <AlertDescription>
-              {promptFilteringActive
-                ? t(
-                    'Prompt text filtering is active with the current form values.'
-                  )
-                : t(
-                    'Prompt text filtering needs both switches enabled and a non-empty block word list or AI review.'
-                  )}
-            </AlertDescription>
-          </Alert>
+          <PromptFilteringStatus control={form.control} />
           <SettingsControlGroup>
             <FormField
               control={form.control}
@@ -212,7 +229,7 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
             )}
           />
 
-          <ContentReviewFields />
+          <ContentReviewFields revealed={optionsRevealed} />
 
           <FormField
             control={form.control}
@@ -233,7 +250,11 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
                 </FormControl>
                 <FormDescription>
                   {t(
-                    'Block and review records older than this are deleted once a day (1-3650).'
+                    'Block and review records older than this are deleted once a day.'
+                  )}{' '}
+                  {t(
+                    'Allowed range: {{min}}–{{max}}',
+                    CONTENT_SAFETY_INT_LIMITS.log_retention_days
                   )}
                 </FormDescription>
                 <FormMessage />
