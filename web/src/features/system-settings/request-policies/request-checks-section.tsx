@@ -18,7 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useEffect, useMemo, useState } from 'react'
-import { useForm, useWatch, type Control } from 'react-hook-form'
+import {
+  useForm,
+  useWatch,
+  type Control,
+  type FieldErrors,
+} from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -34,6 +39,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 
 import {
@@ -68,12 +75,17 @@ function PromptFilteringStatus(props: {
   control: Control<RequestChecksFormValues>
 }) {
   const { t } = useTranslation()
-  const values = useWatch({ control: props.control })
+  const [filtering, promptInspection, words, reviewEnabled] = useWatch({
+    control: props.control,
+    name: [
+      'CheckSensitiveEnabled',
+      'CheckSensitiveOnPromptEnabled',
+      'SensitiveWords',
+      'content_safety_setting.review_enabled',
+    ],
+  })
   const active =
-    !!values.CheckSensitiveEnabled &&
-    !!values.CheckSensitiveOnPromptEnabled &&
-    ((values.SensitiveWords ?? '').trim() !== '' ||
-      !!values.content_safety_setting?.review_enabled)
+    filtering && promptInspection && (words.trim() !== '' || reviewEnabled)
   return (
     <Alert>
       <AlertDescription>
@@ -88,9 +100,13 @@ function PromptFilteringStatus(props: {
 }
 
 export function RequestChecksSection(props: RequestChecksSectionProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const updateOption = useSavePolicy()
-  const schema = useMemo(() => createRequestChecksSchema(t), [t])
+  const schema = useMemo(
+    () => createRequestChecksSchema(t, locale),
+    [t, locale]
+  )
   const formDefaults = useMemo(
     () => requestChecksFormValues(props.defaultValues),
     [props.defaultValues]
@@ -106,13 +122,21 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
   // the error is visible. They stay open until the saved values change or a
   // save succeeds, which keeps the field being corrected from disappearing.
   const [optionsRevealed, setOptionsRevealed] = useState(false)
+  const formDefaultsKey = JSON.stringify(formDefaults)
   useEffect(() => {
     setOptionsRevealed(false)
-  }, [formDefaults])
+  }, [formDefaultsKey])
 
-  const onInvalid = () => setOptionsRevealed(true)
+  const onInvalid = (errors: FieldErrors<RequestChecksFormValues>) => {
+    const reviewErrors = Object.keys(errors.content_safety_setting ?? {})
+    if (reviewErrors.some((key) => key !== 'log_retention_days')) {
+      setOptionsRevealed(true)
+    }
+  }
 
   const onSubmit = async (values: RequestChecksFormValues) => {
+    // A save with nothing to write still ends the reveal of an invalid save.
+    setOptionsRevealed(false)
     const saved = requestChecksOptions(formDefaults)
     const current = requestChecksOptions(values)
     const updates = Object.fromEntries(
@@ -130,7 +154,6 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
     }
     try {
       await updateOption.mutateAsync(updates)
-      setOptionsRevealed(false)
     } catch (error) {
       handleServerError(error)
     }
@@ -252,10 +275,16 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
                   {t(
                     'Block and review records older than this are deleted once a day.'
                   )}{' '}
-                  {t(
-                    'Allowed range: {{min}}–{{max}}',
-                    CONTENT_SAFETY_INT_LIMITS.log_retention_days
-                  )}
+                  {t('Allowed range: {{min}}–{{max}}', {
+                    min: formatNumber(
+                      CONTENT_SAFETY_INT_LIMITS.log_retention_days.min,
+                      locale
+                    ),
+                    max: formatNumber(
+                      CONTENT_SAFETY_INT_LIMITS.log_retention_days.max,
+                      locale
+                    ),
+                  })}
                 </FormDescription>
                 <FormMessage />
               </FormItem>

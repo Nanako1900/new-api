@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import type { TFunction } from 'i18next'
 import { z } from 'zod'
 
+import { formatNumber } from '@/lib/format'
+
 import type { ContentSafetySettings, FilteringSettings } from './defaults'
 
 export const CONTENT_SAFETY_OPTION_PREFIX = 'content_safety_setting.'
@@ -45,12 +47,15 @@ export type ContentSafetyIntField = keyof typeof CONTENT_SAFETY_INT_LIMITS
 
 export type RequestChecksSettings = FilteringSettings & ContentSafetySettings
 
-export function createRequestChecksSchema(t: TFunction) {
+export function createRequestChecksSchema(
+  t: TFunction,
+  locale: string | undefined
+) {
   const integerWithin = (field: ContentSafetyIntField) => {
     const limits = CONTENT_SAFETY_INT_LIMITS[field]
     const message = t('Enter an integer from {{min}} to {{max}}', {
-      min: limits.min,
-      max: limits.max,
+      min: formatNumber(limits.min, locale),
+      max: formatNumber(limits.max, locale),
     })
     return z
       .number()

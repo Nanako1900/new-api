@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -35,6 +35,8 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { getEnabledModels } from '@/features/channels/api'
 import { getGroups } from '@/features/users/api'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatNumber } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import {
@@ -57,21 +59,8 @@ type ReviewNumberField = {
   description: string
 }
 
-// DOM order of the options, used to focus the first invalid one.
-type ReviewOptionName = keyof RequestChecksFormValues['content_safety_setting']
-
-const REVIEW_OPTION_ORDER: readonly ReviewOptionName[] = [
-  'review_model',
-  'review_group',
-  'review_words',
-  'review_prompt',
-  'review_timeout_seconds',
-  'review_max_concurrency',
-  'review_rate_limit_per_minute',
-  'window_chars',
-  'max_windows',
-  'cache_ttl_seconds',
-]
+// One request-checks form per page, so a fixed id is unique.
+const REVIEW_NOTE_ID = 'content-review-note'
 
 type ContentReviewFieldsProps = {
   // True after a save was refused because of an invalid value; keeps the
@@ -87,19 +76,6 @@ export function ContentReviewFields(props: ContentReviewFieldsProps) {
     name: 'content_safety_setting.review_enabled',
   })
   const open = reviewEnabled || props.revealed
-
-  // The group was not mounted when the form tried to focus the invalid
-  // field, so focus it once the group is open.
-  useEffect(() => {
-    if (!props.revealed) return
-    const invalid = REVIEW_OPTION_ORDER.find(
-      (key) => form.getFieldState(`content_safety_setting.${key}`).invalid
-    )
-    if (invalid) {
-      form.setFocus(`content_safety_setting.${invalid}`)
-    }
-    // Only the moment the group opens matters, not later error changes.
-  }, [props.revealed, form])
 
   return (
     <SettingsControlGroup>
@@ -126,6 +102,7 @@ export function ContentReviewFields(props: ContentReviewFieldsProps) {
         <SettingsControlChildren
           role='group'
           aria-label={t('AI review options')}
+          aria-describedby={REVIEW_NOTE_ID}
           className='space-y-4'
         >
           <ReviewOptionFields />
@@ -136,7 +113,8 @@ export function ContentReviewFields(props: ContentReviewFieldsProps) {
 }
 
 function ReviewOptionFields() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const form = useFormContext<RequestChecksFormValues>()
   const models = useQuery({
     queryKey: ['enabled-models'],
@@ -197,7 +175,7 @@ function ReviewOptionFields() {
 
   return (
     <>
-      <p className='text-muted-foreground text-sm'>
+      <p id={REVIEW_NOTE_ID} className='text-muted-foreground text-sm'>
         {t(
           'AI review fails closed: if the review times out, no review channel is available, or the answer cannot be read, the request is rejected with HTTP 503. Request content can try to manipulate the review model through prompt injection, so choose a model that is robust against it.'
         )}
@@ -319,10 +297,16 @@ function ReviewOptionFields() {
                 </FormControl>
                 <FormDescription>
                   {item.description}{' '}
-                  {t(
-                    'Allowed range: {{min}}–{{max}}',
-                    CONTENT_SAFETY_INT_LIMITS[item.name]
-                  )}
+                  {t('Allowed range: {{min}}–{{max}}', {
+                    min: formatNumber(
+                      CONTENT_SAFETY_INT_LIMITS[item.name].min,
+                      locale
+                    ),
+                    max: formatNumber(
+                      CONTENT_SAFETY_INT_LIMITS[item.name].max,
+                      locale
+                    ),
+                  })}
                 </FormDescription>
                 <FormMessage />
               </FormItem>

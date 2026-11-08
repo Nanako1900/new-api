@@ -434,14 +434,89 @@ describe('request policy settings', () => {
     expect(invalid).toHaveValue(20)
   })
 
+  it('toggling Enable filtering while an invalid option is revealed keeps focus on the toggle', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const toggle = await screen.findByRole('switch', {
+      name: 'Enable AI review',
+    })
+    await userEvent.click(toggle)
+    const timeout = screen.getByRole('spinbutton', {
+      name: 'Review timeout (seconds)',
+    })
+    fireEvent.change(timeout, { target: { value: '61' } })
+    await userEvent.click(toggle)
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    const revealed = await screen.findByRole('spinbutton', {
+      name: 'Review timeout (seconds)',
+    })
+    await waitFor(() => expect(revealed).toHaveFocus())
+
+    const filtering = screen.getByRole('switch', { name: 'Enable filtering' })
+    await userEvent.click(filtering)
+
+    expect(filtering).toHaveFocus()
+  })
+
+  it('a save with nothing changed closes the options an invalid save revealed', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const toggle = await screen.findByRole('switch', {
+      name: 'Enable AI review',
+    })
+    await userEvent.click(toggle)
+    const timeout = screen.getByRole('spinbutton', {
+      name: 'Review timeout (seconds)',
+    })
+    fireEvent.change(timeout, { target: { value: '61' } })
+    await userEvent.click(toggle)
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    const revealed = await screen.findByRole('spinbutton', {
+      name: 'Review timeout (seconds)',
+    })
+
+    fireEvent.change(revealed, { target: { value: '15' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('group', { name: 'AI review options' })
+      ).not.toBeInTheDocument()
+    )
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('an invalid log retention does not open the AI review options', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const retention = await screen.findByRole('spinbutton', {
+      name: 'Content safety log retention (days)',
+    })
+    fireEvent.change(retention, { target: { value: '0' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(retention).toHaveAttribute('aria-invalid', 'true')
+    )
+    expect(
+      screen.queryByRole('group', { name: 'AI review options' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('the AI review options are described by the fail-closed note', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('switch', { name: 'Enable AI review' })
+    )
+    expect(
+      screen.getByRole('group', { name: 'AI review options' })
+    ).toHaveAccessibleDescription(expect.stringMatching(/fails closed/))
+  })
+
   it('numeric review options state their allowed range from one shared message', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
     await userEvent.click(
       await screen.findByRole('switch', { name: 'Enable AI review' })
     )
     expect(screen.getByText(/Allowed range: 1–60/)).toBeVisible()
-    expect(screen.getByText(/Allowed range: 0–604800/)).toBeVisible()
-    expect(screen.getByText(/Allowed range: 1–3650/)).toBeVisible()
+    expect(screen.getByText(/Allowed range: 0–604,800/)).toBeVisible()
+    expect(screen.getByText(/Allowed range: 1–3,650/)).toBeVisible()
   })
 
   it('the AI review notes are one static note, not a live alert', async () => {
