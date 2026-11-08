@@ -43,6 +43,21 @@ export const MEOW_SPLASH_FADE_MS = 250
 const FLIGHT_MS = 450
 const FLIGHT_EASING = 'cubic-bezier(0.5, 0, 0.15, 1)'
 
+/** Extra time to reach a target that moved during the flight. */
+const SETTLE_MS = 160
+
+/** Logo to cat: the cat fades in over the logo, then both rest a moment. */
+const MORPH_MS = 300
+const MORPH_REST_MS = 150
+
+/**
+ * Places a cat avatar so its head covers the logo's head. Both are drawn in
+ * 120 units: renderMeowAvatar (lib/meow-avatar) puts the head at
+ * translate(60 67) scale(0.92) translate(-60 -60), index.html the logo at
+ * translate(-4.6 -3.9) scale(1.08). Keep in sync with both.
+ */
+const CAT_OVER_LOGO = 'translate(0.17%, -6.1%) scale(1.174)'
+
 const PREVIEW_PARAM = 'meow-splash'
 const PREVIEW_DEFAULT_MS = 5000
 /** Stays under the 10s failsafe in index.html. */
@@ -61,44 +76,126 @@ export function readMeowSplashPreviewDelay(search: string): number {
   return Math.min(ms, PREVIEW_MAX_MS)
 }
 
+function isOnScreen(element: Element): boolean {
+  const rect = element.getBoundingClientRect()
+  return rect.width > 0 && rect.bottom > 0 && rect.top < window.innerHeight
+}
+
 /** The site logo in the public header, if it is loaded and on screen. */
 function findHeaderLogo(): HTMLImageElement | null {
   const logo = document.querySelector<HTMLImageElement>(
     'header img[alt="logo"]'
   )
   if (!logo || !logo.complete || logo.naturalWidth === 0) return null
-  const rect = logo.getBoundingClientRect()
-  if (rect.width === 0 || rect.bottom <= 0 || rect.top >= window.innerHeight) {
-    return null
-  }
-  return logo
+  return isOnScreen(logo) ? logo : null
 }
 
 /**
- * The splash logo shrinks into the header logo while the cover fades away.
- * Only transform and opacity animate, so the GPU keeps the flight smooth
- * while the app renders; the tile's corners scale down to the header logo's.
+ * The signed-in user's cat avatar in the header, if it is on screen. Cats
+ * are SVG data URLs (lib/meow-avatar); an uploaded photo is not, and keeps
+ * the logo flight. The avatar image only renders once it has loaded.
  */
-function flyIntoHeaderLogo(
+function findHeaderCatAvatar(): HTMLImageElement | null {
+  const avatars = document.querySelectorAll<HTMLImageElement>(
+    'header [data-slot="avatar-image"]'
+  )
+  for (const avatar of avatars) {
+    if (
+      avatar.complete &&
+      avatar.src.startsWith('data:image/svg+xml') &&
+      isOnScreen(avatar)
+    ) {
+      return avatar
+    }
+  }
+  return null
+}
+
+/** Plain fade-out, for when there is nothing on screen to fly into. */
+function fadeOut(splash: HTMLElement): void {
+  document.documentElement.classList.remove(SPLASH_ACTIVE_CLASS)
+  splash.classList.add('is-leaving')
+  window.setTimeout(() => splash.remove(), MEOW_SPLASH_FADE_MS)
+}
+
+/**
+ * Lands exactly on the target even if it moved during the flight, say when
+ * the page grew a scrollbar and a centred header shifted.
+ */
+function settleOnTarget(
+  tile: HTMLElement,
+  target: HTMLElement,
+  flown: { dx: number; dy: number; scale: number }
+): Promise<unknown> {
+  const now = tile.getBoundingClientRect()
+  const to = target.getBoundingClientRect()
+  if (now.width === 0) return Promise.resolve()
+  const offX = to.left + to.width / 2 - (now.left + now.width / 2)
+  const offY = to.top + to.height / 2 - (now.top + now.height / 2)
+  const ratio = to.width / now.width
+  if (
+    Math.abs(offX) < 0.5 &&
+    Math.abs(offY) < 0.5 &&
+    Math.abs(ratio - 1) < 0.01
+  ) {
+    return Promise.resolve()
+  }
+  return tile.animate(
+    [
+      {
+        transform: `translate(${flown.dx}px, ${flown.dy}px) scale(${flown.scale})`,
+      },
+      {
+        transform: `translate(${flown.dx + offX}px, ${flown.dy + offY}px) scale(${flown.scale * ratio})`,
+      },
+    ],
+    { duration: SETTLE_MS, easing: 'ease-out', fill: 'forwards' }
+  ).finished
+}
+
+/**
+ * The splash tile shrinks into the header logo or avatar while the cover
+ * fades away and the home hero rises. Only transform and opacity animate, so
+ * the GPU keeps the flight smooth while the app renders. A cat on the tile
+ * goes from covering the logo's head back to the avatar's own framing.
+ */
+function flyInto(
   splash: HTMLElement,
   tile: HTMLElement,
-  logo: HTMLImageElement
+  target: HTMLElement,
+  cat?: HTMLElement
 ): void {
-  const from = tile.getBoundingClientRect()
-  const to = logo.getBoundingClientRect()
-  const scale = to.width / from.width
-  const dx = to.left + to.width / 2 - (from.left + from.width / 2)
-  const dy = to.top + to.height / 2 - (from.top + from.height / 2)
+  // The cover keeps its width: a page scrollbar appearing mid-flight would
+  // otherwise narrow it and shift the tile.
+  splash.style.width = `${splash.getBoundingClientRect().width}px`
+  splash.style.right = 'auto'
 
+  const from = tile.getBoundingClientRect()
+  const to = target.getBoundingClientRect()
+  const flown = {
+    dx: to.left + to.width / 2 - (from.left + from.width / 2),
+    dy: to.top + to.height / 2 - (from.top + from.height / 2),
+    scale: to.width / from.width,
+  }
+
+  document.documentElement.classList.remove(SPLASH_ACTIVE_CLASS)
   splash.classList.remove('is-shown')
-  logo.style.visibility = 'hidden'
+  target.style.visibility = 'hidden'
+  const timing = {
+    duration: FLIGHT_MS,
+    easing: FLIGHT_EASING,
+    fill: 'forwards',
+  } as const
   const flight = tile.animate(
     [
       { transform: 'none' },
-      { transform: `translate(${dx}px, ${dy}px) scale(${scale})` },
+      {
+        transform: `translate(${flown.dx}px, ${flown.dy}px) scale(${flown.scale})`,
+      },
     ],
-    { duration: FLIGHT_MS, easing: FLIGHT_EASING, fill: 'forwards' }
+    timing
   )
+  cat?.animate([{ transform: CAT_OVER_LOGO }, { transform: 'none' }], timing)
   splash
     .querySelector('.meow-splash-bg')
     ?.animate([{ opacity: 1 }, { opacity: 0 }], {
@@ -115,16 +212,78 @@ function flyIntoHeaderLogo(
     })
 
   const land = () => {
-    logo.style.visibility = ''
+    target.style.visibility = ''
     splash.remove()
   }
-  flight.finished.then(land).catch(land)
+  flight.finished
+    .then(() => settleOnTarget(tile, target, flown))
+    .then(land)
+    .catch(land)
+}
+
+/** Flies the logo into the header logo, or fades out when it is not there. */
+function flyLogoOrFade(splash: HTMLElement, tile: HTMLElement): void {
+  const logo = findHeaderLogo()
+  if (logo) {
+    flyInto(splash, tile, logo)
+    return
+  }
+  fadeOut(splash)
+}
+
+/**
+ * A signed-in user with a cat avatar sees the logo turn into their cat: the
+ * cat fades in head on head while the logo fades out, rests a moment, then
+ * flies into the header avatar. Keeps the logo if the cat cannot be drawn.
+ */
+async function turnIntoCatThenFly(
+  splash: HTMLElement,
+  tile: HTMLElement,
+  avatar: HTMLImageElement
+): Promise<void> {
+  const cat = document.createElement('img')
+  cat.alt = ''
+  cat.src = avatar.src
+  cat.style.transform = CAT_OVER_LOGO
+  if (typeof cat.decode === 'function') {
+    try {
+      await cat.decode()
+    } catch {
+      flyLogoOrFade(splash, tile)
+      return
+    }
+  }
+
+  const face = document.createElement('div')
+  face.className = 'meow-splash-cat'
+  face.append(cat)
+  tile.append(face)
+  face.animate([{ opacity: 0 }, { opacity: 1 }], {
+    duration: MORPH_MS,
+    easing: 'ease-out',
+    fill: 'forwards',
+  })
+  tile.querySelector('svg')?.animate([{ opacity: 1 }, { opacity: 0 }], {
+    duration: MORPH_MS,
+    easing: 'ease-in',
+    fill: 'forwards',
+  })
+  await new Promise((resolve) => {
+    window.setTimeout(resolve, MORPH_MS + MORPH_REST_MS)
+  })
+
+  if (!avatar.isConnected || !isOnScreen(avatar)) {
+    fadeOut(splash)
+    return
+  }
+  flyInto(splash, tile, avatar, cat)
 }
 
 /**
  * Retires the splash once the app is ready. A splash that has not appeared
- * yet is dropped at once; one on screen first finishes its intro, then flies
- * its logo into the header, or fades out when that logo is not on screen.
+ * yet is dropped at once; one on screen first finishes its intro, then turns
+ * into the user's cat and flies into the header avatar, or flies its logo
+ * into the header logo, or fades out when neither is on screen.
  */
 export function dismissMeowSplash(): void {
   const splash = document.querySelector<HTMLElement>(SPLASH_SELECTOR)
@@ -149,17 +308,19 @@ export function dismissMeowSplash(): void {
   )
   window.setTimeout(() => {
     window.requestAnimationFrame(() => {
-      document.documentElement.classList.remove(SPLASH_ACTIVE_CLASS)
       const tile = splash.querySelector<HTMLElement>('.meow-splash-tile')
-      const logo = findHeaderLogo()
       const reduceMotion =
         window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-      if (tile && logo && !reduceMotion && typeof tile.animate === 'function') {
-        flyIntoHeaderLogo(splash, tile, logo)
+      if (!tile || reduceMotion || typeof tile.animate !== 'function') {
+        fadeOut(splash)
         return
       }
-      splash.classList.add('is-leaving')
-      window.setTimeout(() => splash.remove(), MEOW_SPLASH_FADE_MS)
+      const avatar = findHeaderCatAvatar()
+      if (!avatar) {
+        flyLogoOrFade(splash, tile)
+        return
+      }
+      turnIntoCatThenFly(splash, tile, avatar).catch(() => fadeOut(splash))
     })
   }, wait)
 }
