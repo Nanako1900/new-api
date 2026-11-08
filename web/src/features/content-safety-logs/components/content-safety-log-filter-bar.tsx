@@ -21,6 +21,7 @@ import { useId } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Combobox } from '@/components/ui/combobox'
+import { FieldError } from '@/components/ui/field'
 import { CompactDateTimeRangePicker } from '@/features/usage-logs/components/compact-date-time-range-picker'
 import {
   LogsFilterField,
@@ -35,16 +36,6 @@ import type {
   ContentSafetyLogFieldErrors,
   ContentSafetyLogFilters,
 } from '../types'
-
-// Shown under its input so it is also visible inside the mobile filter drawer.
-function FieldError(props: { id: string; message?: string }) {
-  if (!props.message) return null
-  return (
-    <p id={props.id} className='text-destructive mt-1 text-xs'>
-      {props.message}
-    </p>
-  )
-}
 
 export function ContentSafetyLogFilterBar(props: {
   table: Table<ContentSafetyLog>
@@ -119,7 +110,9 @@ export function ContentSafetyLogFilterBar(props: {
             props.onChange({ user_id: event.target.value.trim() || undefined })
           }
         />
-        <FieldError id={userIdErrorId} message={props.errors.user_id} />
+        <FieldError id={userIdErrorId} className='mt-1 text-xs'>
+          {props.errors.user_id}
+        </FieldError>
       </LogsFilterField>
       <LogsFilterField>
         <LogsFilterInput
@@ -136,7 +129,9 @@ export function ContentSafetyLogFilterBar(props: {
             })
           }
         />
-        <FieldError id={requestIdErrorId} message={props.errors.request_id} />
+        <FieldError id={requestIdErrorId} className='mt-1 text-xs'>
+          {props.errors.request_id}
+        </FieldError>
       </LogsFilterField>
       <LogsFilterField>
         <LogsFilterInput
@@ -149,7 +144,9 @@ export function ContentSafetyLogFilterBar(props: {
             props.onChange({ model: event.target.value.trim() || undefined })
           }
         />
-        <FieldError id={modelErrorId} message={props.errors.model} />
+        <FieldError id={modelErrorId} className='mt-1 text-xs'>
+          {props.errors.model}
+        </FieldError>
       </LogsFilterField>
     </>
   )

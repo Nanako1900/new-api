@@ -233,6 +233,9 @@ it('an invalid user ID is flagged on its input and linked to its message', async
   const message = await screen.findByText('User ID must be a positive integer')
   expect(input).toHaveAttribute('aria-invalid', 'true')
   expect(input.getAttribute('aria-describedby')).toBe(message.id)
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'User ID must be a positive integer'
+  )
 })
 
 it('a model filter is trimmed before it is sent', async () => {
@@ -326,4 +329,16 @@ it('keeps the previous rows on screen while a changed filter loads', async () =>
     })
   )
   expect(screen.getByRole('row', { name: /alice/ })).toBeVisible()
+})
+
+it('removes the previous rows and shows the empty state while a filter is invalid', async () => {
+  mockLogs([rejected])
+  renderTable()
+  await screen.findByRole('row', { name: /alice/ })
+  fireEvent.change(screen.getByRole('textbox', { name: 'User ID' }), {
+    target: { value: 'abc' },
+  })
+  await screen.findByText('User ID must be a positive integer')
+  expect(screen.queryByRole('row', { name: /alice/ })).not.toBeInTheDocument()
+  expect(screen.getByText('No records')).toBeVisible()
 })

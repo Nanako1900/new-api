@@ -80,9 +80,12 @@ export function ContentSafetyLogTable() {
   const columns = useContentSafetyLogColumns()
   const { table } = useDataTable({
     columns,
-    data: query.isError ? EMPTY_LOGS : (query.data?.items ?? EMPTY_LOGS),
+    data:
+      canQuery && !query.isError
+        ? (query.data?.items ?? EMPTY_LOGS)
+        : EMPTY_LOGS,
     getRowId: (entry) => entry.event_id,
-    totalCount: query.isError ? 0 : (query.data?.total ?? 0),
+    totalCount: canQuery && !query.isError ? (query.data?.total ?? 0) : 0,
     pagination: { pageIndex: filters.p - 1, pageSize: filters.page_size },
     onPaginationChange: (updater) => {
       if (query.isFetching || query.isError || !canQuery) return
