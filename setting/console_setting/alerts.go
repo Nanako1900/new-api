@@ -103,6 +103,9 @@ func GetActiveAlerts(now time.Time) []Alert {
 		if !alert.Enabled {
 			continue
 		}
+		if _, ok := alertLevelRank[alert.Level]; !ok {
+			continue
+		}
 		startsAt, startErr := parseAlertTime(alert.StartsAt)
 		endsAt, endErr := parseAlertTime(alert.EndsAt)
 		if startErr != nil || endErr != nil {

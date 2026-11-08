@@ -31,8 +31,12 @@ func TestValidateAlerts(t *testing.T) {
 			name:  "full alert with milliseconds and offsets is valid",
 			value: `[{"id":1,"title":"Maintenance","content":"Tonight","level":"warning","dismissible":true,"enabled":true,"startsAt":"2026-11-07T20:00:00.000Z","endsAt":"2026-11-08T07:00:00+08:00"}]`,
 		},
+		{name: "content of exactly 500 UTF-16 units is valid", value: `[{"id":1,"content":"` + strings.Repeat("😀", 250) + `","level":"info"}]`},
+		{name: "title of exactly 100 characters is valid", value: `[{"id":1,"title":"` + strings.Repeat("a", 100) + `","content":"c","level":"info"}]`},
+		{name: "exactly 20 alerts is valid", value: "[" + strings.Join(tooMany[:20], ",") + "]"},
 		{name: "malformed JSON", value: `{`, wantKey: "Invalid alerts format: {{error}}"},
 		{name: "more than 20 alerts", value: "[" + strings.Join(tooMany, ",") + "]", wantKey: "Alerts cannot exceed 20 entries"},
+		{name: "negative id", value: `[{"id":-1,"content":"c","level":"info"}]`, wantKey: "Alert #{{index}} has an invalid ID", wantIndex: 1},
 		{name: "zero id", value: `[{"id":0,"content":"c","level":"info"}]`, wantKey: "Alert #{{index}} has an invalid ID", wantIndex: 1},
 		{
 			name:      "duplicate id reports the second alert",
@@ -43,7 +47,7 @@ func TestValidateAlerts(t *testing.T) {
 		{name: "blank content", value: `[{"id":1,"content":"   ","level":"info"}]`, wantKey: "Alert #{{index}} is missing the content field", wantIndex: 1},
 		{
 			name:    "content over 500 UTF-16 units",
-			value:   `[{"id":1,"content":"` + strings.Repeat("字", 501) + `","level":"info"}]`,
+			value:   `[{"id":1,"content":"` + strings.Repeat("😀", 251) + `","level":"info"}]`,
 			wantKey: "Alert #{{index}} content cannot exceed 500 characters",
 		},
 		{
@@ -89,7 +93,8 @@ func TestGetActiveAlertsFiltersByScheduleAndSortsBySeverity(t *testing.T) {
 		{"id":5,"content":"no schedule","level":"success","enabled":true},
 		{"id":6,"content":"older warning","level":"warning","enabled":true,"endsAt":"2026-11-07T12:00:01Z"},
 		{"id":7,"content":"newer warning","level":"warning","enabled":true},
-		{"id":8,"content":"error","level":"error","enabled":true}
+		{"id":8,"content":"error","level":"error","enabled":true},
+		{"id":9,"content":"unknown level","level":"bogus","enabled":true}
 	]`
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 
