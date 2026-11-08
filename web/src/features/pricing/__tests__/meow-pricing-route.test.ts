@@ -16,14 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { expect, it, vi } from 'vitest'
+import { expect, it } from 'vitest'
 
 import { Route } from '@/routes/pricing/index'
 
 import { MeowPricing } from '../components/meow'
-
-// The same chart stub the other pricing tests use; vchart cannot load in jsdom.
-vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
 
 it('renders the MeowAPI price list on /pricing', () => {
   expect(Route.options.component).toBe(MeowPricing)
