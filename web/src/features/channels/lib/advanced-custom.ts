@@ -176,6 +176,14 @@ export const ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS: AdvancedCustomIncomingPathOp
       value: '/v1beta/models/{model}:batchEmbedContents',
       label: 'Gemini Batch Embed Contents',
     },
+    {
+      value: '/v1/tools/search',
+      label: 'DeepSeek Search',
+    },
+    {
+      value: '/v1/tools/fetch',
+      label: 'DeepSeek Fetch',
+    },
   ]
 
 const ADVANCED_CUSTOM_ROUTE_SUMMARY_LABELS: Record<string, string> = {
@@ -273,7 +281,12 @@ function createGeminiNativeRoutes(): AdvancedCustomRoute[] {
 }
 
 function createGatewayNativeRoutes(): AdvancedCustomRoute[] {
-  return ['/v1/alpha/search', '/v1/rerank'].map((path) => ({
+  return [
+    '/v1/alpha/search',
+    '/v1/rerank',
+    '/v1/tools/search',
+    '/v1/tools/fetch',
+  ].map((path) => ({
     incoming_path: path,
     upstream_path: path,
     converter: 'none',
