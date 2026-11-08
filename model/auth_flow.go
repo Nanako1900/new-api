@@ -32,8 +32,11 @@ const (
 	AuthFlowPurposeEmailBinding      = "email_binding"
 	AuthFlowPurposeEmailRegistration = "email_registration"
 	AuthFlowPurposePasswordReset     = "password_reset"
-	AuthFlowTokenBytes               = 32
-	AuthFlowDefaultCleanupRetention  = 24 * time.Hour
+	// AuthFlowPurposeMonitorCode is the one-time authorization code a
+	// dashboard session issues to the monitor console (SSO with PKCE).
+	AuthFlowPurposeMonitorCode      = "monitor_code"
+	AuthFlowTokenBytes              = 32
+	AuthFlowDefaultCleanupRetention = 24 * time.Hour
 )
 
 var (
@@ -120,6 +123,10 @@ func ValidateAuthSessionWithTx(tx *gorm.DB, identity AuthSessionIdentity) error 
 		return err
 	}
 	if session.Status != UserSessionStatusActive || session.RevokedAt != 0 || session.ExpiresAt <= time.Now().Unix() || session.UserAuthVersion != identity.UserAuthVersion || session.Version != identity.SessionVersion {
+		return ErrUserSessionInactive
+	}
+	// Authentication flows act for dashboard sessions only.
+	if session.Kind != UserSessionKindDashboard {
 		return ErrUserSessionInactive
 	}
 	return nil
@@ -211,6 +218,32 @@ func ClaimExternalAuthAssertionWithTx(tx *gorm.DB, purpose, assertion string, ex
 		return ErrAuthFlowConsumed
 	}
 	return nil
+}
+
+// authFlowIntentReplayed marks a consumed flow that was presented again.
+const authFlowIntentReplayed = "replayed"
+
+// MarkAuthFlowReplayed records that an already consumed flow was presented
+// again, so the request still redeeming it can see the replay.
+func MarkAuthFlowReplayed(token, purpose string) error {
+	if token == "" || purpose == "" {
+		return ErrAuthFlowInvalid
+	}
+	return applyAuthFlowMatch(DB.Model(&AuthFlow{}), token, AuthFlowMatch{Purpose: purpose}).
+		Where("consumed_at IS NOT NULL").
+		Update("intent", authFlowIntentReplayed).Error
+}
+
+// IsAuthFlowReplayed reports whether MarkAuthFlowReplayed was called for a
+// consumed flow.
+func IsAuthFlowReplayed(token, purpose string) (bool, error) {
+	if token == "" || purpose == "" {
+		return false, ErrAuthFlowInvalid
+	}
+	var count int64
+	err := applyAuthFlowMatch(DB.Model(&AuthFlow{}), token, AuthFlowMatch{Purpose: purpose, Intent: authFlowIntentReplayed}).
+		Count(&count).Error
+	return count > 0, err
 }
 
 // GetAuthFlow validates a flow without consuming it. Callers must still use

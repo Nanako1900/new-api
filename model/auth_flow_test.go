@@ -107,3 +107,24 @@ func TestConsumeAuthFlowWithActionRollsBackTogether(t *testing.T) {
 	assert.Nil(t, flow.ConsumedAt)
 	require.NoError(t, ClaimExternalAuthAssertion(AuthFlowPurposeTelegramAssertion, "assertion-a", time.Now().Add(time.Minute)))
 }
+
+func TestReplayedAuthFlowIsMarkedOnlyAfterConsumption(t *testing.T) {
+	truncateTables(t)
+	token, _, err := CreateAuthFlow(AuthFlowCreate{Purpose: AuthFlowPurposeMonitorCode, UserId: 7, SessionId: "parent", ExpiresAt: time.Now().Add(time.Minute)})
+	require.NoError(t, err)
+
+	require.NoError(t, MarkAuthFlowReplayed(token, AuthFlowPurposeMonitorCode))
+	replayed, err := IsAuthFlowReplayed(token, AuthFlowPurposeMonitorCode)
+	require.NoError(t, err)
+	assert.False(t, replayed, "an unused flow cannot be marked as replayed")
+
+	_, err = ConsumeAuthFlow(token, AuthFlowMatch{Purpose: AuthFlowPurposeMonitorCode})
+	require.NoError(t, err)
+	require.NoError(t, MarkAuthFlowReplayed(token, AuthFlowPurposeMonitorCode))
+	replayed, err = IsAuthFlowReplayed(token, AuthFlowPurposeMonitorCode)
+	require.NoError(t, err)
+	assert.True(t, replayed)
+	replayedElsewhere, err := IsAuthFlowReplayed(token, AuthFlowPurposeOAuth)
+	require.NoError(t, err)
+	assert.False(t, replayedElsewhere, "the mark is bound to the flow purpose")
+}

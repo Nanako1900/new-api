@@ -33,6 +33,7 @@ import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
 import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
+import { Route as authMonitorAuthorizeRouteImport } from './routes/(auth)/monitor/authorize'
 import { Route as authUserResetRouteImport } from './routes/(auth)/user/reset'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
@@ -191,6 +192,11 @@ const SetupIndexRoute = SetupIndexRouteImport.update({
   id: '/setup/',
   path: '/setup/',
   getParentRoute: () => rootRouteImport,
+} as any)
+const authMonitorAuthorizeRoute = authMonitorAuthorizeRouteImport.update({
+  id: '/monitor/authorize',
+  path: '/monitor/authorize',
+  getParentRoute: () => authRouteRoute,
 } as any)
 const authUserResetRoute = authUserResetRouteImport.update({
   id: '/user/reset',
@@ -445,6 +451,7 @@ export interface FileRoutesByFullPath {
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
+  '/monitor/authorize': typeof authMonitorAuthorizeRoute
   '/user/reset': typeof authUserResetRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
@@ -507,6 +514,7 @@ export interface FileRoutesByTo {
   '/pricing': typeof PricingIndexRoute
   '/rankings': typeof RankingsIndexRoute
   '/setup': typeof SetupIndexRoute
+  '/monitor/authorize': typeof authMonitorAuthorizeRoute
   '/user/reset': typeof authUserResetRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
@@ -573,6 +581,7 @@ export interface FileRoutesById {
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
+  '/(auth)/monitor/authorize': typeof authMonitorAuthorizeRoute
   '/(auth)/user/reset': typeof authUserResetRoute
   '/_authenticated/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/_authenticated/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
@@ -638,6 +647,7 @@ export interface FileRouteTypes {
     | '/pricing/'
     | '/rankings/'
     | '/setup/'
+    | '/monitor/authorize'
     | '/user/reset'
     | '/chat/$chatId'
     | '/dashboard/$section'
@@ -700,6 +710,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/rankings'
     | '/setup'
+    | '/monitor/authorize'
     | '/user/reset'
     | '/chat/$chatId'
     | '/dashboard/$section'
@@ -765,6 +776,7 @@ export interface FileRouteTypes {
     | '/pricing/'
     | '/rankings/'
     | '/setup/'
+    | '/(auth)/monitor/authorize'
     | '/(auth)/user/reset'
     | '/_authenticated/chat/$chatId'
     | '/_authenticated/dashboard/$section'
@@ -994,6 +1006,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/setup/'
       preLoaderRoute: typeof SetupIndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/(auth)/monitor/authorize': {
+      id: '/(auth)/monitor/authorize'
+      path: '/monitor/authorize'
+      fullPath: '/monitor/authorize'
+      preLoaderRoute: typeof authMonitorAuthorizeRouteImport
+      parentRoute: typeof authRouteRoute
     }
     '/(auth)/user/reset': {
       id: '/(auth)/user/reset'
@@ -1279,6 +1298,7 @@ interface authRouteRouteChildren {
   authResetRoute: typeof authResetRoute
   authSignInRoute: typeof authSignInRoute
   authSignUpRoute: typeof authSignUpRoute
+  authMonitorAuthorizeRoute: typeof authMonitorAuthorizeRoute
   authUserResetRoute: typeof authUserResetRoute
 }
 
@@ -1290,6 +1310,7 @@ const authRouteRouteChildren: authRouteRouteChildren = {
   authResetRoute: authResetRoute,
   authSignInRoute: authSignInRoute,
   authSignUpRoute: authSignUpRoute,
+  authMonitorAuthorizeRoute: authMonitorAuthorizeRoute,
   authUserResetRoute: authUserResetRoute,
 }
 
