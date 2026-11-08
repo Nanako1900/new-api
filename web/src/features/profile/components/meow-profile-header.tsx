@@ -74,7 +74,7 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
   if (props.loading) {
     return (
       <div className='flex flex-col gap-4'>
-        <Skeleton className='h-28 rounded-[22px]' />
+        <Skeleton className='h-[136px] rounded-[22px] sm:h-[168px]' />
         <div className='grid grid-cols-3 gap-3 sm:gap-4'>
           {['balance', 'usage', 'requests'].map((key) => (
             <Skeleton key={key} className='h-24 rounded-[20px]' />
@@ -96,24 +96,25 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
 
   return (
     <div className='flex flex-col gap-4'>
-      <div className='bg-meow-ink relative isolate overflow-hidden rounded-[22px] px-5 py-5 text-white sm:px-7 sm:py-6 dark:bg-[#25211C]'>
+      <div className='bg-meow-ink relative isolate overflow-hidden rounded-[22px] px-5 py-6 text-white sm:px-8 sm:py-8 dark:bg-[#25211C]'>
         <div
           aria-hidden='true'
-          className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-12 -z-10 h-44 w-60 rounded-full opacity-55 blur-[50px]'
+          className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-12 -z-10 h-52 w-72 rounded-full opacity-55 blur-[56px]'
         />
-        <div className='flex items-center gap-4'>
+        {/* The avatar leads the card; its corners follow the logo's (23%). */}
+        <div className='flex items-center gap-5 sm:gap-7'>
           <Button
             variant='ghost'
             aria-label={t('Change avatar')}
             title={t('Change avatar')}
             onClick={() => setAvatarEditorOpen(true)}
-            className='group/avatar-edit relative size-auto shrink-0 rounded-2xl p-0 hover:bg-transparent'
+            className='group/avatar-edit relative size-auto shrink-0 rounded-[23%] p-0 hover:bg-transparent'
           >
-            <Avatar className='size-14 rounded-2xl text-lg ring-2 ring-white/15 transition-transform group-hover/avatar-edit:scale-105 sm:size-16'>
-              <AvatarImage src={avatarUrl} alt='' className='rounded-2xl' />
+            <Avatar className='size-[88px] rounded-[23%] text-2xl ring-2 ring-white/15 transition-transform group-hover/avatar-edit:scale-[1.03] sm:size-[104px] sm:text-3xl'>
+              <AvatarImage src={avatarUrl} alt='' className='rounded-[23%]' />
               <AvatarFallback
                 delay={avatarUrl ? MEOW_AVATAR_FALLBACK_DELAY : undefined}
-                className='rounded-2xl font-bold text-white'
+                className='rounded-[23%] font-bold text-white'
                 style={getUserAvatarStyle(avatarName)}
               >
                 {getUserAvatarFallback(avatarName)}
@@ -121,9 +122,9 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
             </Avatar>
             <span
               aria-hidden='true'
-              className='bg-meow-orange text-meow-ink ring-meow-ink absolute -right-1 -bottom-1 grid size-6 place-items-center rounded-full ring-2 dark:ring-[#25211C]'
+              className='bg-meow-orange text-meow-ink ring-meow-ink absolute -right-1.5 -bottom-1.5 grid size-8 place-items-center rounded-full ring-[3px] dark:ring-[#25211C]'
             >
-              <Pencil className='size-3' />
+              <Pencil className='size-3.5' />
             </span>
           </Button>
           {avatarEditorOpen && (
@@ -135,11 +136,18 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
               onSaved={() => props.onProfileUpdate?.()}
             />
           )}
-          <div className='flex min-w-0 flex-1 flex-col gap-2'>
-            <div className='flex min-w-0 flex-wrap items-center gap-2'>
-              <h1 className='truncate text-2xl font-extrabold tracking-[-0.03em] sm:text-[1.75rem]'>
-                {displayName}
-              </h1>
+          <div className='flex min-w-0 flex-1 flex-col gap-1.5 sm:gap-2'>
+            <h1 className='truncate text-[1.625rem] leading-tight font-extrabold tracking-[-0.03em] sm:text-[2.125rem]'>
+              {displayName}
+            </h1>
+            <p className='flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-sm text-white/65'>
+              {details.map((detail) => (
+                <span key={detail} className='truncate'>
+                  {detail}
+                </span>
+              ))}
+            </p>
+            <div className='mt-1 flex min-w-0 flex-wrap items-center gap-2'>
               <StatusBadge
                 label={getRoleLabel(profile.role)}
                 variant='neutral'
@@ -153,13 +161,6 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
                 className={BADGE_ON_DARK}
               />
             </div>
-            <p className='flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-sm text-white/65'>
-              {details.map((detail) => (
-                <span key={detail} className='truncate'>
-                  {detail}
-                </span>
-              ))}
-            </p>
           </div>
         </div>
       </div>

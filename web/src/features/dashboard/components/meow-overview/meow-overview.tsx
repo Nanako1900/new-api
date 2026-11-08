@@ -34,21 +34,16 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useAnnouncements, useFAQ } from '../../hooks/use-status-data'
-import { greetingFor, healthBadge, splitAroundName } from '../../lib/meow-setup'
+import { healthBadge } from '../../lib/meow-setup'
 import { AnnouncementsPanel } from '../overview/announcements-panel'
 import { FAQPanel } from '../overview/faq-panel'
 import { MeowBalanceCard } from './meow-balance-card'
 import { MeowCheckinCard } from './meow-checkin-card'
 import { MeowInviteCard } from './meow-invite-card'
+import { MeowOverviewGreeting } from './meow-overview-greeting'
 import { MeowQuickSetup } from './meow-quick-setup'
 import { MeowRecentCalls } from './meow-recent-calls'
 import { MeowUsageTrend } from './meow-usage-trend'
-
-const GREETING_KEY = {
-  morning: 'Good morning, {{name}}',
-  afternoon: 'Good afternoon, {{name}}',
-  evening: 'Good evening, {{name}}',
-} as const
 
 const PROVIDER_LABEL = { claude: 'Claude', gpt: 'GPT' } as const
 
@@ -156,16 +151,6 @@ export function MeowOverview() {
   const { usage, isLoading } = useUsage24h()
 
   const checkinEnabled = status?.checkin_enabled === true
-  const now = new Date()
-  const name = user?.display_name || user?.username || ''
-  const greeting = splitAroundName((placeholder) =>
-    t(GREETING_KEY[greetingFor(now.getHours())], { name: placeholder })
-  )
-  const dateLine = new Intl.DateTimeFormat(locale, {
-    month: 'long',
-    day: 'numeric',
-    weekday: 'long',
-  }).format(now)
   const hasAnnouncements = announcements.items.length > 0
   const hasFaq = faq.items.length > 0
 
@@ -174,14 +159,7 @@ export function MeowOverview() {
       <div className='min-h-0 flex-1 overflow-auto px-4 pt-6 pb-8 sm:px-8 sm:pt-8'>
         <div className='mx-auto flex w-full max-w-[1440px] flex-col gap-5'>
           <header className='flex flex-wrap items-center justify-between gap-4'>
-            <div className='flex min-w-0 flex-col gap-1'>
-              <h1 className='truncate text-2xl font-extrabold tracking-[-0.03em] sm:text-[1.75rem]'>
-                {greeting.before}
-                <span className='text-meow-heading'>{name}</span>
-                {greeting.after}
-              </h1>
-              <span className='text-muted-foreground text-sm'>{dateLine}</span>
-            </div>
+            <MeowOverviewGreeting />
             <ProviderStatusPills />
           </header>
 
