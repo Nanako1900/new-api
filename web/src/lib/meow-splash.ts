@@ -233,8 +233,9 @@ function flyLogoOrFade(splash: HTMLElement, tile: HTMLElement): void {
 
 /**
  * A signed-in user with a cat avatar sees the logo turn into their cat: the
- * cat fades in head on head while the logo fades out, rests a moment, then
- * flies into the header avatar. Keeps the logo if the cat cannot be drawn.
+ * tile rounds into a circle as the cat fades in head on head and the logo
+ * fades out, rests a moment, then flies into the header avatar. Keeps the
+ * logo if the cat cannot be drawn.
  */
 async function turnIntoCatThenFly(
   splash: HTMLElement,
@@ -258,6 +259,17 @@ async function turnIntoCatThenFly(
   face.className = 'meow-splash-cat'
   face.append(cat)
   tile.append(face)
+  // The tile itself rounds into the avatar's circle while the logo turns
+  // into the cat, so both share one shape. clip-path rather than
+  // border-radius: Safari keeps it clipping the cat that moves inside.
+  const corner = getComputedStyle(tile).borderTopLeftRadius
+  tile.animate(
+    [
+      { clipPath: `inset(0 round ${corner})` },
+      { clipPath: `inset(0 round ${tile.offsetWidth / 2}px)` },
+    ],
+    { duration: MORPH_MS, easing: 'ease-in-out', fill: 'forwards' }
+  )
   face.animate([{ opacity: 0 }, { opacity: 1 }], {
     duration: MORPH_MS,
     easing: 'ease-out',

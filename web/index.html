@@ -121,15 +121,13 @@
         width: 100%;
         height: 100%;
       }
-      /* A signed-in user's cat, added by src/lib/meow-splash.ts: round like
-         the header avatar, it fades in over the logo before the flight. The
-         clip-path keeps the circle in Safari while the cat inside moves. */
+      /* A signed-in user's cat, added by src/lib/meow-splash.ts: it fills
+         the tile and fades in over the logo while the tile itself rounds
+         into the header avatar's circle, before the flight. */
       .meow-splash-cat {
         position: absolute;
         inset: 0;
         overflow: hidden;
-        border-radius: 50%;
-        clip-path: circle(50%);
         opacity: 0;
       }
       .meow-splash-cat img {
