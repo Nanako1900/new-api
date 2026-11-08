@@ -132,9 +132,12 @@ func TestParseVerdicts(t *testing.T) {
 	}
 }
 
-func TestCollectJSONTextSkipsInlineMedia(t *testing.T) {
+// Object keys are text a model reads too (a JSON Schema's property names, for
+// example), so each key is written before its value; only values can be media.
+func TestCollectJSONTextWritesKeysAndSkipsInlineMedia(t *testing.T) {
 	body := `{"prompt":"a cat","metadata":{"negative":"blur","tags":["x","y"]},"image":"data:image/png;base64,` + mediaPayload("\x89PNG\r\n\x1a\n", 300) + `","n":2}`
-	assert.Equal(t, "blur\nx\ny\na cat\n", contentsafety.CollectJSONText([]byte(body)))
+	assert.Equal(t, "image\nmetadata\nnegative\nblur\ntags\nx\ny\nn\nprompt\na cat\n", contentsafety.CollectJSONText([]byte(body)))
+	assert.Equal(t, "filters\nbomb\nquery\nhello\n", contentsafety.CollectJSONText([]byte(`{"query":"hello","filters":{"b\u006fmb":true}}`)), "an escaped key is decoded")
 	assert.Equal(t, "plain words", contentsafety.CollectJSONText([]byte("plain words")))
 }
 
@@ -329,7 +332,7 @@ func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body, err := common.Marshal(map[string]string{"v": tc.value})
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, contentsafety.CollectJSONText(body))
+			assert.Equal(t, "v\n"+tc.want, contentsafety.CollectJSONText(body))
 		})
 	}
 }

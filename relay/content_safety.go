@@ -49,15 +49,17 @@ type contentReview struct {
 // EnforceContentSafety runs after pre-consume.
 func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, text string) *types.NewAPIError {
 	// These formats count tokens over the raw request JSON, where an escape
-	// such as \u006f for "o" hides a word from the scan. Their decoded string
-	// values are scanned first, then the raw text, which also covers keys.
+	// such as \u006f for "o" hides a word from the scan. They are scanned
+	// decoded, keys included, and raw only where a part is not JSON. Scanning
+	// both would put every hit in two windows, which the verdict cache never
+	// stores.
 	if info != nil {
 		switch request := info.Request.(type) {
 		case *dto.OpenAIResponsesCompactionRequest:
 			// Instructions and input are two JSON values, each may span lines.
-			text = contentsafety.CollectJSONText(request.Instructions) + contentsafety.CollectJSONText(request.Input) + text
+			text = contentsafety.CollectJSONText(request.Instructions) + "\n" + contentsafety.CollectJSONText(request.Input)
 		case *dto.AlphaSearchRequest, *dto.DeepSeekToolsRequest:
-			text = contentsafety.CollectJSONText([]byte(text)) + text
+			text = contentsafety.CollectJSONText([]byte(text))
 		}
 	}
 	cfg := operation_setting.GetContentSafetySetting().Bounded()

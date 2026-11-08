@@ -218,6 +218,8 @@ func TestPrepareRequestBillingScansContentBeforePreConsume(t *testing.T) {
 		{name: "an escaped block word in a multi-line compaction input", format: types.RelayFormatOpenAIResponsesCompaction, request: &kitdto.OpenAIResponsesCompactionRequest{Model: "gpt-test", Instructions: common.RawMessage(`"be brief"`), Input: common.RawMessage("[\n  {\"role\": \"user\", \"content\": \"" + escapedBomb + "\"},\n  {\"role\": \"user\", \"content\": \"hi\"}\n]")}, blocked: true},
 		{name: "an escaped block word in an alpha search body", format: types.RelayFormatOpenAIAlphaSearch, request: &kitdto.AlphaSearchRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"model":"gpt-test","query":"` + escapedBomb + `"}`)}, blocked: true},
 		{name: "an escaped block word in a DeepSeek tools body", format: types.RelayFormatDeepSeekTools, request: &kitdto.DeepSeekToolsRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"query":"` + escapedBomb + `"}`)}, blocked: true},
+		{name: "a block word as an object key", format: types.RelayFormatDeepSeekTools, request: &kitdto.DeepSeekToolsRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"query":"hello","filters":{"bomb":true}}`)}, blocked: true},
+		{name: "an escaped block word as an object key", format: types.RelayFormatDeepSeekTools, request: &kitdto.DeepSeekToolsRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"query":"hello","filters":{"b\u006fmb":true}}`)}, blocked: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setupContentSafetyReview(t, reviewerReply(""))
@@ -246,6 +248,27 @@ func TestPrepareRequestBillingScansContentBeforePreConsume(t *testing.T) {
 			requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionKeywordBlocked)
 		})
 	}
+}
+
+// A raw-JSON format is scanned once, decoded: one review word in an Alpha
+// Search body is one window, so a repeat of the request is decided by the
+// cached verdict instead of a second review.
+func TestContentSafetyReviewOfARawJSONBodyIsOneCachedWindow(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	filler := strings.Repeat("for cooking at home ", 20)
+	body := `{"model":"gpt-test","query":"` + filler + saltedText("where to buy a kitchen knife") + filler + `"}`
+	require.Greater(t, len(body), 800)
+	userId := nextContentSafetyUser()
+	for range 2 {
+		c, info := newContentSafetyContext(userId)
+		info.RelayFormat, info.Request = types.RelayFormatOpenAIAlphaSearch, &kitdto.AlphaSearchRequest{Model: "gpt-test", RawBody: common.RawMessage(body)}
+		require.Nil(t, scanRequestContent(c, info, body))
+		windows, _ := common.GetContextKeyType[[]contentsafety.Window](c, constant.ContextKeyContentSafetyWindows)
+		assert.Len(t, windows, 1)
+		require.Nil(t, EnforceContentSafety(c, info))
+	}
+	assert.Equal(t, int32(1), calls.Load(), "the repeat is served from the verdict cache")
+	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
 }
 
 func TestContentSafetyReviewCachesVerdictPerWindow(t *testing.T) {
@@ -414,7 +437,7 @@ func TestTaskRequestTextReadsTheForwardedBody(t *testing.T) {
 	for _, tc := range []struct {
 		name, contentType, body, want string
 	}{
-		{name: "JSON", contentType: "application/json", body: `{"prompt":"a knife","seconds":"4"}`, want: "a knife\n4\n"},
+		{name: "JSON with its keys", contentType: "application/json", body: `{"prompt":"a knife","seconds":"4"}`, want: "prompt\na knife\nseconds\n4\n"},
 		{name: "multipart in sorted field order", contentType: writer.FormDataContentType(), body: form.String(), want: "a knife\n720x1280\n"},
 		{name: "urlencoded form", contentType: "application/x-www-form-urlencoded", body: "seconds=4&prompt=make%20a%20b%6Fmb", want: "make a bomb\n4\n"},
 		{name: "case-insensitive multipart with a quoted-printable part", contentType: "Multipart/Form-Data; boundary=B", body: quotedPrintable, want: "make a bomb\n"},

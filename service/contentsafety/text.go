@@ -51,10 +51,12 @@ var mediaSignatures = []struct {
 	{"video", 0, "\x1A\x45\xDF\xA3", ""},
 }
 
-// CollectJSONText joins every string value of a JSON document, one per line,
-// with object keys visited in sorted order so the result is stable. Inline
-// media (see isInlineMedia) is skipped; every other value is scanned. A body that is not JSON
-// is returned unchanged so it is still scanned.
+// CollectJSONText joins the text of a JSON document, one string per line:
+// each object key, in sorted order so the result is stable, followed by its
+// value, and every string value. Keys are text a model reads too, such as the
+// property names of a JSON Schema. Inline media values (see isInlineMedia)
+// are skipped; everything else is scanned. A body that is not JSON is returned
+// unchanged so it is still scanned.
 func CollectJSONText(body []byte) string {
 	var document any
 	if err := common.Unmarshal(body, &document); err != nil {
@@ -92,6 +94,8 @@ func collectStrings(value any, builder *strings.Builder) {
 		}
 	case map[string]any:
 		for _, key := range slices.Sorted(maps.Keys(v)) {
+			builder.WriteString(key)
+			builder.WriteByte('\n')
 			collectStrings(v[key], builder)
 		}
 	}
