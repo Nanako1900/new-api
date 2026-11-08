@@ -32,7 +32,7 @@ func MonitorCORS() gin.HandlerFunc {
 			return
 		}
 		if allowed {
-			header.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			header.Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 			// Authorization must be listed by name: the "*" wildcard never covers it.
 			header.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 			header.Set("Access-Control-Max-Age", "600")
@@ -66,7 +66,8 @@ func MonitorOriginGuard() gin.HandlerFunc {
 }
 
 // MonitorAuth authenticates a monitor access token and exposes the user the
-// way dashboard auth does, so read-only controllers can be reused. It sets no
+// way dashboard auth does, so the user's own read controllers (and the console
+// preferences writer) can be reused. It sets no
 // dashboard session identity: GetSessionAuthIdentity and GetStepUpIdentity
 // fail for monitor requests.
 func MonitorAuth() gin.HandlerFunc {

@@ -7,7 +7,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SetMonitorRouter registers the read-only monitor console API. It is a
+// SetMonitorRouter registers the monitor console API: read-only except for
+// the console's own preferences (layout, widget settings, theme). It is a
 // separate group from /api so that it carries its own exact-origin CORS and
 // monitor-session authentication; dashboard credentials are not accepted here
 // and monitor credentials are not accepted anywhere else. It must be
@@ -40,5 +41,10 @@ func SetMonitorRouter(router *gin.Engine) {
 		// The dashboard route is public or user-only; a monitor user is always signed in.
 		readRoute.GET("/perf-metrics/summary", controller.GetPerfMetricsSummary)
 		readRoute.GET("/status", controller.GetStatus)
+		readRoute.GET("/preferences", controller.GetMonitorPreferences)
 	}
+
+	// The only write a monitor credential can make: its console preferences.
+	monitorRoute.PUT("/preferences", middleware.MonitorAuth(), middleware.MonitorPreferencesRateLimit(), middleware.DisableCache(),
+		controller.UpdateMonitorPreferences)
 }

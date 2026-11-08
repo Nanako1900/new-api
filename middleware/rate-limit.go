@@ -205,6 +205,18 @@ func UserCriticalRateLimit(scope string) func(c *gin.Context) {
 	)
 }
 
+// Monitor console preferences: the console saves after changes settle, so
+// this only bounds a misbehaving client or a stolen monitor token used from
+// many addresses. Keyed by user; must run after MonitorAuth.
+const (
+	monitorPreferencesRateLimitNum      = 30
+	monitorPreferencesRateLimitDuration = 60
+)
+
+func MonitorPreferencesRateLimit() func(c *gin.Context) {
+	return userRateLimitFactory(monitorPreferencesRateLimitNum, monitorPreferencesRateLimitDuration, "MP")
+}
+
 func DownloadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.DownloadRateLimitNum, common.DownloadRateLimitDuration, "DW")
 }

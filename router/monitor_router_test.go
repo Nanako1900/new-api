@@ -3,6 +3,7 @@ package router
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -217,6 +218,95 @@ func TestMonitorUserCarriesTheAvatarOnly(t *testing.T) {
 	}
 }
 
+const monitorTestPreferences = `{"version":1,"layout":[{"i":"logs","x":0,"y":0,"w":7,"h":10},{"i":"balance","x":7,"y":0,"w":5,"h":2}],` +
+	`"settings":{"logs":{"showToken":false},"usage":{"view":"chart"}},"theme":{"id":"ocean","mode":"dark"},"unknown":"dropped"}`
+
+func TestMonitorPreferencesRoundTrip(t *testing.T) {
+	env := setupMonitorRouterTest(t)
+	require.NoError(t, model.UpdateUserSetting(env.user.Id, dto.UserSetting{WebhookSecret: "webhook-secret-value", Language: "zh"}))
+	accessToken, _ := env.signIn(t)
+
+	empty := env.do(monitorTestRequest{method: http.MethodGet, path: "/api/monitor/preferences", bearer: accessToken})
+	require.Equal(t, http.StatusOK, empty.Code, empty.Body.String())
+	assert.Nil(t, responseJSON(t, empty)["data"].(map[string]any)["preferences"])
+
+	saved := env.do(monitorTestRequest{method: http.MethodPut, path: "/api/monitor/preferences", origin: monitorTestOrigin,
+		bearer: accessToken, body: monitorTestPreferences})
+	require.Equal(t, http.StatusOK, saved.Code, saved.Body.String())
+	assert.Equal(t, monitorTestOrigin, saved.Header().Get("Access-Control-Allow-Origin"))
+
+	read := env.do(monitorTestRequest{method: http.MethodGet, path: "/api/monitor/preferences", bearer: accessToken})
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	preferences := responseJSON(t, read)["data"].(map[string]any)["preferences"].(map[string]any)
+	assert.EqualValues(t, 1, preferences["version"])
+	assert.Len(t, preferences["layout"], 2)
+	assert.Equal(t, map[string]any{"id": "ocean", "mode": "dark"}, preferences["theme"])
+	assert.Equal(t, map[string]any{"showToken": false}, preferences["settings"].(map[string]any)["logs"])
+	assert.NotContains(t, preferences, "unknown", "only the known fields are stored")
+
+	for _, response := range []*httptest.ResponseRecorder{saved, read} {
+		assert.NotContains(t, response.Body.String(), "webhook-secret-value", "only the preferences are returned")
+	}
+
+	user, err := model.GetUserById(env.user.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "webhook-secret-value", user.GetSetting().WebhookSecret, "saving preferences keeps the other settings")
+	assert.Equal(t, "zh", user.GetSetting().Language)
+
+	dashboardWrite := env.do(monitorTestRequest{method: http.MethodPut, path: "/api/monitor/preferences", bearer: env.dashboardToken,
+		body: monitorTestPreferences})
+	assert.Equal(t, http.StatusUnauthorized, dashboardWrite.Code, "the endpoint takes monitor credentials only")
+
+	monitorOnDashboardWrite := env.do(monitorTestRequest{method: http.MethodPut, path: "/api/user/self/avatar", bearer: accessToken,
+		body: `{"kind":"cat","cat":{"coat":"calico"}}`})
+	assert.Equal(t, http.StatusUnauthorized, monitorOnDashboardWrite.Code, "the preferences are still the only thing a monitor token can write")
+
+	logout := env.do(monitorTestRequest{method: http.MethodPost, path: "/api/monitor/auth/logout", origin: monitorTestOrigin, bearer: accessToken})
+	require.Equal(t, http.StatusOK, logout.Code, logout.Body.String())
+	afterLogout := env.do(monitorTestRequest{method: http.MethodPut, path: "/api/monitor/preferences", origin: monitorTestOrigin,
+		bearer: accessToken, body: monitorTestPreferences})
+	assert.Equal(t, http.StatusUnauthorized, afterLogout.Code, "an ended monitor session cannot save")
+}
+
+func TestMonitorPreferencesRejectInvalidInput(t *testing.T) {
+	env := setupMonitorRouterTest(t)
+	accessToken, _ := env.signIn(t)
+	layout := `[{"i":"logs","x":0,"y":0,"w":7,"h":10}]`
+	manyWidgets := make([]string, 33)
+	for i := range manyWidgets {
+		manyWidgets[i] = fmt.Sprintf(`{"i":"w%d","x":0,"y":%d,"w":1,"h":1}`, i, i)
+	}
+
+	cases := []struct {
+		name, body string
+		status     int
+	}{
+		{"wrong version", `{"version":2,"layout":` + layout + `,"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"missing layout", `{"version":1,"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"bad widget id", `{"version":1,"layout":[{"i":"<script>","x":0,"y":0,"w":1,"h":1}],"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"duplicate widget", `{"version":1,"layout":[{"i":"logs","x":0,"y":0,"w":1,"h":1},{"i":"logs","x":1,"y":0,"w":1,"h":1}],"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"negative position", `{"version":1,"layout":[{"i":"logs","x":-1,"y":0,"w":1,"h":1}],"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"zero size", `{"version":1,"layout":[{"i":"logs","x":0,"y":0,"w":0,"h":1}],"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"position that overflows", `{"version":1,"layout":[{"i":"logs","x":9223372036854775807,"y":0,"w":1,"h":1}],"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"too many widgets", `{"version":1,"layout":[` + strings.Join(manyWidgets, ",") + `],"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"numeric setting", `{"version":1,"layout":` + layout + `,"settings":{"logs":{"rows":5}},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"free text setting", `{"version":1,"layout":` + layout + `,"settings":{"logs":{"view":"Chart Only!"}},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"unknown theme mode", `{"version":1,"layout":` + layout + `,"settings":{},"theme":{"id":"calico","mode":"sepia"}}`, http.StatusBadRequest},
+		{"not an object", `[1,2,3]`, http.StatusBadRequest},
+		{"larger than 8 KB", `{"version":1,"layout":` + layout + `,"settings":{},"theme":{"id":"calico","mode":"auto"}}` + strings.Repeat(" ", 9*1024), http.StatusRequestEntityTooLarge},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			response := env.do(monitorTestRequest{method: http.MethodPut, path: "/api/monitor/preferences", origin: monitorTestOrigin,
+				bearer: accessToken, body: tc.body})
+			assert.Equal(t, tc.status, response.Code, response.Body.String())
+		})
+	}
+
+	read := env.do(monitorTestRequest{method: http.MethodGet, path: "/api/monitor/preferences", bearer: accessToken})
+	assert.Nil(t, responseJSON(t, read)["data"].(map[string]any)["preferences"], "nothing invalid was stored")
+}
+
 func TestMonitorAndDashboardCredentialsDoNotCross(t *testing.T) {
 	env := setupMonitorRouterTest(t)
 	accessToken, refreshCookie := env.signIn(t)
@@ -249,6 +339,9 @@ func TestMonitorCORSAndOriginGuard(t *testing.T) {
 	assert.Equal(t, monitorTestOrigin, preflight.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "true", preflight.Header().Get("Access-Control-Allow-Credentials"))
 	assert.Contains(t, preflight.Header().Get("Access-Control-Allow-Headers"), "Authorization")
+	savePreflight := env.do(monitorTestRequest{method: http.MethodOptions, path: "/api/monitor/preferences", origin: monitorTestOrigin,
+		headers: map[string]string{"Access-Control-Request-Method": http.MethodPut, "Access-Control-Request-Headers": "authorization, content-type"}})
+	assert.Contains(t, savePreflight.Header().Get("Access-Control-Allow-Methods"), http.MethodPut, "the console saves its preferences with PUT")
 
 	foreignPreflight := env.do(monitorTestRequest{method: http.MethodOptions, path: "/api/monitor/self", origin: "https://evil.example", headers: preflightHeaders})
 	assert.Empty(t, foreignPreflight.Header().Get("Access-Control-Allow-Origin"), "a foreign origin must not get CORS, not even the wildcard")
