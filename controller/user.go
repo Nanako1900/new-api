@@ -62,9 +62,15 @@ func Login(c *gin.Context) {
 		return
 	}
 	username := loginRequest.Username
+	// In risk mode the gate records this attempt as a failed login right away;
+	// every outcome that is not one withdraws it.
+	if !middleware.RequireCaptcha(c, middleware.CaptchaScopeLogin, username) {
+		return
+	}
 	password := loginRequest.Password
 	if common.PasswordLoginEncryptionEnabled {
 		if loginRequest.PasswordEncrypted == "" || loginRequest.EncryptionKeyID == "" {
+			middleware.WithdrawCaptchaRisk(c)
 			common.ApiErrorT(c, "Invalid parameters")
 			return
 		}
@@ -75,6 +81,7 @@ func Login(c *gin.Context) {
 		}
 	}
 	if username == "" || password == "" {
+		middleware.WithdrawCaptchaRisk(c)
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
@@ -86,9 +93,11 @@ func Login(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrDatabase):
+			middleware.WithdrawCaptchaRisk(c)
 			common.SysLog(common.LogText("Login database error for user %s: %v", username, err))
 			common.ApiErrorT(c, "Database error, please contact the administrator")
 		case errors.Is(err, model.ErrUserEmptyCredentials):
+			middleware.WithdrawCaptchaRisk(c)
 			common.ApiErrorT(c, "Invalid parameters")
 		default:
 			common.ApiErrorT(c, "Username or password is incorrect, or user has been banned")
@@ -96,6 +105,10 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// A correct password is not a failure. Earlier failures stay counted:
+	// login names that differ only in case or accents share a failure count,
+	// so one account's success must not reset another's.
+	middleware.WithdrawCaptchaRisk(c)
 	setupLogin(&user, nil, c)
 }
 

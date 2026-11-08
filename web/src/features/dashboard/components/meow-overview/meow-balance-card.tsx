@@ -19,17 +19,27 @@ For commercial licensing, please contact support@quantumnous.com
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
+import { RollingNumber } from '@/components/rolling-number'
 import { Button } from '@/components/ui/button'
 import { formatQuota } from '@/lib/format'
+
+import { splitAroundName } from '../../lib/meow-setup'
 
 type MeowBalanceCardProps = {
   remainQuota: number
   usedQuota: number
 }
 
-/** Balance on a dark tile like the logo, with the orange calico glow. */
+/**
+ * Balance on a dark tile like the logo, with the orange calico glow. The
+ * amounts roll when the live balance changes.
+ */
 export function MeowBalanceCard(props: MeowBalanceCardProps) {
   const { t } = useTranslation()
+  // The used amount sits inside a translated sentence; split around it.
+  const used = splitAroundName((placeholder) =>
+    t('Used {{amount}}', { amount: placeholder })
+  )
 
   return (
     <div className='bg-meow-ink relative isolate flex flex-col gap-5 overflow-hidden rounded-[22px] px-6 py-6 text-white dark:bg-[#25211C]'>
@@ -41,10 +51,12 @@ export function MeowBalanceCard(props: MeowBalanceCardProps) {
       <div className='flex flex-wrap items-end justify-between gap-4'>
         <div className='flex flex-col gap-1'>
           <span className='text-4xl font-extrabold tracking-[-0.03em] tabular-nums'>
-            {formatQuota(props.remainQuota)}
+            <RollingNumber value={props.remainQuota} format={formatQuota} />
           </span>
           <span className='text-[13px] text-white/60'>
-            {t('Used {{amount}}', { amount: formatQuota(props.usedQuota) })}
+            {used.before}
+            <RollingNumber value={props.usedQuota} format={formatQuota} />
+            {used.after}
           </span>
         </div>
         <div className='flex gap-2'>

@@ -25,11 +25,12 @@ import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
+import { MEOW_AVATAR_FALLBACK_DELAY, getMeowAvatarUrl } from '@/lib/meow-avatar'
 
 import type { UsageLog } from '../data/schema'
 import { formatModelName, logTokenName, parseLogOther } from '../lib/format'
@@ -245,7 +246,18 @@ export function CommonLogMobileCard<TData>(props: {
                 <span className='text-muted-foreground max-w-[40%] shrink-0 text-xs [overflow-wrap:anywhere]'>
                   {id === 'user' ? (
                     <Avatar className='ring-border/60 size-6 shrink-0 ring-1'>
+                      {context.sensitiveVisible && (
+                        <AvatarImage
+                          src={getMeowAvatarUrl(log.user_id)}
+                          alt=''
+                        />
+                      )}
                       <AvatarFallback
+                        delay={
+                          context.sensitiveVisible
+                            ? MEOW_AVATAR_FALLBACK_DELAY
+                            : undefined
+                        }
                         className='text-[11px] font-semibold'
                         style={
                           context.sensitiveVisible

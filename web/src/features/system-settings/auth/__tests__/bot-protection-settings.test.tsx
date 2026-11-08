@@ -37,15 +37,23 @@ import { SettingsPageProvider } from '../../components/settings-page-context'
 import type { UpdateOptionRequest } from '../../types'
 import { BotProtectionSection } from '../bot-protection-section'
 
-const defaults = {
+type BotProtectionDefaults = {
+  GeetestCheckEnabled: boolean
+  GeetestCheckMode: 'always' | 'risk'
+  GeetestCaptchaId: string
+  GeetestCaptchaKey: string
+}
+
+const freshSite: BotProtectionDefaults = {
   GeetestCheckEnabled: false,
+  GeetestCheckMode: 'always',
   GeetestCaptchaId: '',
   GeetestCaptchaKey: '',
 }
 
 let testI18n: i18n
 
-function Fixture() {
+function Fixture(props: { defaults: BotProtectionDefaults }) {
   const [container, setContainer] = useState<HTMLDivElement | null>(null)
   const [client] = useState(
     () => new QueryClient({ defaultOptions: { mutations: { retry: false } } })
@@ -56,15 +64,17 @@ function Fixture() {
       <QueryClientProvider client={client}>
         <div ref={setContainer} />
         <SettingsPageProvider actionsContainer={container}>
-          <BotProtectionSection defaultValues={defaults} />
+          <BotProtectionSection defaultValues={props.defaults} />
         </SettingsPageProvider>
       </QueryClientProvider>
     </I18nextProvider>
   )
 }
 
-async function renderSettings() {
-  const route = createRootRoute({ component: Fixture })
+async function renderSettings(defaults: BotProtectionDefaults) {
+  const route = createRootRoute({
+    component: () => <Fixture defaults={defaults} />,
+  })
   const router = createRouter({
     routeTree: route,
     history: createMemoryHistory({ initialEntries: ['/'] }),
@@ -84,16 +94,24 @@ beforeEach(async () => {
   vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
 })
 
+function spyOnSavedOptions() {
+  return vi.spyOn(api, 'put').mockImplementation(async () => {
+    return { data: { success: true, message: '' } } as never
+  })
+}
+
+function savedOptions(put: ReturnType<typeof spyOnSavedOptions>) {
+  return put.mock.calls.map(([, body]) => {
+    const request = body as UpdateOptionRequest
+    return [request.key, request.value]
+  })
+}
+
 describe('Bot Protection settings saves', () => {
   it('saves the captcha ID and key before enabling GeeTest in one save', async () => {
-    const savedOptions: Record<string, string | number | boolean> = {}
-    const put = vi.spyOn(api, 'put').mockImplementation(async (_url, body) => {
-      const request = body as UpdateOptionRequest
-      savedOptions[request.key] = request.value
-      return { data: { success: true, message: '' } } as never
-    })
+    const put = spyOnSavedOptions()
     const user = userEvent.setup()
-    await renderSettings()
+    await renderSettings(freshSite)
     await user.type(
       screen.getByRole('textbox', { name: 'Captcha ID' }),
       'captcha-id'
@@ -103,13 +121,52 @@ describe('Bot Protection settings saves', () => {
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => expect(put).toHaveBeenCalledTimes(3))
-    expect(
-      put.mock.calls.map(([, body]) => (body as UpdateOptionRequest).key)
-    ).toEqual(['GeetestCaptchaId', 'GeetestCaptchaKey', 'GeetestCheckEnabled'])
-    expect(savedOptions).toEqual({
+    expect(savedOptions(put)).toEqual([
+      ['GeetestCaptchaId', 'captcha-id'],
+      ['GeetestCaptchaKey', 'captcha-key'],
+      ['GeetestCheckEnabled', true],
+    ])
+  })
+
+  it('choosing to ask only when risky saves the mode before enabling GeeTest', async () => {
+    const put = spyOnSavedOptions()
+    const user = userEvent.setup()
+    await renderSettings({
+      ...freshSite,
       GeetestCaptchaId: 'captcha-id',
       GeetestCaptchaKey: 'captcha-key',
-      GeetestCheckEnabled: true,
     })
+    expect(screen.getByRole('radio', { name: /Every time/ })).toBeChecked()
+
+    await user.click(screen.getByRole('radio', { name: /Only when risky/ }))
+    await user.click(screen.getByRole('switch', { name: 'Enable GeeTest' }))
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(2))
+    expect(savedOptions(put)).toEqual([
+      ['GeetestCheckMode', 'risk'],
+      ['GeetestCheckEnabled', true],
+    ])
+  })
+
+  it('on a site in risk mode, shows it chosen and saves only the mode when switched back', async () => {
+    const put = spyOnSavedOptions()
+    const user = userEvent.setup()
+    await renderSettings({
+      GeetestCheckEnabled: true,
+      GeetestCheckMode: 'risk',
+      GeetestCaptchaId: 'captcha-id',
+      GeetestCaptchaKey: 'captcha-key',
+    })
+    expect(
+      screen.getByRole('radiogroup', { name: 'When to ask for verification' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Only when risky/ })).toBeChecked()
+
+    await user.click(screen.getByRole('radio', { name: /Every time/ }))
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(savedOptions(put)).toEqual([['GeetestCheckMode', 'always']])
   })
 })

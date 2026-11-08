@@ -108,6 +108,8 @@ const AUTH_SECTIONS = [
       <BotProtectionSection
         defaultValues={{
           GeetestCheckEnabled: settings.GeetestCheckEnabled,
+          GeetestCheckMode:
+            settings.GeetestCheckMode === 'risk' ? 'risk' : 'always',
           GeetestCaptchaId: settings.GeetestCaptchaId,
           GeetestCaptchaKey: settings.GeetestCaptchaKey,
         }}

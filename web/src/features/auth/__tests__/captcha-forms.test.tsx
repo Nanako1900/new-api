@@ -36,6 +36,18 @@ import { ForgotPasswordForm } from '../forgot-password/components/forgot-passwor
 import { UserAuthForm } from '../sign-in/components/user-auth-form'
 import { SignUpForm } from '../sign-up/components/sign-up-form'
 
+type Reply = { success: boolean; message: string; code?: string }
+
+const LOGIN_URL = '/api/user/login'
+const REGISTER_START_URL = '/api/user/register/email/start'
+const RESET_START_URL = '/api/user/password-reset/start'
+const GUARDED_URLS = new Set([LOGIN_URL, REGISTER_START_URL, RESET_START_URL])
+const CAPTCHA_REQUIRED: Reply = {
+  success: false,
+  message: 'Please complete the human verification first',
+  code: 'CAPTCHA_REQUIRED',
+}
+
 const originalAdapter = api.defaults.adapter
 const startedRegistrationFlow = {
   flow_token: 'flow-1',
@@ -45,60 +57,86 @@ const startedRegistrationFlow = {
   resend_at: Math.floor(Date.now() / 1000) - 1,
 }
 let guardedRequests: InternalAxiosRequestConfig[] = []
+/** Replies the test server gives before its defaults, in order. */
+let queuedReplies: Reply[] = []
+let challengesShown = 0
+let challengeAnswers: Array<'pass' | 'close'> = []
 
-/** Stands in for gt4.js; every pass yields a new lot number. */
+/** Stands in for gt4.js in bind mode; every pass yields a new lot number. */
 function installFakeGeetest() {
-  let passes = 0
   window.initGeetest4 = ((
     _config: unknown,
     callback: (captcha: unknown) => void
   ) => {
-    let succeed = () => {}
+    let onReady = () => {}
+    let onSuccess = () => {}
+    let onClose = () => {}
     let lotNumber = ''
     const instance = {
-      appendTo: (target: HTMLElement) => {
-        const button = document.createElement('button')
-        button.type = 'button'
-        button.textContent = 'Pass GeeTest'
-        button.addEventListener('click', () => {
-          passes += 1
-          lotNumber = `lot-${passes}`
-          succeed()
-        })
-        target.appendChild(button)
-        return instance
-      },
       getValidate: () => ({
         lot_number: lotNumber,
         captcha_output: 'output',
         pass_token: 'pass',
         gen_time: '1700000000',
       }),
+      // The user answers the challenge right after it opens.
+      showCaptcha: () => {
+        challengesShown += 1
+        const answer = challengeAnswers.shift() ?? 'pass'
+        setTimeout(() => {
+          if (answer === 'close') {
+            onClose()
+            return
+          }
+          lotNumber = `lot-${challengesShown}`
+          onSuccess()
+        })
+      },
+      onReady: (next: () => void) => {
+        onReady = next
+        return instance
+      },
       onSuccess: (next: () => void) => {
-        succeed = next
+        onSuccess = next
+        return instance
+      },
+      onClose: (next: () => void) => {
+        onClose = next
         return instance
       },
       onError: () => instance,
       destroy: () => {},
     }
     callback(instance)
+    onReady()
   }) as unknown as Window['initGeetest4']
 }
 
-function sentLotNumbers(): string[] {
-  return guardedRequests.map(
-    (config) =>
-      JSON.parse(config.headers.get('X-Captcha-Token') as string).lot_number
-  )
+/** Lot number of each guarded request, or null for one sent without a result. */
+function sentLotNumbers(): Array<string | null> {
+  return guardedRequests.map((config) => {
+    const token = config.headers.get('X-Captcha-Token')
+    return typeof token === 'string' ? JSON.parse(token).lot_number : null
+  })
 }
 
-async function renderForm(Form: ComponentType) {
+function defaultReply(url: string | undefined) {
+  // Sign-up's email check succeeds, so its resend can be exercised.
+  if (url === REGISTER_START_URL) {
+    return { success: true, message: '', data: startedRegistrationFlow }
+  }
+  if (url === RESET_START_URL) return { success: true, message: '' }
+  return { success: false, message: 'Rejected by the test server' }
+}
+
+async function renderForm(Form: ComponentType, mode: 'always' | 'risk') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(STATUS_QUERY_KEY, {
     geetest_check: true,
     geetest_captcha_id: 'captcha-id',
+    geetest_check_mode: mode,
   })
   const route = createRootRoute({
     component: () => (
@@ -115,153 +153,158 @@ async function renderForm(Form: ComponentType) {
   render(<RouterProvider router={router} />)
 }
 
+async function signIn(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText('Username or Email'), 'alice')
+  await user.type(screen.getByLabelText('Password'), 'secret-password')
+  await user.click(screen.getByRole('button', { name: 'Sign in' }))
+}
+
 beforeEach(() => {
   guardedRequests = []
+  queuedReplies = []
+  challengesShown = 0
+  challengeAnswers = []
   installFakeGeetest()
   api.defaults.adapter = async (config) => {
-    if (config.headers.has('X-Captcha-Token')) guardedRequests.push(config)
-    // Sign-up's email check succeeds, so its resend can be exercised.
-    if (config.url === '/api/user/register/email/start') {
-      return {
-        data: { success: true, message: '', data: startedRegistrationFlow },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config,
-      }
+    let data: unknown = defaultReply(config.url)
+    if (GUARDED_URLS.has(config.url ?? '')) {
+      guardedRequests.push(config)
+      data = queuedReplies.shift() ?? data
     }
-    return {
-      data: { success: false, message: 'Rejected by the test server' },
-      status: 200,
-      statusText: 'OK',
-      headers: {},
-      config,
-    }
+    return { data, status: 200, statusText: 'OK', headers: {}, config }
   }
 })
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
   api.defaults.adapter = originalAdapter
   delete window.initGeetest4
 })
 
-describe('auth forms spend each GeeTest result once', () => {
-  it('sign-up: sending the code spends the pass, and resending needs a new one', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
-    await renderForm(SignUpForm)
+describe('auth forms in risk mode', () => {
+  it('sign-in: sends without a result and challenges only when the server asks', async () => {
+    queuedReplies = [CAPTCHA_REQUIRED]
+    const user = userEvent.setup()
+    await renderForm(UserAuthForm, 'risk')
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
+
+    await signIn(user)
+
+    await waitFor(() => expect(sentLotNumbers()).toEqual([null, 'lot-1']))
+    expect(challengesShown).toBe(1)
+  })
+
+  it('sign-in: a failure that is not a captcha request shows no challenge', async () => {
+    const user = userEvent.setup()
+    await renderForm(UserAuthForm, 'risk')
+
+    await signIn(user)
+
+    await waitFor(() => expect(sentLotNumbers()).toEqual([null]))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
+    )
+    expect(challengesShown).toBe(0)
+  })
+
+  it('sign-up: the email step resends with the result after CAPTCHA_REQUIRED and moves on', async () => {
+    queuedReplies = [CAPTCHA_REQUIRED]
+    const user = userEvent.setup()
+    await renderForm(SignUpForm, 'risk')
     await user.type(
       screen.getByRole('textbox', { name: 'Email' }),
       'alice@example.com'
     )
-    const send = screen.getByRole('button', { name: /Send code/ })
-    expect(send).toBeDisabled()
 
-    await user.click(
-      await screen.findByRole('button', { name: 'Pass GeeTest' })
-    )
-    await user.click(send)
-    await waitFor(() => expect(sentLotNumbers()).toEqual(['lot-1']))
+    await user.click(screen.getByRole('button', { name: /Send code/ }))
+
     expect(
       await screen.findByRole('textbox', { name: 'Verification code' })
     ).toBeInTheDocument()
+    expect(sentLotNumbers()).toEqual([null, 'lot-1'])
+  })
+
+  it('forgot password: resending the link challenges only when the server asks', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await renderForm(ForgotPasswordForm, 'risk')
+    await user.type(screen.getByLabelText('Email'), 'alice@example.com')
+    await user.click(screen.getByRole('button', { name: /Send reset email/ }))
+    await screen.findByRole('status')
 
     // Resending opens after the one-minute wait.
     act(() => {
       vi.advanceTimersByTime(60_000)
     })
-    const resend = await screen.findByRole('button', { name: 'Resend code' })
-    expect(resend).toBeDisabled()
-    expect(resend).toHaveAccessibleDescription(
-      'Please complete the human verification first'
-    )
+    queuedReplies = [CAPTCHA_REQUIRED]
     await user.click(
-      await screen.findByRole('button', { name: 'Pass GeeTest' })
+      await screen.findByRole('button', { name: /Send reset email/ })
     )
-    await user.click(resend)
-    await waitFor(() => expect(sentLotNumbers()).toEqual(['lot-1', 'lot-2']))
+
+    await waitFor(() => expect(sentLotNumbers()).toEqual([null, null, 'lot-1']))
   })
+})
 
-  it('sign-up: the human verification comes before the send button', async () => {
-    await renderForm(SignUpForm)
-    const send = screen.getByRole('button', { name: /Send code/ })
-    const captcha = await screen.findByRole('button', { name: 'Pass GeeTest' })
-
-    expect(send).toHaveAccessibleDescription(
-      'Please complete the human verification first'
-    )
-    expect(
-      captcha.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
-  })
-
-  it('sign-in: after a failed sign-in, requires a new pass before the next attempt', async () => {
+describe('auth forms in always mode', () => {
+  it('sign-in: challenges before every attempt and spends each result once', async () => {
     const user = userEvent.setup()
-    await renderForm(UserAuthForm)
-    await user.type(screen.getByLabelText('Username or Email'), 'alice')
-    await user.type(screen.getByLabelText('Password'), 'secret-password')
+    await renderForm(UserAuthForm, 'always')
     const submit = screen.getByRole('button', { name: 'Sign in' })
-    expect(submit).toBeDisabled()
+    expect(submit).toBeEnabled()
 
-    await user.click(
-      await screen.findByRole('button', { name: 'Pass GeeTest' })
-    )
-    await user.click(submit)
+    await signIn(user)
     await waitFor(() => expect(sentLotNumbers()).toEqual(['lot-1']))
-
-    await waitFor(() => expect(submit).toBeDisabled())
-    await user.click(
-      await screen.findByRole('button', { name: 'Pass GeeTest' })
-    )
+    await waitFor(() => expect(submit).toBeEnabled())
     await user.click(submit)
+
     await waitFor(() => expect(sentLotNumbers()).toEqual(['lot-1', 'lot-2']))
   })
 
-  it('sign-in: before a pass, the locked submit button explains what is missing', async () => {
-    await renderForm(UserAuthForm)
-    const submit = screen.getByRole('button', { name: 'Sign in' })
-    const captcha = await screen.findByRole('button', { name: 'Pass GeeTest' })
+  it('sign-in: closing the challenge sends nothing and lets the user try again', async () => {
+    challengeAnswers = ['close']
+    const user = userEvent.setup()
+    await renderForm(UserAuthForm, 'always')
 
-    expect(submit).toHaveAccessibleDescription(
-      'Please complete the human verification first'
+    await signIn(user)
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled()
     )
-    expect(
-      captcha.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
+    expect(challengesShown).toBe(1)
+    expect(sentLotNumbers()).toEqual([])
   })
 
-  it('forgot password: after a failed send, requires a new pass before resending', async () => {
+  it('sign-up: sending the code and resending it each take a new result', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await renderForm(SignUpForm, 'always')
+    await user.type(
+      screen.getByRole('textbox', { name: 'Email' }),
+      'alice@example.com'
+    )
+    await user.click(screen.getByRole('button', { name: /Send code/ }))
+    await screen.findByRole('textbox', { name: 'Verification code' })
+
+    // Resending opens after the one-minute wait.
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+    await user.click(await screen.findByRole('button', { name: 'Resend code' }))
+
+    await waitFor(() => expect(sentLotNumbers()).toEqual(['lot-1', 'lot-2']))
+  })
+
+  it('forgot password: challenges before sending the link', async () => {
     const user = userEvent.setup()
-    await renderForm(ForgotPasswordForm)
+    await renderForm(ForgotPasswordForm, 'always')
     await user.type(screen.getByLabelText('Email'), 'alice@example.com')
-    const submit = screen.getByRole('button', { name: /Send reset email/ })
-    expect(submit).toBeDisabled()
 
-    await user.click(
-      await screen.findByRole('button', { name: 'Pass GeeTest' })
-    )
-    await user.click(submit)
+    await user.click(screen.getByRole('button', { name: /Send reset email/ }))
+
     await waitFor(() => expect(sentLotNumbers()).toEqual(['lot-1']))
-
-    await waitFor(() => expect(submit).toBeDisabled())
-    await user.click(
-      await screen.findByRole('button', { name: 'Pass GeeTest' })
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'alice@example.com'
     )
-    await user.click(submit)
-    await waitFor(() => expect(sentLotNumbers()).toEqual(['lot-1', 'lot-2']))
-  })
-
-  it('forgot password: the human verification comes before the send button', async () => {
-    await renderForm(ForgotPasswordForm)
-    const submit = screen.getByRole('button', { name: /Send reset email/ })
-    const captcha = await screen.findByRole('button', { name: 'Pass GeeTest' })
-
-    expect(submit).toHaveAccessibleDescription(
-      'Please complete the human verification first'
-    )
-    expect(
-      captcha.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy()
   })
 })

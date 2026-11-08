@@ -37,13 +37,11 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { login } from '@/features/auth/api'
-import { AuthCaptcha } from '@/features/auth/components/auth-captcha'
 import { AuthDivider } from '@/features/auth/components/auth-divider'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { WeChatLoginDialog } from '@/features/auth/components/wechat-login-dialog'
 import { loginFormSchema } from '@/features/auth/constants'
-import { useAuthCaptcha } from '@/features/auth/hooks/use-auth-captcha'
 import { useAuthRedirect } from '@/features/auth/hooks/use-auth-redirect'
 import { useLegalConsent } from '@/features/auth/hooks/use-legal-consent'
 import { beginPasskeyLogin, finishPasskeyLogin } from '@/features/auth/passkey'
@@ -54,6 +52,7 @@ import {
 } from '@/features/auth/passkey/assertion'
 import { PasskeyDomainSelector } from '@/features/auth/passkey/components/passkey-domain-selector'
 import type { AuthFormProps } from '@/features/auth/types'
+import { useCaptcha } from '@/hooks/use-captcha'
 import { useStatus } from '@/hooks/use-status'
 import { handleServerError } from '@/lib/handle-server-error'
 import { isPasskeySupported as detectPasskeySupport } from '@/lib/passkey'
@@ -91,7 +90,7 @@ export function UserAuthForm({
     (status?.password_login_encryption_enabled ??
       status?.data?.password_login_encryption_enabled ??
       false) === true
-  const captcha = useAuthCaptcha()
+  const captcha = useCaptcha()
   const legalConsent = useLegalConsent(status)
   const { handleLoginResult } = useAuthRedirect()
 
@@ -126,17 +125,17 @@ export function UserAuthForm({
   async function onSubmit(data: z.infer<typeof loginFormSchema>) {
     if (!legalConsent.ensureAgreed()) return
 
-    const captchaToken = captcha.takeToken()
-    if (captchaToken === null) return
-
     setIsLoading(true)
     try {
-      const res = await login({
-        username: data.username,
-        password: data.password,
-        captcha: captchaToken,
-        passwordEncryptionEnabled: passwordLoginEncryptionEnabled,
-      })
+      const res = await captcha.run((captchaToken) =>
+        login({
+          username: data.username,
+          password: data.password,
+          captcha: captchaToken,
+          passwordEncryptionEnabled: passwordLoginEncryptionEnabled,
+        })
+      )
+      if (!res) return
 
       if (res.success) {
         form.setValue('password', '')
@@ -276,22 +275,18 @@ export function UserAuthForm({
         />
 
         {passwordLoginEnabled && (
-          <>
-            <AuthCaptcha captcha={captcha} />
-            <Button
-              type='submit'
-              className='w-full justify-center gap-2'
-              disabled={isLoading || !captcha.ready || !legalConsent.agreed}
-              {...captcha.gateProps}
-            >
-              {isLoading ? (
-                <Loader2 className='animate-spin' aria-hidden='true' />
-              ) : (
-                <LogIn aria-hidden='true' />
-              )}
-              {t('Sign in')}
-            </Button>
-          </>
+          <Button
+            type='submit'
+            className='w-full justify-center gap-2'
+            disabled={isLoading || !legalConsent.agreed}
+          >
+            {isLoading ? (
+              <Loader2 className='animate-spin' aria-hidden='true' />
+            ) : (
+              <LogIn aria-hidden='true' />
+            )}
+            {t('Sign in')}
+          </Button>
         )}
 
         {passwordLoginEnabled && hasAlternativeLogin && (

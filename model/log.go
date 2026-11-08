@@ -98,7 +98,11 @@ func ensureLogRequestId(log *Log) {
 
 func createLog(log *Log) error {
 	ensureLogRequestId(log)
-	return LOG_DB.Create(log).Error
+	if err := LOG_DB.Create(log).Error; err != nil {
+		return err
+	}
+	notifyLogCreated(log)
+	return nil
 }
 
 func clickHouseLogOrder(prefix string) string {
@@ -113,10 +117,18 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
-		logs[i].ChannelName = ""
-		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityUser)
+		*logs[i] = FormatUserLogView(*logs[i])
 	}
 	assignDisplayLogIds(logs, startIdx)
+}
+
+// FormatUserLogView returns the copy of a log its owner may see: no channel
+// name and no admin, root or audit details. It keeps the stored id; callers
+// that show the row replace it with a display index.
+func FormatUserLogView(log Log) Log {
+	log.ChannelName = ""
+	log.Other = formatLogOtherJSON(log.Other, logOtherVisibilityUser)
+	return log
 }
 
 // FormatAdminLogs removes root-only diagnostics while retaining operational

@@ -124,6 +124,15 @@ var WeChatAccountQRCodeImageURL = ""
 var GeetestCaptchaId = ""
 var GeetestCaptchaKey = ""
 
+// GeetestCheckMode decides when an enabled GeeTest check runs: on every
+// protected request (always) or only when the server sees a risk signal (risk).
+var GeetestCheckMode = GeetestCheckModeAlways
+
+const (
+	GeetestCheckModeAlways = "always"
+	GeetestCheckModeRisk   = "risk"
+)
+
 var TelegramBotToken = ""
 var TelegramBotName = ""
 

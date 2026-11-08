@@ -153,7 +153,7 @@ func TestSecurityProofBindsIdentityAndOperation(t *testing.T) {
 	_, err = verifySecurityProof(proof, otherSession, binding)
 	assert.True(t, errors.Is(err, ErrAuthTokenInvalid))
 
-	claims, err = parseAuthClaims(proof, securityProofTokenUse, authSigningKey(securityProofTokenUse))
+	claims, err = parseAuthClaims(proof, securityProofTokenUse, authTokenAudience, authSigningKey(securityProofTokenUse))
 	require.NoError(t, err)
 	claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute))
 	expired, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(authSigningKey(securityProofTokenUse))

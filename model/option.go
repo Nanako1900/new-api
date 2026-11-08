@@ -145,6 +145,7 @@ func InitOptionMap() {
 	common.OptionMap["WeChatAccountQRCodeImageURL"] = ""
 	common.OptionMap["GeetestCaptchaId"] = ""
 	common.OptionMap["GeetestCaptchaKey"] = ""
+	common.OptionMap["GeetestCheckMode"] = common.GeetestCheckMode
 	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
 	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
 	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
@@ -654,6 +655,12 @@ func updateOptionMap(key string, value string) (err error) {
 		common.GeetestCaptchaId = value
 	case "GeetestCaptchaKey":
 		common.GeetestCaptchaKey = value
+	case "GeetestCheckMode":
+		// Anything but an explicit risk mode keeps the check on every request.
+		common.GeetestCheckMode = common.GeetestCheckModeAlways
+		if value == common.GeetestCheckModeRisk {
+			common.GeetestCheckMode = common.GeetestCheckModeRisk
+		}
 	case "QuotaForNewUser":
 		common.QuotaForNewUser, _ = strconv.Atoi(value)
 	case "QuotaForInviter":

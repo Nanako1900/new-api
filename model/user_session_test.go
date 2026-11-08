@@ -96,6 +96,207 @@ func newTestUserSession(sid string, userID int, now int64) *UserSession {
 	}
 }
 
+func newTestMonitorSession(sid, parentSID string, userID int, now int64) *UserSession {
+	session := newTestUserSession(sid, userID, now)
+	session.Kind = UserSessionKindMonitor
+	session.ParentSID = parentSID
+	session.LoginMethod = "monitor_sso"
+	return session
+}
+
+func TestUserSessionKindAndParentSurviveDatabaseAndCache(t *testing.T) {
+	setupUserSessionTest(t)
+	useUserCacheMiniRedis(t)
+	now := time.Now().Unix()
+	createUserSessionTestUser(t, 1021, 1)
+	parent := newTestUserSession("kind-parent", 1021, now)
+	child := newTestMonitorSession("kind-child", parent.SID, 1021, now)
+	require.NoError(t, CreateUserSession(parent))
+	require.NoError(t, CreateUserSession(child))
+
+	stored, err := GetUserSessionBySID(child.SID)
+	require.NoError(t, err)
+	assert.Equal(t, UserSessionKindMonitor, stored.Kind)
+	assert.Equal(t, parent.SID, stored.ParentSID)
+
+	entry, err := getUserSessionCache(child.SID)
+	require.NoError(t, err)
+	cached := entry.session()
+	assert.Equal(t, UserSessionKindMonitor, cached.Kind)
+	assert.Equal(t, parent.SID, cached.ParentSID)
+
+	dashboard, err := GetUserSessionCached(parent.SID)
+	require.NoError(t, err)
+	assert.Equal(t, UserSessionKindDashboard, dashboard.Kind)
+	assert.Empty(t, dashboard.ParentSID)
+}
+
+// legacyUserSessionCacheEntry is the cache layout written before sessions had
+// a kind. During a rolling deploy older nodes still write it.
+type legacyUserSessionCacheEntry struct {
+	SID             string
+	UserID          int
+	Version         int64
+	UserAuthVersion int64
+	Status          string
+	LoginMethod     string
+	IP              string
+	UserAgent       string
+	CreatedAt       int64
+	LastActiveAt    int64
+	ExpiresAt       int64
+	RevokedAt       int64
+	RevokedReason   string
+	CacheSchema     int
+	CacheExpiresAt  int64
+	CacheMAC        string `json:"-"`
+}
+
+func TestLegacySessionCacheEntryCannotHideMonitorKind(t *testing.T) {
+	setupUserSessionTest(t)
+	useUserCacheMiniRedis(t)
+	now := time.Now().Unix()
+	createUserSessionTestUser(t, 1022, 1)
+	child := newTestMonitorSession("legacy-cache-child", "legacy-cache-parent", 1022, now)
+	require.NoError(t, createUserSessionWithTx(DB, child))
+
+	cacheKey := userSessionCacheKey(child.SID)
+	legacy := legacyUserSessionCacheEntry{
+		SID: child.SID, UserID: child.UserID, Version: child.Version, UserAuthVersion: child.UserAuthVersion,
+		Status: child.Status, LoginMethod: child.LoginMethod, IP: child.IP, UserAgent: child.UserAgent,
+		CreatedAt: child.CreatedAt, LastActiveAt: child.LastActiveAt, ExpiresAt: child.ExpiresAt,
+		CacheSchema: 1, CacheExpiresAt: time.Now().Add(time.Minute).UnixMilli(),
+	}
+	mac, err := authCacheMAC(cacheKey, legacy)
+	require.NoError(t, err)
+	require.NoError(t, common.RDB.HSet(context.Background(), cacheKey, map[string]any{
+		"SID": legacy.SID, "UserID": legacy.UserID, "Version": legacy.Version, "UserAuthVersion": legacy.UserAuthVersion,
+		"Status": legacy.Status, "LoginMethod": legacy.LoginMethod, "IP": legacy.IP, "UserAgent": legacy.UserAgent,
+		"CreatedAt": legacy.CreatedAt, "LastActiveAt": legacy.LastActiveAt, "ExpiresAt": legacy.ExpiresAt,
+		"RevokedAt": legacy.RevokedAt, "RevokedReason": legacy.RevokedReason, "CacheSchema": legacy.CacheSchema,
+		"CacheExpiresAt": legacy.CacheExpiresAt, "CacheMAC": mac,
+	}).Err())
+
+	session, err := GetUserSessionCached(child.SID)
+	require.NoError(t, err)
+	assert.Equal(t, UserSessionKindMonitor, session.Kind, "a cache entry without a kind must fall back to the database")
+	assert.Equal(t, child.ParentSID, session.ParentSID)
+}
+
+func TestRevokingParentSessionRevokesItsMonitorSessions(t *testing.T) {
+	tests := []struct {
+		name   string
+		revoke func(t *testing.T, parent *UserSession, now int64)
+	}{
+		{name: "revoke by sid", revoke: func(t *testing.T, parent *UserSession, _ int64) {
+			revoked, err := RevokeUserSession(parent.UserID, parent.SID, "user_revoked")
+			require.NoError(t, err)
+			require.True(t, revoked)
+		}},
+		{name: "logout by refresh secret", revoke: func(t *testing.T, parent *UserSession, _ int64) {
+			revoked, err := RevokeUserSessionByRefreshHash(parent.SID, parent.RefreshHash, "logout")
+			require.NoError(t, err)
+			require.True(t, revoked)
+		}},
+		{name: "refresh token reuse", revoke: func(t *testing.T, parent *UserSession, now int64) {
+			_, err := RotateUserSessionRefresh(parent.UserID, parent.SID, parent.RefreshHash, "next-"+parent.SID, now, 30*time.Second)
+			require.NoError(t, err)
+			_, err = RotateUserSessionRefresh(parent.UserID, parent.SID, parent.RefreshHash, "again-"+parent.SID, now+31, 30*time.Second)
+			require.ErrorIs(t, err, ErrUserSessionRefreshReuse)
+		}},
+	}
+	for i, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setupUserSessionTest(t)
+			useUserCacheMiniRedis(t)
+			now := time.Now().Unix()
+			userID := 1030 + i
+			createUserSessionTestUser(t, userID, 1)
+			parent := newTestUserSession(fmt.Sprintf("cascade-parent-%d", i), userID, now)
+			sibling := newTestUserSession(fmt.Sprintf("cascade-sibling-%d", i), userID, now)
+			child := newTestMonitorSession(fmt.Sprintf("cascade-child-%d", i), parent.SID, userID, now)
+			siblingChild := newTestMonitorSession(fmt.Sprintf("cascade-sibling-child-%d", i), sibling.SID, userID, now)
+			for _, session := range []*UserSession{parent, sibling, child, siblingChild} {
+				require.NoError(t, CreateUserSession(session))
+			}
+			_, err := getUserSessionCache(child.SID)
+			require.NoError(t, err, "the child starts with an active cache entry")
+
+			test.revoke(t, parent, now)
+
+			storedChild, err := GetUserSessionBySID(child.SID)
+			require.NoError(t, err)
+			assert.Equal(t, UserSessionStatusRevoked, storedChild.Status)
+			assert.Equal(t, UserSessionRevokedReasonParent, storedChild.RevokedReason)
+			_, err = getUserSessionCache(child.SID)
+			assert.ErrorIs(t, err, ErrUserSessionInactive, "the cascade must replace the child's active cache entry with a tombstone")
+			for _, sid := range []string{sibling.SID, siblingChild.SID} {
+				stored, err := GetUserSessionBySID(sid)
+				require.NoError(t, err)
+				assert.Equal(t, UserSessionStatusActive, stored.Status, sid)
+			}
+		})
+	}
+}
+
+func TestMonitorSessionCascadeReachesDatabaseWhenRedisFails(t *testing.T) {
+	setupUserSessionTest(t)
+	server := useUserCacheMiniRedis(t)
+	now := time.Now().Unix()
+	createUserSessionTestUser(t, 1036, 1)
+	parent := newTestUserSession("redis-down-parent", 1036, now)
+	child := newTestMonitorSession("redis-down-child", parent.SID, 1036, now)
+	require.NoError(t, CreateUserSession(parent))
+	require.NoError(t, CreateUserSession(child))
+	server.Close()
+
+	revokeChildUserSessions(1036, parent.SID)
+
+	stored, err := GetUserSessionBySID(child.SID)
+	require.NoError(t, err)
+	assert.Equal(t, UserSessionStatusRevoked, stored.Status, "the parent revoke already committed, so the cascade must not stop at a Redis error")
+}
+
+func TestCreateUserSessionRejectsInconsistentKind(t *testing.T) {
+	setupUserSessionTest(t)
+	now := time.Now().Unix()
+	createUserSessionTestUser(t, 1037, 1)
+	tests := []struct {
+		name      string
+		kind      string
+		parentSID string
+	}{
+		{name: "unknown kind", kind: "admin", parentSID: ""},
+		{name: "monitor session without a parent", kind: UserSessionKindMonitor, parentSID: ""},
+		{name: "dashboard session with a parent", kind: UserSessionKindDashboard, parentSID: "some-parent"},
+	}
+	for i, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session := newTestUserSession(fmt.Sprintf("inconsistent-kind-%d", i), 1037, now)
+			session.Kind = test.kind
+			session.ParentSID = test.parentSID
+			assert.ErrorIs(t, CreateUserSession(session), ErrUserSessionInvalid)
+			_, err := GetUserSessionBySID(session.SID)
+			assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+		})
+	}
+}
+
+func TestAuthFlowSessionValidationRejectsMonitorSessions(t *testing.T) {
+	setupUserSessionTest(t)
+	now := time.Now().Unix()
+	createUserSessionTestUser(t, 1038, 1)
+	parent := newTestUserSession("flow-parent", 1038, now)
+	child := newTestMonitorSession("flow-child", parent.SID, 1038, now)
+	require.NoError(t, CreateUserSession(parent))
+	require.NoError(t, CreateUserSession(child))
+
+	parentIdentity := AuthSessionIdentity{UserID: 1038, SessionID: parent.SID, UserAuthVersion: 1, SessionVersion: 1}
+	require.NoError(t, ValidateAuthSessionWithTx(DB, parentIdentity))
+	childIdentity := AuthSessionIdentity{UserID: 1038, SessionID: child.SID, UserAuthVersion: 1, SessionVersion: 1}
+	assert.ErrorIs(t, ValidateAuthSessionWithTx(DB, childIdentity), ErrUserSessionInactive, "authentication flows act for dashboard sessions only")
+}
+
 func TestUserSessionCacheTTLUsesShortCacheWindow(t *testing.T) {
 	setupUserSessionTest(t)
 	server := useUserCacheMiniRedis(t)
@@ -349,15 +550,19 @@ func TestRevokeOtherUserSessionsKeepsCurrent(t *testing.T) {
 		}
 		require.NoError(t, CreateUserSession(session))
 	}
+	require.NoError(t, CreateUserSession(newTestMonitorSession("current-monitor", "current-session", 1003, now)))
 	require.NoError(t, CreateUserSession(newTestUserSession("different-user", 1004, now)))
 
 	count, err := RevokeOtherUserSessions(1003, "current-session", "revoke_others")
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), count)
+	assert.Equal(t, int64(3), count)
 
 	current, err := GetUserSessionCached("current-session")
 	require.NoError(t, err)
 	assert.Equal(t, UserSessionStatusActive, current.Status)
+	currentMonitor, err := GetUserSessionBySID("current-monitor")
+	require.NoError(t, err)
+	assert.Equal(t, UserSessionStatusRevoked, currentMonitor.Status, "a monitor session is another device even when the current session issued it")
 	_, err = GetUserSessionCached("other-one")
 	assert.True(t, errors.Is(err, ErrUserSessionInactive))
 	stale, err := GetUserSessionBySID("other-one")

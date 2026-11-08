@@ -1,8 +1,12 @@
 package controller
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -721,6 +725,122 @@ func TestUpdateUserSettingKeepsWhatTheRequestLeavesOut(t *testing.T) {
 			assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, tc.wantSuccess))
 			require.NoError(t, db.First(&user, user.Id).Error)
 			assert.Equal(t, tc.want, user.GetSetting())
+		})
+	}
+}
+
+func createAvatarTestUser(t *testing.T, db *gorm.DB, name string, role int, setting dto.UserSetting) model.User {
+	t.Helper()
+	raw, err := common.Marshal(setting)
+	require.NoError(t, err)
+	user := model.User{Username: name, Role: role, Status: common.UserStatusEnabled, AffCode: name + "-aff", Setting: string(raw)}
+	require.NoError(t, db.Create(&user).Error)
+	return user
+}
+
+func savedAvatar(t *testing.T, db *gorm.DB, user model.User) *dto.UserAvatar {
+	t.Helper()
+	require.NoError(t, db.First(&user, user.Id).Error)
+	return user.GetSetting().Avatar
+}
+
+func TestUpdateSelfAvatarValidatesWhatItStores(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 64, 64))))
+	pngData := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	for _, tc := range []struct {
+		name     string
+		body     string
+		wantKind string
+	}{
+		{name: "built cat", body: `{"kind":"cat","cat":{"coat":"calico","ear":"soft","accessory":"pixel"}}`, wantKind: "cat"},
+		{name: "uploaded png", body: `{"kind":"upload","image":"data:image/png;base64,` + pngData + `"}`, wantKind: "upload"},
+		{name: "unknown cat part", body: `{"kind":"cat","cat":{"hat":"crown"}}`},
+		{name: "cat part id with markup", body: `{"kind":"cat","cat":{"coat":"<svg>"}}`},
+		{name: "svg image", body: `{"kind":"upload","image":"data:image/svg+xml;base64,PHN2Zy8+"}`},
+		{name: "png bytes labelled as webp", body: `{"kind":"upload","image":"data:image/webp;base64,` + pngData + `"}`},
+		{name: "image over the size limit", body: `{"kind":"upload","image":"data:image/png;base64,` + strings.Repeat("A", 40*1024) + `"}`},
+		{name: "unknown kind", body: `{"kind":"gif"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			user := createAvatarTestUser(t, db, "avatar-owner", common.RoleCommonUser, dto.UserSetting{Language: "en"})
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPut, "/api/user/self/avatar", strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set("id", user.Id)
+			UpdateSelfAvatar(c)
+
+			assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, tc.wantKind != ""))
+			require.NoError(t, db.First(&user, user.Id).Error)
+			assert.Equal(t, "en", user.GetSetting().Language)
+			avatar := user.GetSetting().Avatar
+			if tc.wantKind == "" {
+				assert.Nil(t, avatar)
+				return
+			}
+			require.NotNil(t, avatar)
+			assert.Equal(t, tc.wantKind, avatar.Kind)
+		})
+	}
+}
+
+func TestUpdateUserSettingKeepsTheAvatar(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	avatar := &dto.UserAvatar{Kind: "cat", Cat: map[string]string{"coat": "calico"}}
+	user := createAvatarTestUser(t, db, "avatar-keeper", common.RoleCommonUser, dto.UserSetting{Avatar: avatar})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/user/setting", strings.NewReader(`{"notify_type":"email","quota_warning_threshold":0}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("id", user.Id)
+	UpdateUserSetting(c)
+
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+	assert.Equal(t, avatar, savedAvatar(t, db, user))
+}
+
+func TestResetAvatarGoesBackToTheDefault(t *testing.T) {
+	avatar := &dto.UserAvatar{Kind: "cat", Cat: map[string]string{"coat": "calico"}}
+	for _, tc := range []struct {
+		name        string
+		callerRole  int
+		targetRole  int
+		byAdmin     bool
+		wantSuccess bool
+	}{
+		{name: "user resets their own avatar", targetRole: common.RoleCommonUser, wantSuccess: true},
+		{name: "administrator resets a user's avatar", callerRole: common.RoleAdminUser, targetRole: common.RoleCommonUser, byAdmin: true, wantSuccess: true},
+		{name: "administrator cannot reset another administrator", callerRole: common.RoleAdminUser, targetRole: common.RoleAdminUser, byAdmin: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			target := createAvatarTestUser(t, db, "avatar-target", tc.targetRole, dto.UserSetting{Avatar: avatar})
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			if tc.byAdmin {
+				c.Request = httptest.NewRequest(http.MethodDelete, "/api/user/"+strconv.Itoa(target.Id)+"/avatar", nil)
+				c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(target.Id)}}
+				c.Set("id", target.Id+1000)
+				c.Set("role", tc.callerRole)
+				AdminResetUserAvatar(c)
+			} else {
+				c.Request = httptest.NewRequest(http.MethodDelete, "/api/user/self/avatar", nil)
+				c.Set("id", target.Id)
+				ResetSelfAvatar(c)
+			}
+
+			assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"success":%t`, tc.wantSuccess))
+			if tc.wantSuccess {
+				assert.Nil(t, savedAvatar(t, db, target))
+				return
+			}
+			assert.Equal(t, avatar, savedAvatar(t, db, target))
 		})
 	}
 }
