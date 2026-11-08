@@ -142,7 +142,7 @@ func DeleteContentSafetyLogsBefore(ctx context.Context, cutoff int64) (int64, er
 		var deleted int64
 		for {
 			var ids []int
-			if err := LOG_DB.WithContext(ctx).Model(&ContentSafetyLog{}).Where("created_at < ?", cutoff).Order("id").Limit(contentSafetyDeleteBatch).Pluck("id", &ids).Error; err != nil {
+			if err := LOG_DB.WithContext(ctx).Model(&ContentSafetyLog{}).Where("created_at < ?", cutoff).Order("created_at").Limit(contentSafetyDeleteBatch).Pluck("id", &ids).Error; err != nil {
 				return deleted, err
 			}
 			if len(ids) == 0 {
