@@ -772,10 +772,12 @@ export function extractUsage() { return {seconds:2}; }
 	}
 }
 
-// A content safety decision on a task submission comes after the price is held
-// and before the upstream sees the request. It is local and final, so the
-// controller neither tries another channel nor blames this one, even for the
-// 503 of a review that could not conclude; its refund returns the hold.
+// A content safety decision on a task submission is made after the price is
+// held and before the upstream sees the request: the fake session shows the
+// hold, which the controller refunds because the submission never becomes
+// durable. The error is local and final, so the controller neither tries
+// another channel nor blames this one, even for the 503 of a review that could
+// not conclude.
 func TestRelayTaskSubmitContentSafetyRejectionIsLocalAndFinal(t *testing.T) {
 	const source = `
 export const meta = {apiVersion:1,key:"safety-gate",name:"Safety Gate",version:"1.0.0",author:{name:"Test"},models:["declared-model"],fetchMode:"per_task"};

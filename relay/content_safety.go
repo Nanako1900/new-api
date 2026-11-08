@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"time"
 
@@ -46,6 +48,18 @@ type contentReview struct {
 // before pre-consume; review windows wait in the context until
 // EnforceContentSafety runs after pre-consume.
 func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, text string) *types.NewAPIError {
+	// These formats count tokens over the raw request JSON, where an escape
+	// such as \u006f for "o" hides a word from the scan. Their decoded string
+	// values are scanned first, then the raw text, which also covers keys.
+	if info != nil {
+		switch request := info.Request.(type) {
+		case *dto.OpenAIResponsesCompactionRequest:
+			// Instructions and input are two JSON values, each may span lines.
+			text = contentsafety.CollectJSONText(request.Instructions) + contentsafety.CollectJSONText(request.Input) + text
+		case *dto.AlphaSearchRequest, *dto.DeepSeekToolsRequest:
+			text = contentsafety.CollectJSONText([]byte(text)) + text
+		}
+	}
 	cfg := operation_setting.GetContentSafetySetting().Bounded()
 	var reviewWords []string
 	if cfg.ReviewEnabled {
@@ -351,15 +365,20 @@ func recordContentSafetyLog(c *gin.Context, info *relaycommon.RelayInfo, entry m
 	gopool.Go(func() { model.RecordContentSafetyLog(entry) })
 }
 
-// taskRequestText is the prompt-bearing text of a task submission: every
-// string value of a JSON body, or every value of a multipart form, without
-// inline media.
+// taskRequestText is the prompt-bearing text of a task submission, read from
+// the body the upstream receives the way the plugin request parser reads it:
+// every string value of a JSON body, or every value of a multipart or
+// urlencoded form, without inline media. A body declared as a form that does
+// not decode is an error, so the caller fails closed.
 func taskRequestText(c *gin.Context) (string, error) {
 	contentType := c.Request.Header.Get("Content-Type")
 	if saved, ok := c.Get("_original_multipart_ct"); ok {
 		contentType, _ = saved.(string)
 	}
-	if strings.HasPrefix(contentType, "multipart/form-data") {
+	// The media type survives a malformed parameter, so a form with a broken
+	// boundary still fails as a form below.
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	if mediaType == "multipart/form-data" {
 		form, err := common.ParseMultipartFormReusable(c)
 		if err != nil {
 			return "", err
@@ -374,6 +393,13 @@ func taskRequestText(c *gin.Context) (string, error) {
 	body, err := storage.Bytes()
 	if err != nil {
 		return "", err
+	}
+	if mediaType == "application/x-www-form-urlencoded" {
+		values, err := url.ParseQuery(string(body))
+		if err != nil {
+			return "", err
+		}
+		return contentsafety.CollectFormText(values), nil
 	}
 	return contentsafety.CollectJSONText(body), nil
 }

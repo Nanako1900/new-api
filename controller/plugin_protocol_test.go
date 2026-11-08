@@ -1867,3 +1867,24 @@ func TestServeTaskPluginImageProtocolDisconnectDuringSubmissionKeepsDurableSettl
 	assert.False(t, c.Writer.Written())
 	assert.Empty(t, recorder.Body.String())
 }
+
+// The Responses protocol bridge reports a content safety decision with its own
+// code and message instead of a generic protocol error.
+func TestRespondPluginProtocolSubmissionErrorKeepsContentSafetyDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		code   string
+		status int
+	}{
+		{code: "sensitive_words_detected", status: http.StatusBadRequest},
+		{code: "content_review_rejected", status: http.StatusBadRequest},
+		{code: "content_review_unavailable", status: http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			respondPluginProtocolSubmissionError(c, &dto.TaskError{Code: tc.code, Message: "content decision", StatusCode: tc.status})
+			assert.Equal(t, tc.status, recorder.Code)
+			assert.JSONEq(t, `{"error":{"message":"content decision","type":"new_api_error","code":"`+tc.code+`"}}`, recorder.Body.String())
+		})
+	}
+}

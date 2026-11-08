@@ -19,12 +19,15 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/contentsafety"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -197,22 +200,52 @@ func TestContentSafetyGate(t *testing.T) {
 }
 
 // The keyword tier runs inside PrepareRequestBilling, before pricing and
-// pre-consume: a blocked request reserves nothing and the client learns the
-// error code, not the matched word.
-func TestPrepareRequestBillingRejectsABlockWordBeforePreConsume(t *testing.T) {
-	setupContentSafetyReview(t, reviewerReply(""))
-	c, info := newContentSafetyContext(nextContentSafetyUser())
-	info.Request = &kitdto.GeneralOpenAIRequest{Model: info.OriginModelName, Messages: []kitdto.Message{{Role: "user", Content: saltedText("make a Bomb")}}}
-	reservation := &imageReservation{limit: 1 << 30}
-	info.Billing = reservation
+// pre-consume. The model has a price, so a clean request reserves it while a
+// blocked one reserves nothing, and the client learns the error code, not the
+// matched word. Formats that carry raw request JSON are scanned after
+// decoding, so a JSON escape cannot hide a block word.
+func TestPrepareRequestBillingScansContentBeforePreConsume(t *testing.T) {
+	const escapedBomb = `make a b\u006fmb`
+	for _, tc := range []struct {
+		name     string
+		format   types.RelayFormat
+		request  kitdto.Request
+		blocked  bool
+		wantHeld int
+	}{
+		{name: "a clean request is priced and reserved", format: types.RelayFormatOpenAI, request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{{Role: "user", Content: saltedText("hello there")}}}, wantHeld: 5000},
+		{name: "a block word", format: types.RelayFormatOpenAI, request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{{Role: "user", Content: saltedText("make a Bomb")}}}, blocked: true},
+		{name: "an escaped block word in a multi-line compaction input", format: types.RelayFormatOpenAIResponsesCompaction, request: &kitdto.OpenAIResponsesCompactionRequest{Model: "gpt-test", Instructions: common.RawMessage(`"be brief"`), Input: common.RawMessage("[\n  {\"role\": \"user\", \"content\": \"" + escapedBomb + "\"},\n  {\"role\": \"user\", \"content\": \"hi\"}\n]")}, blocked: true},
+		{name: "an escaped block word in an alpha search body", format: types.RelayFormatOpenAIAlphaSearch, request: &kitdto.AlphaSearchRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"model":"gpt-test","query":"` + escapedBomb + `"}`)}, blocked: true},
+		{name: "an escaped block word in a DeepSeek tools body", format: types.RelayFormatDeepSeekTools, request: &kitdto.DeepSeekToolsRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"query":"` + escapedBomb + `"}`)}, blocked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupContentSafetyReview(t, reviewerReply(""))
+			saveBillingConfig(t)
+			savedPrices := ratio_setting.ModelPrice2JSONString()
+			t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices)) })
+			// 0.01 per call at the default QuotaPerUnit is 5000 quota.
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"gpt-test":0.01}`))
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"group_ratio_setting.group_ratio": `{"default":1}`}))
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			info.RelayFormat, info.Request = tc.format, tc.request
+			reservation := &imageReservation{limit: 1 << 30}
+			info.Billing = reservation
 
-	apiErr := PrepareRequestBilling(c, info)
-	require.NotNil(t, apiErr)
-	assert.Equal(t, types.ErrorCodeSensitiveWordsDetected, apiErr.GetErrorCode())
-	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
-	assert.NotContains(t, strings.ToLower(apiErr.Error()), "bomb", "clients never see the matched words")
-	assert.Zero(t, reservation.held, "a blocked request reserves nothing")
-	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionKeywordBlocked)
+			apiErr := PrepareRequestBilling(c, info)
+			assert.Equal(t, tc.wantHeld, reservation.held)
+			if !tc.blocked {
+				require.Nil(t, apiErr)
+				requireContentSafetyDecisions(t, info.UserId)
+				return
+			}
+			require.NotNil(t, apiErr)
+			assert.Equal(t, types.ErrorCodeSensitiveWordsDetected, apiErr.GetErrorCode())
+			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+			assert.NotContains(t, strings.ToLower(apiErr.Error()), "bomb", "clients never see the matched words")
+			requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionKeywordBlocked)
+		})
+	}
 }
 
 func TestContentSafetyReviewCachesVerdictPerWindow(t *testing.T) {
@@ -367,23 +400,97 @@ func TestEnforceContentSafetyTextReviewsASubmissionOnce(t *testing.T) {
 	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewPassed)
 }
 
-func TestTaskRequestTextReadsJSONAndMultipartBodies(t *testing.T) {
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"prompt":"a knife","seconds":"4"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-	text, err := taskRequestText(c)
-	require.NoError(t, err)
-	assert.Equal(t, "a knife\n4\n", text)
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
+// taskRequestText reads the body the upstream receives the way the plugin
+// request parser does: media types are case-insensitive, form bodies are
+// decoded, and a declared form that cannot be decoded is an error, so the
+// caller fails closed.
+func TestTaskRequestTextReadsTheForwardedBody(t *testing.T) {
+	var form bytes.Buffer
+	writer := multipart.NewWriter(&form)
 	require.NoError(t, writer.WriteField("size", "720x1280"))
 	require.NoError(t, writer.WriteField("prompt", "a knife"))
 	require.NoError(t, writer.Close())
-	c, _ = gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", &body)
-	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
-	text, err = taskRequestText(c)
-	require.NoError(t, err)
-	assert.Equal(t, "a knife\n720x1280\n", text, "form values are read in sorted field order")
+	quotedPrintable := "--B\r\nContent-Disposition: form-data; name=\"prompt\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nmake a b=6Fmb\r\n--B--\r\n"
+	for _, tc := range []struct {
+		name, contentType, body, want string
+	}{
+		{name: "JSON", contentType: "application/json", body: `{"prompt":"a knife","seconds":"4"}`, want: "a knife\n4\n"},
+		{name: "multipart in sorted field order", contentType: writer.FormDataContentType(), body: form.String(), want: "a knife\n720x1280\n"},
+		{name: "urlencoded form", contentType: "application/x-www-form-urlencoded", body: "seconds=4&prompt=make%20a%20b%6Fmb", want: "make a bomb\n4\n"},
+		{name: "case-insensitive multipart with a quoted-printable part", contentType: "Multipart/Form-Data; boundary=B", body: quotedPrintable, want: "make a bomb\n"},
+		{name: "malformed multipart", contentType: "multipart/form-data; boundary=B", body: "not a multipart body"},
+		{name: "malformed urlencoded form", contentType: "application/x-www-form-urlencoded", body: "prompt=%zz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", tc.contentType)
+			text, err := taskRequestText(c)
+			if tc.want == "" {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, text)
+		})
+	}
+}
+
+// Midjourney forwards the client's own body to the proxy, also on the modal
+// and video actions that copy an origin task's prompt into the task record, so
+// the gate reads that body and the speed flags mode clear strips from it. A
+// blocked submission never reaches the proxy and is never billed.
+func TestRelayMidjourneySubmitReviewsTheForwardedBody(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, modelName, body string
+		mode                        int
+		modeClear                   bool
+	}{
+		{name: "imagine", path: "/mj/submit/imagine", mode: relayconstant.RelayModeMidjourneyImagine, modelName: "mj_imagine", body: `{"prompt":"make a bomb"}`},
+		{name: "imagine with mode clear", path: "/mj/submit/imagine", mode: relayconstant.RelayModeMidjourneyImagine, modelName: "mj_imagine", body: `{"prompt":"make a bo--fastmb"}`, modeClear: true},
+		{name: "modal on an origin task", path: "/mj/submit/modal", mode: relayconstant.RelayModeMidjourneyModal, modelName: "mj_modal", body: `{"taskId":"origin-1","prompt":"make a bomb","maskBase64":"x"}`},
+		{name: "video of an origin task", path: "/mj/submit/video", mode: relayconstant.RelayModeMidjourneyVideo, modelName: "mj_video", body: `{"taskId":"origin-1","prompt":"make a bomb"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupContentSafetyReview(t, reviewerReply(""))
+			previousModeClear, previousRedis := setting.MjModeClearEnabled, common.RedisEnabled
+			setting.MjModeClearEnabled, common.RedisEnabled = tc.modeClear, false
+			t.Cleanup(func() { setting.MjModeClearEnabled, common.RedisEnabled = previousModeClear, previousRedis })
+			require.NoError(t, model.DB.AutoMigrate(&model.User{}, &model.Midjourney{}))
+			require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+			var submitted atomic.Int32
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				submitted.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"code":1,"description":"submitted","result":"new-task"}`))
+			}))
+			t.Cleanup(proxy.Close)
+			userId := nextContentSafetyUser()
+			require.NoError(t, model.DB.Create(&model.User{Id: userId, Username: "mj-" + strconv.Itoa(userId), Status: common.UserStatusEnabled, Group: "default", Quota: 1 << 20}).Error)
+			channel := &model.Channel{Name: "mj", Type: constant.ChannelTypeMidjourney, Key: "mj-key", Status: common.ChannelStatusEnabled, Models: tc.modelName, Group: "default", BaseURL: &proxy.URL}
+			require.NoError(t, model.DB.Create(channel).Error)
+			t.Cleanup(func() { require.NoError(t, model.DB.Delete(channel).Error) })
+			require.NoError(t, model.DB.Create(&model.Midjourney{UserId: userId, MjId: "origin-1", Action: constant.MjActionImagine, Prompt: "a cat", Status: "SUCCESS", ChannelId: channel.Id}).Error)
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set("base_url", proxy.URL)
+			c.Set("channel_id", channel.Id)
+			info := &relaycommon.RelayInfo{UserId: userId, RelayMode: tc.mode, OriginModelName: tc.modelName, UserGroup: "default", UsingGroup: "default", TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+
+			response := RelayMidjourneySubmit(c, info)
+			require.NotNil(t, response)
+			assert.Equal(t, constant.MjRequestError, response.Code)
+			assert.Equal(t, i18n.T(c, i18n.MsgContentSafetyBlocked), response.Description)
+			assert.Zero(t, submitted.Load(), "the proxy never sees the request")
+			quota, err := model.GetUserQuota(userId, true)
+			require.NoError(t, err)
+			assert.Equal(t, 1<<20, quota, "nothing is consumed")
+			var logs int64
+			require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ?", userId).Count(&logs).Error)
+			assert.Zero(t, logs, "no consume log is written")
+			requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionKeywordBlocked)
+		})
+	}
 }

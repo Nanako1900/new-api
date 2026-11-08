@@ -27,6 +27,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -869,6 +870,93 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 			assertResponsesWSAccounting(t, fixture, nil)
 		})
 	}
+}
+
+// A review word holds a WebSocket request for the AI review after its
+// reservation. An unsafe verdict answers with content_review_rejected, the
+// upstream is never dialed, and the reservation is returned.
+func TestResponsesWebSocketContentReviewRejectionRefundsReservation(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {})
+	require.NoError(t, model.LOG_DB.AutoMigrate(&model.ContentSafetyLog{}))
+	cfg := operation_setting.GetContentSafetySetting()
+	previous := *cfg
+	cfg.ReviewEnabled, cfg.ReviewModel, cfg.ReviewGroup, cfg.ReviewWords, cfg.ReviewTimeoutSeconds = true, "ws-judge", "default", "knife", 5
+	previousWords, previousEnabled, previousOnPrompt := setting.SensitiveWords, setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled
+	setting.SensitiveWords, setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled = nil, true, true
+	t.Cleanup(func() {
+		*cfg = previous
+		setting.SensitiveWords, setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled = previousWords, previousEnabled, previousOnPrompt
+	})
+	reply, err := common.Marshal(map[string]any{
+		"id": "chatcmpl-review", "object": "chat.completion", "model": "ws-judge",
+		"choices": []map[string]any{{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": `{"results":[{"id":1,"safe":false,"category":"violence","reason":"harm"}]}`}}},
+		"usage":   map[string]any{"prompt_tokens": 40, "completion_tokens": 10, "total_tokens": 50},
+	})
+	require.NoError(t, err)
+	reservedAtReview := make(chan int, 1)
+	reviewer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		var token model.Token
+		if assert.NoError(t, model.DB.First(&token, fixture.token.Id).Error) {
+			select {
+			case reservedAtReview <- token.RemainQuota:
+			default:
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(reply)
+	}))
+	t.Cleanup(reviewer.Close)
+	reviewChannel := &model.Channel{Name: "ws-reviewer", Key: "reviewer-key", Status: common.ChannelStatusEnabled, Type: constant.ChannelTypeOpenAI, Group: "default", Models: "ws-judge", BaseURL: &reviewer.URL}
+	require.NoError(t, model.DB.Create(reviewChannel).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{ChannelId: reviewChannel.Id, Model: "ws-judge", Group: "default", Enabled: true}).Error)
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Where("channel_id = ?", reviewChannel.Id).Delete(&model.Ability{}).Error)
+		require.NoError(t, model.DB.Delete(reviewChannel).Error)
+	})
+	updates := make(chan struct{}, 4)
+	require.NoError(t, model.DB.Callback().Update().After("gorm:commit_or_rollback_transaction").Register("responses-ws-review-refund", func(tx *gorm.DB) {
+		if tx.Error == nil && tx.Statement.Table == "tokens" {
+			select {
+			case updates <- struct{}{}:
+			default:
+			}
+		}
+	}))
+
+	input := fmt.Sprintf("sharpen the knife for user %d", fixture.user.Id)
+	require.NoError(t, fixture.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.create","model":"ws-billing","input":"`+input+`","max_output_tokens":10}`)))
+	rejection := readResponsesWSTestEvent(t, fixture.client)
+	assert.Equal(t, "error", rejection["type"])
+	assert.Equal(t, float64(http.StatusBadRequest), rejection["status"])
+	rejectionError, _ := rejection["error"].(map[string]any)
+	assert.Equal(t, string(types.ErrorCodeContentReviewRejected), rejectionError["code"])
+	select {
+	case reserved := <-reservedAtReview:
+		assert.Equal(t, 2000, reserved, "the request reserved its price before the review")
+	case <-time.After(3 * time.Second):
+		t.Fatal("the review model was never asked")
+	}
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	for {
+		require.NoError(t, model.DB.First(fixture.token, fixture.token.Id).Error)
+		if fixture.token.RemainQuota == 3000 {
+			break
+		}
+		select {
+		case <-updates:
+		case <-deadline.C:
+			t.Fatal("the content review rejection did not refund the token reservation")
+		}
+	}
+	require.Eventually(t, func() bool {
+		logs, _, err := model.GetContentSafetyLogs(model.ContentSafetyLogFilter{UserId: fixture.user.Id, Decision: model.ContentSafetyDecisionReviewRejected}, 0, 10)
+		return err == nil && len(logs) == 1
+	}, 3*time.Second, 20*time.Millisecond)
+	assert.Zero(t, fixture.connections.Load(), "the upstream is never dialed")
+	fixture.closeAndWait(t)
+	assertResponsesWSAccounting(t, fixture, nil)
 }
 
 // TEST_RESPONSES_SQL_DSN / TEST_RESPONSES_LOG_SQL_DSN optionally run these

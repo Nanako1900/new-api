@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
 // DefaultReviewPrompt is used when the review_prompt option is blank.
@@ -23,6 +24,18 @@ const (
 
 // ErrUnparseable means the reviewer reply is not a complete verdict for every item.
 var ErrUnparseable = errors.New("content review reply is not a complete verdict")
+
+// IsDecisionErrorCode reports whether code is the client error code of a
+// content safety decision. Presenters that map errors to generic codes pass
+// these through with their message, so a client can tell a rejected prompt
+// from a malformed request or a server failure.
+func IsDecisionErrorCode(code string) bool {
+	switch types.ErrorCode(code) {
+	case types.ErrorCodeSensitiveWordsDetected, types.ErrorCodeContentReviewRejected, types.ErrorCodeContentReviewUnavailable:
+		return true
+	}
+	return false
+}
 
 // Verdict is the reviewer's conclusion for one window.
 type Verdict struct {
