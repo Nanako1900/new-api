@@ -153,6 +153,9 @@ describe('meow pricing catalog', () => {
   })
 
   it('opens the details drawer when a model name is clicked', async () => {
+    // The drawer loads lazily; warm its chunk so a cold module cache cannot
+    // outlast the lookup below.
+    await import('../components/model-details')
     const user = userEvent.setup()
     mockApi()
     renderCatalog()
@@ -164,14 +167,9 @@ describe('meow pricing catalog', () => {
     )
 
     expect(
-      // The drawer chunk loads lazily, which is slow on a cold module cache.
-      await screen.findByRole(
-        'dialog',
-        { name: 'claude-sonnet' },
-        { timeout: 10_000 }
-      )
+      await screen.findByRole('dialog', { name: 'claude-sonnet' })
     ).toBeInTheDocument()
-  })
+  }, 60_000)
 
   it('shows each channel the success rate measured for its group', async () => {
     mockApi({ perf: { official: 99.95, kiro: 97.8 } })
