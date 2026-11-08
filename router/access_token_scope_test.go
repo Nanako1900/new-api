@@ -95,6 +95,7 @@ var accessTokenExemptRoutes = []string{
 var accessTokenHelperRoutes = map[string]authz.Permission{
 	"GET /api/task_plugin_options": authz.TaskPluginBind,
 	"GET /api/audit":               authz.AuditRead,
+	"GET /api/content_safety/logs": authz.AuditRead,
 }
 
 func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {

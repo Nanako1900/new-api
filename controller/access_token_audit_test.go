@@ -1256,3 +1256,40 @@ CREATE TABLE IF NOT EXISTS logs (
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(toDateTime(created_at))
 ORDER BY (created_at, request_id)`
+
+func TestGetContentSafetyLogsFiltersAndRejectsInvalidQueries(t *testing.T) {
+	_, pat := setupAccessTokenAudit(t)
+	require.NoError(t, model.MigrateContentSafetyLogs())
+	now := time.Now().Unix()
+	model.RecordContentSafetyLog(model.ContentSafetyLog{CreatedAt: now, RequestId: "req-blocked", UserId: 7, Decision: model.ContentSafetyDecisionKeywordBlocked})
+	model.RecordContentSafetyLog(model.ContentSafetyLog{CreatedAt: now, RequestId: "req-passed", UserId: 7, Decision: model.ContentSafetyDecisionReviewPassed})
+	router := gin.New()
+	router.GET("/api/content_safety/logs", middleware.AdminAuth(), GetContentSafetyLogs)
+
+	var result struct {
+		Success bool
+		Data    struct {
+			Items []model.ContentSafetyLog
+			Total int
+		}
+	}
+	for query, wantRequest := range map[string]string{
+		"decision=keyword_blocked":                     "req-blocked",
+		"request_id=req-passed&user_id=7":              "req-passed",
+		"decision=review_passed&request_id=req-passed": "req-passed",
+	} {
+		response := auditRequest(router, "GET", "/api/content_safety/logs?"+query, pat)
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+		require.True(t, result.Success, query)
+		require.Equal(t, 1, result.Data.Total, query)
+		require.Len(t, result.Data.Items, 1, query)
+		assert.Equal(t, wantRequest, result.Data.Items[0].RequestId, query)
+	}
+	response := auditRequest(router, "GET", "/api/content_safety/logs", pat)
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.Equal(t, 2, result.Data.Total)
+
+	for _, query := range []string{"decision=bogus", "start_timestamp=2&end_timestamp=1", "user_id=abc", "user_id=0", "request_id=" + strings.Repeat("x", 65)} {
+		assert.Contains(t, auditRequest(router, "GET", "/api/content_safety/logs?"+query, pat).Body.String(), `"success":false`, query)
+	}
+}
