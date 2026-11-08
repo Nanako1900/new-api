@@ -110,14 +110,15 @@
       }
       /* "Meow API" in Plus Jakarta Sans 700 as outlines, so it needs no
          font download. Each letter closes in from a wider spacing, then the
-         letters dim in turn while the app is still loading. */
+         letters dim in turn while the app is still loading: every 1.2s a
+         dip (0.3s down, 0.42s back) runs from M to I, 90ms per letter. */
       .meow-splash-word {
         height: 20px;
         overflow: visible;
         fill: currentColor;
       }
       .meow-splash-word g {
-        animation: meow-splash-wave 1.6s ease-in-out
+        animation: meow-splash-wave 1.2s ease-in-out
           calc(var(--meow-splash-delay) + 0.5s + var(--i) * 90ms) infinite;
       }
       .meow-splash-word path {
@@ -160,11 +161,12 @@
       }
       @keyframes meow-splash-wave {
         0%,
+        60%,
         100% {
           opacity: 1;
         }
-        45% {
-          opacity: 0.3;
+        25% {
+          opacity: 0.35;
         }
       }
       @media (prefers-reduced-motion: reduce) {
