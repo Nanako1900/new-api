@@ -434,13 +434,19 @@ func TestTaskRequestTextReadsTheForwardedBody(t *testing.T) {
 	require.NoError(t, writer.WriteField("prompt", "a knife"))
 	require.NoError(t, writer.Close())
 	quotedPrintable := "--B\r\nContent-Disposition: form-data; name=\"prompt\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nmake a b=6Fmb\r\n--B--\r\n"
+	var namedForm bytes.Buffer
+	namedWriter := multipart.NewWriter(&namedForm)
+	require.NoError(t, namedWriter.WriteField("bomb", "x"))
+	require.NoError(t, namedWriter.Close())
 	for _, tc := range []struct {
 		name, contentType, body, want string
 	}{
 		{name: "JSON with its keys", contentType: "application/json", body: `{"prompt":"a knife","seconds":"4"}`, want: "prompt\na knife\nseconds\n4\n"},
-		{name: "multipart in sorted field order", contentType: writer.FormDataContentType(), body: form.String(), want: "a knife\n720x1280\n"},
-		{name: "urlencoded form", contentType: "application/x-www-form-urlencoded", body: "seconds=4&prompt=make%20a%20b%6Fmb", want: "make a bomb\n4\n"},
-		{name: "case-insensitive multipart with a quoted-printable part", contentType: "Multipart/Form-Data; boundary=B", body: quotedPrintable, want: "make a bomb\n"},
+		{name: "multipart in sorted field order", contentType: writer.FormDataContentType(), body: form.String(), want: "prompt\na knife\nsize\n720x1280\n"},
+		{name: "urlencoded form", contentType: "application/x-www-form-urlencoded", body: "seconds=4&prompt=make%20a%20b%6Fmb", want: "prompt\nmake a bomb\nseconds\n4\n"},
+		{name: "case-insensitive multipart with a quoted-printable part", contentType: "Multipart/Form-Data; boundary=B", body: quotedPrintable, want: "prompt\nmake a bomb\n"},
+		{name: "an encoded urlencoded field name", contentType: "application/x-www-form-urlencoded", body: "b%6Fmb=1", want: "bomb\n1\n"},
+		{name: "a multipart field name", contentType: namedWriter.FormDataContentType(), body: namedForm.String(), want: "bomb\nx\n"},
 		{name: "malformed multipart", contentType: "multipart/form-data; boundary=B", body: "not a multipart body"},
 		{name: "malformed urlencoded form", contentType: "application/x-www-form-urlencoded", body: "prompt=%zz"},
 	} {
