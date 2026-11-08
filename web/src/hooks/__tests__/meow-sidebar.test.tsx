@@ -28,7 +28,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
+import { type UserPermissions, useAuthStore } from '@/stores/auth-store'
 
 import { useSidebarView } from '../use-sidebar-view'
 
@@ -66,12 +66,17 @@ function SidebarEntries() {
   )
 }
 
-async function sidebarEntries(role: number): Promise<string[]> {
+async function sidebarEntries(
+  role: number,
+  permissions?: UserPermissions
+): Promise<string[]> {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
   client.setQueryData(['status'], { SidebarModulesAdmin: '' })
-  useAuthStore.getState().auth.setUser({ id: 1, username: 'alice', role })
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, username: 'alice', role, permissions })
   const router = createRouter({
     routeTree: createRootRoute({ component: SidebarEntries }),
     history: createMemoryHistory({ initialEntries: ['/dashboard/overview'] }),
@@ -117,4 +122,16 @@ test('admins find Task Logs and Chat at the top of the Admin group', async () =>
   expect(admin.slice(0, 2)).toEqual(['admin: Task Logs', 'admin: Chat'])
   expect(entries).not.toContain('general: Task Logs')
   expect(entries).not.toContain('chat: Chat')
+})
+
+test('admins without the audit read permission do not see Content Safety Logs', async () => {
+  const titles = titlesOf(await sidebarEntries(ROLE.ADMIN))
+  expect(titles).not.toContain('Content Safety Logs')
+})
+
+test('admins with the audit read permission find Content Safety Logs in the Admin group', async () => {
+  const entries = await sidebarEntries(ROLE.ADMIN, {
+    admin_permissions: { audit: { read: true } },
+  })
+  expect(entries).toContain('admin: Content Safety Logs')
 })

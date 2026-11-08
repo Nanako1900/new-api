@@ -27,6 +27,7 @@ import type {
   SidebarBadges,
 } from '@/components/layout/types'
 import { useModelPricingIssueBadge } from '@/features/system-settings/models/pricing-issues'
+import { hasPermission } from '@/lib/admin-permissions'
 import { moveAdminOnlyItems } from '@/lib/meow-sidebar'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -53,7 +54,7 @@ const ROOT_VIEW_KEY = '__root'
 export function useSidebarView(): ResolvedSidebarView {
   const { t } = useTranslation()
   const pathname = useLocation({ select: (l) => l.pathname })
-  const userRole = useAuthStore((s) => s.auth.user?.role)
+  const user = useAuthStore((s) => s.auth.user)
   const modelPricingBadge = useModelPricingIssueBadge()
   const badges: SidebarBadges = { modelPricing: modelPricingBadge }
   const rootSidebarData = useSidebarData(badges)
@@ -63,17 +64,24 @@ export function useSidebarView(): ResolvedSidebarView {
   )
 
   const rootNavGroups = useMemo<NavGroup[]>(() => {
-    const role = userRole ?? ROLE.GUEST
+    const role = user?.role ?? ROLE.GUEST
     const isAdmin = role >= ROLE.ADMIN
     return configFilteredRoot
       .filter((group) => (group.id === 'admin' ? isAdmin : true))
       .map((group) => {
         const items = group.items.filter(
-          (item) => item.requiredRole === undefined || role >= item.requiredRole
+          (item) =>
+            (item.requiredRole === undefined || role >= item.requiredRole) &&
+            (item.requiredPermission === undefined ||
+              hasPermission(
+                user,
+                item.requiredPermission.resource,
+                item.requiredPermission.action
+              ))
         )
         return items.length === group.items.length ? group : { ...group, items }
       })
-  }, [configFilteredRoot, userRole])
+  }, [configFilteredRoot, user])
 
   const view = resolveSidebarView(pathname)
 
