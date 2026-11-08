@@ -24,6 +24,8 @@ import { getServerErrorStatus } from './server-error-message'
 interface ErrorNotificationMeta extends Record<string, unknown> {
   /** Disable automatic notifications when a caller presents the failure itself. */
   errorToast?: boolean
+  /** MeowAPI: queries whose failure the page shows inline (price list metrics) skip the 500 page. */
+  errorPage?: boolean
 }
 
 declare module '@tanstack/react-query' {
@@ -58,7 +60,12 @@ export function createAppQueryClient(
     queryCache: new QueryCache({
       onError: (error, query) => {
         if (query.meta?.errorToast !== false) handleServerError(error)
-        if (getServerErrorStatus(error) === 500) onInternalServerError?.()
+        if (
+          getServerErrorStatus(error) === 500 &&
+          query.meta?.errorPage !== false
+        ) {
+          onInternalServerError?.()
+        }
       },
     }),
   })
