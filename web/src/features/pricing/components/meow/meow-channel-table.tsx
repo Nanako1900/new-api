@@ -50,11 +50,9 @@ export function MeowChannelBadge(props: MeowChannelBadgeProps) {
       )}
     >
       <Label className='font-semibold'>{props.channel.label}</Label>
-      <span
-        title={t('Group Ratio')}
-        className='bg-primary/10 text-primary rounded-md px-1.5 py-0.5 font-mono text-xs'
-      >
-        ×{formatNumber(props.channel.ratio, locale)}
+      <span className='bg-muted text-foreground rounded-md px-1.5 py-0.5 font-mono text-xs'>
+        <span className='sr-only'>{t('Group Ratio')} </span>×
+        {formatNumber(props.channel.ratio, locale)}
       </span>
       <span className='text-muted-foreground flex items-center gap-1 text-xs'>
         {t('Token group')}
@@ -116,7 +114,6 @@ export function MeowChannelTable(props: MeowChannelTableProps) {
             key={model.model_name}
             model={model}
             group={props.channel.group}
-            ratio={props.channel.ratio}
             prices={props.prices}
             perf={props.perf.byModel
               .get(model.model_name)

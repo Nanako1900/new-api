@@ -52,6 +52,26 @@ const SONNET: PricingModel = {
   context_length: 200_000,
   enable_groups: ['official', 'kiro'],
 }
+const TOOL: PricingModel = {
+  id: 3,
+  model_name: 'claude-tool',
+  quota_type: 1,
+  model_price: 0.04,
+  model_ratio: 0,
+  completion_ratio: 0,
+  enable_groups: ['official'],
+}
+const TIERED: PricingModel = {
+  id: 4,
+  model_name: 'claude-tiered',
+  billing_mode: 'tiered_expr',
+  billing_expr:
+    'len <= 200000 ? tier("short", p * 2 + c * 8) : tier("long", p * 4 + c * 16)',
+  quota_type: 0,
+  model_ratio: 0,
+  completion_ratio: 0,
+  enable_groups: ['official'],
+}
 const GPT: PricingModel = {
   id: 2,
   model_name: 'gpt-6-sol',
@@ -63,7 +83,7 @@ const GPT: PricingModel = {
 
 function family(id: MeowFamilyId): MeowFamily {
   const found = buildMeowCatalog(
-    [SONNET, GPT],
+    [SONNET, TOOL, TIERED, GPT],
     { official: 'Official', kiro: 'Kiro' },
     GROUP_RATIO
   ).find((item) => item.id === id)
@@ -202,6 +222,30 @@ describe('meow family card', () => {
     )
 
     expect(onSelect).not.toHaveBeenCalled()
+    await expect(navigator.clipboard.readText()).resolves.toBe('claude-sonnet')
+  })
+
+  it('shows a per-request price across the price columns with the channel multiplier', () => {
+    renderFamily('claude')
+
+    const row = within(
+      screen.getByRole('table', { name: 'Claude · Official' })
+    ).getByRole('row', { name: /claude-tool/ })
+    const cells = within(row).getAllByRole('cell')
+    expect(cells[1]).toHaveTextContent('$0.06 / request')
+    expect(cells[1]).toHaveAttribute('aria-colspan', '3')
+    expect(cells).toHaveLength(4)
+  })
+
+  it('shows expression prices with the channel multiplier applied once and notes the tiers', () => {
+    renderFamily('claude')
+
+    const row = within(
+      screen.getByRole('table', { name: 'Claude · Official' })
+    ).getByRole('row', { name: /claude-tiered/ })
+    const cell = within(row).getAllByRole('cell')[1]
+    expect(within(cell).getByTitle(/^3(\.0+)?$/)).toBeInTheDocument()
+    expect(cell).toHaveTextContent('2 tiers')
   })
 
   it('shows each channel its own success rate and speed', () => {

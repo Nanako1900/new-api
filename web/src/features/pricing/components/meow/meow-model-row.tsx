@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ReactNode } from 'react'
+import { type ReactNode, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
 import {
   formatLatency,
   formatThroughput,
+  formatUptimePct,
 } from '@/features/performance-metrics/lib/format'
 import type { PerformanceGroup } from '@/features/performance-metrics/types'
 import { toIntlLocale } from '@/i18n/languages'
@@ -31,13 +32,11 @@ import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { QUOTA_TYPE_VALUES } from '../../constants'
-import {
-  getDynamicPricingSummary,
-  isDynamicPricingModel,
-} from '../../lib/dynamic-price'
+import { isDynamicPricingModel } from '../../lib/dynamic-price'
 import { toStatusSlots } from '../../lib/meow-catalog'
 import { formatFixedPrice, formatGroupPrice } from '../../lib/price'
 import type { PriceType, PricingModel } from '../../types'
+import { ModelPriceCell } from '../model-price-cell'
 import { MeowStatusBar } from './meow-status-bar'
 
 /** Desktop column widths shared by the header row and the model rows. */
@@ -66,39 +65,13 @@ type ChannelPrices =
   | { kind: 'request'; price: string }
   | { kind: 'dynamic' }
 
-/** A model's prices in one channel, already multiplied by the channel ratio. */
+/** A model's prices in one channel, from the page's group ratios. */
 function getChannelPrices(
   model: PricingModel,
   group: string,
-  ratio: number,
   prices: MeowPriceOptions
 ): ChannelPrices {
-  if (isDynamicPricingModel(model)) {
-    const summary = getDynamicPricingSummary(model, {
-      tokenUnit: 'M',
-      showRechargePrice: prices.showRechargePrice,
-      priceRate: prices.priceRate,
-      usdExchangeRate: prices.usdExchangeRate,
-      groupRatioMultiplier: ratio,
-    })
-    const entries =
-      summary && !summary.isSpecialExpression ? summary.entries : []
-    const tokenPrices = new Map(
-      entries
-        .filter((entry) => entry.unit === 'token')
-        .map(
-          (entry) =>
-            [entry.field, entry.formattedRange ?? entry.formatted] as const
-        )
-    )
-    if (!tokenPrices.has('inputPrice')) return { kind: 'dynamic' }
-    return {
-      kind: 'token',
-      values: TOKEN_PRICE_COLUMNS.map(
-        (column) => tokenPrices.get(column.field) ?? '—'
-      ),
-    }
-  }
+  if (isDynamicPricingModel(model)) return { kind: 'dynamic' }
   if (model.quota_type === QUOTA_TYPE_VALUES.REQUEST) {
     return {
       kind: 'request',
@@ -133,7 +106,6 @@ function getChannelPrices(
 export interface MeowModelRowProps {
   model: PricingModel
   group: string
-  ratio: number
   prices: MeowPriceOptions
   perf: PerformanceGroup | undefined
   windowEnd: number | undefined
@@ -146,21 +118,25 @@ export function MeowModelRow(props: MeowModelRowProps) {
   useSystemConfigStore((state) => state.config.currency)
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const name = props.model.model_name
-  const channelPrices = getChannelPrices(
-    props.model,
-    props.group,
-    props.ratio,
-    props.prices
-  )
+  const channelPrices = getChannelPrices(props.model, props.group, props.prices)
   const successRate = props.perf?.success_rate
   const hasSuccessRate =
     successRate !== undefined &&
     Number.isFinite(successRate) &&
     successRate >= 0 &&
     successRate <= 100
-  const missingPerfTitle = props.perf
-    ? undefined
-    : t('No performance data available')
+
+  // ModelPriceCell takes the ratio of `selectedGroup` from the model's own
+  // groups; pin this channel's group and the page's ratios (a model enabled for
+  // `all` would otherwise get ratio 1).
+  const channelModel = useMemo(
+    () => ({
+      ...props.model,
+      enable_groups: [props.group],
+      group_ratio: props.prices.groupRatio,
+    }),
+    [props.model, props.group, props.prices.groupRatio]
+  )
 
   let priceCells: ReactNode
   if (channelPrices.kind === 'token') {
@@ -182,11 +158,24 @@ export function MeowModelRow(props: MeowModelRowProps) {
     priceCells = (
       <div
         role='cell'
-        className='text-muted-foreground order-3 col-span-3 font-mono md:order-none'
+        aria-colspan={3}
+        className='order-3 col-span-3 min-w-0 font-mono md:order-none'
       >
-        {channelPrices.kind === 'request'
-          ? `${channelPrices.price} / ${t('request')}`
-          : t('Dynamic Pricing')}
+        {channelPrices.kind === 'request' ? (
+          `${channelPrices.price} / ${t('request')}`
+        ) : (
+          <ModelPriceCell
+            model={channelModel}
+            options={{
+              tokenUnit: 'M',
+              priceRate: props.prices.priceRate,
+              usdExchangeRate: props.prices.usdExchangeRate,
+              showRechargePrice: props.prices.showRechargePrice,
+              selectedGroup: props.group,
+            }}
+            showExpression={false}
+          />
+        )}
       </div>
     )
   }
@@ -206,6 +195,7 @@ export function MeowModelRow(props: MeowModelRowProps) {
         <div className='flex min-w-0 items-center gap-1'>
           <button
             type='button'
+            aria-haspopup='dialog'
             onClick={() => props.onSelect(name)}
             className='focus-visible:after:ring-ring truncate text-left font-mono font-medium outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-inset'
           >
@@ -229,10 +219,9 @@ export function MeowModelRow(props: MeowModelRowProps) {
       {priceCells}
       <div
         role='cell'
-        title={missingPerfTitle}
         className='order-2 text-right font-mono text-xs tabular-nums md:order-none md:text-left'
       >
-        {hasSuccessRate ? `${successRate.toFixed(2)}%` : '—'}
+        {hasSuccessRate ? formatUptimePct(successRate) : '—'}
         {props.perf && props.windowEnd !== undefined && (
           <MeowStatusBar
             slots={toStatusSlots(props.perf.series, props.windowEnd)}
@@ -242,7 +231,6 @@ export function MeowModelRow(props: MeowModelRowProps) {
       </div>
       <div
         role='cell'
-        title={missingPerfTitle}
         className='text-muted-foreground hidden font-mono text-xs tabular-nums md:block'
       >
         {props.perf
