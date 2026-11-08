@@ -52,12 +52,11 @@ export type MeowPriceOptions = {
 
 const TOKEN_PRICE_COLUMNS: {
   type: PriceType
-  field: string
   labelKey: string
 }[] = [
-  { type: 'input', field: 'inputPrice', labelKey: 'Input' },
-  { type: 'output', field: 'outputPrice', labelKey: 'Output' },
-  { type: 'cache', field: 'cacheReadPrice', labelKey: 'Cache Read' },
+  { type: 'input', labelKey: 'Input' },
+  { type: 'output', labelKey: 'Output' },
+  { type: 'cache', labelKey: 'Cache Read' },
 ]
 
 type ChannelPrices =
@@ -159,10 +158,12 @@ export function MeowModelRow(props: MeowModelRowProps) {
       <div
         role='cell'
         aria-colspan={3}
-        className='order-3 col-span-3 min-w-0 font-mono md:order-none'
+        className='order-3 col-span-3 min-w-0 md:order-none'
       >
         {channelPrices.kind === 'request' ? (
-          `${channelPrices.price} / ${t('request')}`
+          <span className='font-mono tabular-nums'>
+            {`${channelPrices.price} / ${t('request')}`}
+          </span>
         ) : (
           <ModelPriceCell
             model={channelModel}

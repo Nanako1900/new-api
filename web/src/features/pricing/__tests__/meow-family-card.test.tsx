@@ -70,7 +70,7 @@ const TIERED: PricingModel = {
   quota_type: 0,
   model_ratio: 0,
   completion_ratio: 0,
-  enable_groups: ['official'],
+  enable_groups: ['all'],
 }
 const GPT: PricingModel = {
   id: 2,
@@ -240,12 +240,19 @@ describe('meow family card', () => {
   it('shows expression prices with the channel multiplier applied once and notes the tiers', () => {
     renderFamily('claude')
 
-    const row = within(
-      screen.getByRole('table', { name: 'Claude · Official' })
-    ).getByRole('row', { name: /claude-tiered/ })
-    const cell = within(row).getAllByRole('cell')[1]
-    expect(within(cell).getByTitle(/^3(\.0+)?$/)).toBeInTheDocument()
-    expect(cell).toHaveTextContent('2 tiers')
+    const mergedCell = (tableName: string) =>
+      within(
+        within(screen.getByRole('table', { name: tableName })).getByRole(
+          'row',
+          { name: /claude-tiered/ }
+        )
+      ).getAllByRole('cell')[1]
+    const official = mergedCell('Claude · Official')
+    expect(within(official).getByTitle(/^3(\.0+)?$/)).toBeInTheDocument()
+    expect(official).toHaveTextContent('2 tiers')
+    expect(
+      within(mergedCell('Claude · Kiro')).getByTitle(/^1\.8(0+)?$/)
+    ).toBeInTheDocument()
   })
 
   it('shows each channel its own success rate and speed', () => {
