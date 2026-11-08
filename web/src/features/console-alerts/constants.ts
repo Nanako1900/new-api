@@ -1,3 +1,11 @@
+import {
+  CircleAlert,
+  CircleCheck,
+  Info,
+  TriangleAlert,
+  type LucideIcon,
+} from 'lucide-react'
+
 import type { StatusVariant } from '@/components/status-badge'
 
 import type { AlertStatus } from './lib/alert-status'
@@ -17,6 +25,14 @@ export const ALERT_LEVEL_CLASS: Record<AlertLevel, string> = {
   success: 'border-success/30 bg-success/10',
   warning: 'border-warning/30 bg-warning/10',
   error: 'border-destructive/30 bg-destructive/10',
+}
+
+/** Level icon, so the level is not conveyed by tint alone (WCAG 1.4.1). */
+export const ALERT_LEVEL_ICON: Record<AlertLevel, LucideIcon> = {
+  info: Info,
+  success: CircleCheck,
+  warning: TriangleAlert,
+  error: CircleAlert,
 }
 
 /** Level label i18n keys and badge variants for the admin list and form. */
