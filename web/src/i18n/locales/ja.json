@@ -7734,6 +7734,6 @@
     "Invalid content safety log query": "コンテンツ安全ログの検索条件が無効です",
     "View other accounts' audit and content safety logs": "他のアカウントの監査ログとコンテンツ安全ログを表示",
     "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "user と admin ロールの監査記録とコンテンツ安全記録（ユーザーのプロンプトの抜粋を含む）を表示します。root ロールの記録は常に除外されます。",
-    "Not covered: Realtime voice sessions, images, files and audio content.": "対象外：Realtime の音声セッション、画像、ファイル、音声コンテンツ。"
+    "Not covered: Realtime sessions (including their text events), images, files and audio content.": "対象外：Realtime セッション（テキストイベントを含む）、画像、ファイル、音声コンテンツ。"
   }
 }

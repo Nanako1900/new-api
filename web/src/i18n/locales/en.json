@@ -7734,6 +7734,6 @@
     "Invalid content safety log query": "Invalid content safety log query",
     "View other accounts' audit and content safety logs": "View other accounts' audit and content safety logs",
     "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.",
-    "Not covered: Realtime voice sessions, images, files and audio content.": "Not covered: Realtime voice sessions, images, files and audio content."
+    "Not covered: Realtime sessions (including their text events), images, files and audio content.": "Not covered: Realtime sessions (including their text events), images, files and audio content."
   }
 }

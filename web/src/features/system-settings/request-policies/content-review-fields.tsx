@@ -178,7 +178,7 @@ function ReviewOptionFields(props: { noteId: string }) {
           'AI review fails closed: if the review times out, no review channel is available, or the answer cannot be read, the request is rejected with HTTP 503. Request content can try to manipulate the review model through prompt injection, so choose a model that is robust against it.'
         )}{' '}
         {t(
-          'Not covered: Realtime voice sessions, images, files and audio content.'
+          'Not covered: Realtime sessions (including their text events), images, files and audio content.'
         )}
       </p>
       <SettingsFormGrid>

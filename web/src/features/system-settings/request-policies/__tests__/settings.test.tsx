@@ -509,7 +509,7 @@ describe('request policy settings', () => {
       screen.getByRole('group', { name: 'AI review options' })
     ).toHaveAccessibleDescription(
       expect.stringMatching(
-        /fails closed.*Not covered: Realtime voice sessions, images, files and audio content\./
+        /fails closed.*Not covered: Realtime sessions \(including their text events\), images, files and audio content\./
       )
     )
   })

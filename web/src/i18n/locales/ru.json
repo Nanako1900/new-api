@@ -7734,6 +7734,6 @@
     "Invalid content safety log query": "Недопустимый запрос к журналу модерации",
     "View other accounts' audit and content safety logs": "Просмотр журналов аудита и модерации других аккаунтов",
     "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "Просмотр записей аудита и журнала модерации (включая фрагменты промптов пользователей) ролей user и admin. Записи роли root всегда исключены.",
-    "Not covered: Realtime voice sessions, images, files and audio content.": "Не охвачено: голосовые сессии Realtime, изображения, файлы и аудиоконтент."
+    "Not covered: Realtime sessions (including their text events), images, files and audio content.": "Не охвачено: сессии Realtime (включая их текстовые события), изображения, файлы и аудиоконтент."
   }
 }
