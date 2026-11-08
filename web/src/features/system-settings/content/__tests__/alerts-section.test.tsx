@@ -34,6 +34,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+const NOW = 1_762_588_800_000
+
 function makeAlerts(count: number) {
   return Array.from({ length: count }, (_, index) => ({
     id: index + 1,
@@ -59,7 +61,8 @@ function renderSection(alerts: unknown[]) {
   return { put }
 }
 
-test('adding an alert saves trimmed content with id 1 and omits empty optional fields', async () => {
+test('adding an alert saves trimmed content with a time-based id and omits empty optional fields', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW)
   const user = userEvent.setup()
   const { put } = renderSection([])
 
@@ -71,8 +74,7 @@ test('adding an alert saves trimmed content with id 1 and omits empty optional f
   await waitFor(() =>
     expect(put).toHaveBeenCalledWith('/api/option/', {
       key: 'console_setting.alerts',
-      value:
-        '[{"id":1,"content":"Maintenance tonight","level":"info","dismissible":true,"enabled":true}]',
+      value: `[{"id":${NOW},"content":"Maintenance tonight","level":"info","dismissible":true,"enabled":true}]`,
     })
   )
 })
@@ -215,4 +217,48 @@ test('stored data with an unknown level and a null item still renders the valid 
 
   expect(screen.getByText('Alert 1')).toBeVisible()
   expect(screen.queryByText('Broken')).not.toBeInTheDocument()
+})
+
+test('a new alert never reuses the id of a deleted alert', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW)
+  const user = userEvent.setup()
+  const { put } = renderSection(makeAlerts(2))
+
+  const row = screen.getByText('Alert 2').closest('tr') as HTMLElement
+  await user.click(within(row).getByRole('button', { name: 'Open menu' }))
+  await user.click(await screen.findByRole('menuitem', { name: /Delete/ }))
+  const dialog = await screen.findByRole('alertdialog')
+  await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+  await user.click(screen.getByRole('button', { name: /Add Alert/ }))
+  await user.type(screen.getByLabelText('Content'), 'Alert 2')
+  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.click(screen.getByRole('button', { name: /Save Settings/ }))
+
+  await waitFor(() => expect(put).toHaveBeenCalled())
+  expect(savedAlerts(put).map((alert: { id: number }) => alert.id)).toEqual([
+    1,
+    NOW,
+  ])
+})
+
+test('add and edit are disabled while a save is in flight', async () => {
+  const user = userEvent.setup()
+  const { put } = renderSection(makeAlerts(1))
+  let finish: (value: unknown) => void = () => {}
+  put.mockReturnValue(new Promise((resolve) => (finish = resolve)) as never)
+
+  await user.click(screen.getByRole('button', { name: /Add Alert/ }))
+  await user.type(screen.getByLabelText('Content'), 'Another')
+  await user.click(screen.getByRole('button', { name: 'Add' }))
+  await user.click(screen.getByRole('button', { name: /Save Settings|Saving/ }))
+
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /Add Alert/ })).toBeDisabled()
+  )
+  expect(screen.getAllByRole('button', { name: 'Edit' })[0]).toBeDisabled()
+
+  finish({ data: { success: true, message: '' } })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /Add Alert/ })).toBeEnabled()
+  )
 })

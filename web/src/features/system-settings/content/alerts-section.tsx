@@ -91,8 +91,11 @@ export function AlertsSection(props: AlertsSectionProps) {
   }
 
   const handleSubmit = (values: AlertFormValues) => {
+    // Ids are never reused after a delete: dismissals are keyed by id plus
+    // content, so a recycled id with the same text would stay dismissed.
     const id =
-      editingAlert?.id ?? Math.max(0, ...alerts.map((alert) => alert.id)) + 1
+      editingAlert?.id ??
+      Math.max(Date.now(), ...alerts.map((alert) => alert.id + 1))
     const next: ConsoleAlert = {
       id,
       ...(values.title ? { title: values.title } : {}),
@@ -151,7 +154,7 @@ export function AlertsSection(props: AlertsSectionProps) {
           <Button
             size='sm'
             onClick={() => openForm(null)}
-            disabled={alerts.length >= MAX_ALERTS}
+            disabled={alerts.length >= MAX_ALERTS || updateOption.isPending}
           >
             <Plus className='mr-2 h-4 w-4' />
             {t('Add Alert')}
@@ -159,7 +162,7 @@ export function AlertsSection(props: AlertsSectionProps) {
           <Button
             size='sm'
             variant='destructive'
-            disabled={selectedIds.length === 0}
+            disabled={selectedIds.length === 0 || updateOption.isPending}
             onClick={() => setPendingDeleteIds(selectedIds)}
           >
             <Trash2 className='mr-2 h-4 w-4' />
@@ -186,6 +189,7 @@ export function AlertsSection(props: AlertsSectionProps) {
             alerts,
             selectedIds,
             now,
+            actionsDisabled: updateOption.isPending,
             onToggleAll: (checked) =>
               setSelectedIds(checked ? alerts.map((alert) => alert.id) : []),
             onToggleOne: toggleSelected,

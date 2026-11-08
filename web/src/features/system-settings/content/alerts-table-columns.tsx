@@ -35,6 +35,7 @@ type BuildAlertColumnsOptions = {
   alerts: ConsoleAlert[]
   selectedIds: number[]
   now: number
+  actionsDisabled: boolean
   onToggleAll: (checked: boolean) => void
   onToggleOne: (id: number, checked: boolean) => void
   onEdit: (alert: ConsoleAlert) => void
@@ -157,6 +158,8 @@ export function buildAlertColumns(
           menuLabel={props.t('Open menu')}
           onEdit={() => props.onEdit(alert)}
           onDelete={() => props.onDelete(alert)}
+          editDisabled={props.actionsDisabled}
+          deleteDisabled={props.actionsDisabled}
         />
       ),
     },
