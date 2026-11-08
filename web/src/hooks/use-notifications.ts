@@ -21,21 +21,9 @@ import { useState, useMemo } from 'react'
 
 import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
+import { hashString } from '@/lib/hash'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { useNotificationStore } from '@/stores/notification-store'
-
-function hashString(input: string): string {
-  let hash = 0
-  if (!input) return '0'
-
-  for (let i = 0; i < input.length; i += 1) {
-    const chr = input.charCodeAt(i)
-    hash = (hash << 5) - hash + chr
-    hash |= 0
-  }
-
-  return hash.toString(36)
-}
 
 /**
  * Generate a unique key for an announcement
