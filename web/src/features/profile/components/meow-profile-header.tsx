@@ -16,65 +16,74 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Pencil } from 'lucide-react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { RollingNumber } from '@/components/rolling-number'
 import { StatusBadge } from '@/components/status-badge'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useLiveBalanceTotals } from '@/hooks/use-live-balance'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatCompactNumber, formatQuota } from '@/lib/format'
+import { MEOW_AVATAR_FALLBACK_DELAY, getUserAvatarUrl } from '@/lib/meow-avatar'
 import { getRoleLabel } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 
 import { getDisplayName } from '../lib'
 import type { UserProfile } from '../types'
+import { AvatarEditorDialog } from './avatar-editor/avatar-editor-dialog'
 
 type MeowProfileHeaderProps = {
   profile: UserProfile | null
   loading: boolean
+  onProfileUpdate?: () => void
 }
 
 const BADGE_ON_DARK = 'border-white/15! bg-white/10! text-white/85!'
 
-function StatTile(props: { label: string; value: string; accent?: boolean }) {
+/** One figure in the card's stats panel; the balance is the accented one. */
+function CardStat(props: {
+  label: string
+  value: ReactNode
+  title: string
+  accent?: boolean
+}) {
   return (
-    <div className='isolate flex min-w-0 flex-col justify-between gap-3 rounded-[20px] border border-white/85 bg-[#fffbf5]/60 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_24px_48px_-30px_rgba(30,27,23,0.3)] sm:px-6 sm:py-5 dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none'>
-      <span className='text-muted-foreground truncate text-[13px] font-bold'>
+    <div className='flex min-w-0 flex-col gap-1.5 px-3 sm:px-5'>
+      <dt className='truncate text-xs font-bold text-white/55 sm:text-[13px]'>
         {props.label}
-      </span>
-      <span
+      </dt>
+      <dd
+        title={props.title}
         className={cn(
-          'truncate text-xl leading-none font-extrabold tracking-[-0.03em] tabular-nums sm:text-[1.75rem]',
-          props.accent && 'text-meow-heading'
+          'truncate text-lg leading-none font-extrabold tracking-[-0.03em] tabular-nums sm:text-2xl @4xl:text-[1.625rem]',
+          props.accent && 'text-meow-orange'
         )}
       >
         {props.value}
-      </span>
+      </dd>
     </div>
   )
 }
 
 /**
- * Profile header in the MeowAPI look: the account on a dark tile with the
- * calico glow, then balance, usage and requests. Same props and content as
- * the original `ProfileHeader`; the numbers stay live while the page is open.
+ * Profile header in the MeowAPI look: one dark card with the calico glow,
+ * holding the account on the left and its balance, usage and requests on
+ * the right once the card is 56rem wide (below the account when narrower,
+ * whatever the sidebar does). Same props and content as the original
+ * `ProfileHeader`; the numbers stay live while the page is open and roll
+ * when they change.
  */
 export function MeowProfileHeader(props: MeowProfileHeaderProps) {
   const { t } = useTranslation()
   const totals = useLiveBalanceTotals(props.profile)
+  const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
 
   if (props.loading) {
-    return (
-      <div className='flex flex-col gap-4'>
-        <Skeleton className='h-28 rounded-[22px]' />
-        <div className='grid grid-cols-3 gap-3 sm:gap-4'>
-          {['balance', 'usage', 'requests'].map((key) => (
-            <Skeleton key={key} className='h-24 rounded-[20px]' />
-          ))}
-        </div>
-      </div>
-    )
+    return <Skeleton className='h-[272px] rounded-[22px] xl:h-[162px]' />
   }
 
   const profile = props.profile
@@ -82,31 +91,73 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
 
   const displayName = getDisplayName(profile)
   const avatarName = profile.username || displayName
+  const avatarUrl = getUserAvatarUrl(profile.id, profile.setting)
   const details = [`@${profile.username}`, profile.email, profile.group].filter(
     Boolean
   )
 
+  const balance = formatQuota(totals.quota)
+  const usage = formatQuota(totals.usedQuota)
+  const requests = formatCompactNumber(totals.requestCount)
+
   return (
-    <div className='flex flex-col gap-4'>
-      <div className='bg-meow-ink relative isolate overflow-hidden rounded-[22px] px-5 py-5 text-white sm:px-7 sm:py-6 dark:bg-[#25211C]'>
-        <div
-          aria-hidden='true'
-          className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-12 -z-10 h-44 w-60 rounded-full opacity-55 blur-[50px]'
-        />
-        <div className='flex items-center gap-4'>
-          <Avatar className='size-14 rounded-2xl text-lg ring-2 ring-white/15 sm:size-16'>
-            <AvatarFallback
-              className='rounded-2xl font-bold text-white'
-              style={getUserAvatarStyle(avatarName)}
+    <div className='bg-meow-ink @container relative isolate overflow-hidden rounded-[22px] px-5 py-6 text-white sm:px-8 sm:py-7 dark:bg-[#25211C]'>
+      <div
+        aria-hidden='true'
+        className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-12 -z-10 h-52 w-72 rounded-full opacity-55 blur-[56px]'
+      />
+      <div
+        aria-hidden='true'
+        className='meow-drift-b bg-meow-orange pointer-events-none absolute -right-20 -bottom-28 -z-10 h-60 w-96 rounded-full opacity-20 blur-[64px]'
+      />
+      <div className='flex flex-col gap-6 @4xl:flex-row @4xl:items-center @4xl:gap-8'>
+        {/* The avatar leads the card; its corners follow the logo's (23%). */}
+        <div className='flex min-w-0 flex-1 items-center gap-5 sm:gap-7'>
+          <Button
+            variant='ghost'
+            aria-label={t('Change avatar')}
+            title={t('Change avatar')}
+            onClick={() => setAvatarEditorOpen(true)}
+            className='group/avatar-edit relative size-auto shrink-0 rounded-[23%] p-0 hover:bg-transparent'
+          >
+            <Avatar className='size-[88px] rounded-[23%] text-2xl ring-2 ring-white/15 transition-transform group-hover/avatar-edit:scale-[1.03] sm:size-[104px] sm:text-3xl'>
+              <AvatarImage src={avatarUrl} alt='' className='rounded-[23%]' />
+              <AvatarFallback
+                delay={avatarUrl ? MEOW_AVATAR_FALLBACK_DELAY : undefined}
+                className='rounded-[23%] font-bold text-white'
+                style={getUserAvatarStyle(avatarName)}
+              >
+                {getUserAvatarFallback(avatarName)}
+              </AvatarFallback>
+            </Avatar>
+            <span
+              aria-hidden='true'
+              className='bg-meow-orange text-meow-ink ring-meow-ink absolute -right-1.5 -bottom-1.5 grid size-8 place-items-center rounded-full ring-[3px] dark:ring-[#25211C]'
             >
-              {getUserAvatarFallback(avatarName)}
-            </AvatarFallback>
-          </Avatar>
-          <div className='flex min-w-0 flex-1 flex-col gap-2'>
-            <div className='flex min-w-0 flex-wrap items-center gap-2'>
-              <h1 className='truncate text-2xl font-extrabold tracking-[-0.03em] sm:text-[1.75rem]'>
-                {displayName}
-              </h1>
+              <Pencil className='size-3.5' />
+            </span>
+          </Button>
+          {avatarEditorOpen && (
+            <AvatarEditorDialog
+              open={avatarEditorOpen}
+              onOpenChange={setAvatarEditorOpen}
+              userId={profile.id}
+              setting={profile.setting}
+              onSaved={() => props.onProfileUpdate?.()}
+            />
+          )}
+          <div className='flex min-w-0 flex-1 flex-col gap-1.5 sm:gap-2'>
+            <h1 className='truncate text-[1.625rem] leading-tight font-extrabold tracking-[-0.03em] sm:text-[2.125rem]'>
+              {displayName}
+            </h1>
+            <p className='flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-sm text-white/65'>
+              {details.map((detail) => (
+                <span key={detail} className='truncate'>
+                  {detail}
+                </span>
+              ))}
+            </p>
+            <div className='mt-1 flex min-w-0 flex-wrap items-center gap-2'>
               <StatusBadge
                 label={getRoleLabel(profile.role)}
                 variant='neutral'
@@ -120,39 +171,34 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
                 className={BADGE_ON_DARK}
               />
             </div>
-            <p className='flex min-w-0 flex-wrap gap-x-3 gap-y-0.5 text-sm text-white/65'>
-              {details.map((detail) => (
-                <span key={detail} className='truncate'>
-                  {detail}
-                </span>
-              ))}
-            </p>
           </div>
         </div>
-      </div>
 
-      <div className='relative isolate grid grid-cols-3 gap-3 sm:gap-4'>
-        <div
-          aria-hidden='true'
-          className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-6 -left-4 -z-10 h-36 w-60 rounded-full opacity-50 blur-[50px]'
-        />
-        <div
-          aria-hidden='true'
-          className='meow-drift-b bg-meow-ink pointer-events-none absolute top-4 right-8 -z-10 h-32 w-44 rounded-full opacity-25 blur-[54px] dark:bg-white dark:opacity-10'
-        />
-        <StatTile
-          label={t('Current Balance')}
-          value={formatQuota(totals.quota)}
-          accent
-        />
-        <StatTile
-          label={t('Total Usage')}
-          value={formatQuota(totals.usedQuota)}
-        />
-        <StatTile
-          label={t('API Requests')}
-          value={formatCompactNumber(totals.requestCount)}
-        />
+        <dl className='grid shrink-0 grid-cols-3 divide-x divide-white/10 rounded-[18px] bg-white/[0.06] py-4 ring-1 ring-white/10 @4xl:grid-cols-[repeat(3,minmax(8.5rem,auto))] @4xl:py-5'>
+          <CardStat
+            label={t('Current Balance')}
+            value={<RollingNumber value={totals.quota} format={formatQuota} />}
+            title={balance}
+            accent
+          />
+          <CardStat
+            label={t('Total Usage')}
+            value={
+              <RollingNumber value={totals.usedQuota} format={formatQuota} />
+            }
+            title={usage}
+          />
+          <CardStat
+            label={t('API Requests')}
+            value={
+              <RollingNumber
+                value={totals.requestCount}
+                format={formatCompactNumber}
+              />
+            }
+            title={requests}
+          />
+        </dl>
       </div>
     </div>
   )

@@ -95,6 +95,8 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/user/waffo-pancake/pay":             accessTokenScopeRule("wallet:write"),
 	"POST /api/user/aff_transfer":                  accessTokenScopeRule("wallet:write"),
 	"PUT /api/user/setting":                        accessTokenScopeRule("profile:write"),
+	"PUT /api/user/self/avatar":                    accessTokenScopeRule("profile:write"),
+	"DELETE /api/user/self/avatar":                 accessTokenScopeRule("profile:write"),
 	"GET /api/user/2fa/status":                     accessTokenScopeRule("account_security:read"),
 	"POST /api/user/2fa/setup":                     accessTokenScopeRule("account_security:write"),
 	"POST /api/user/2fa/enable":                    accessTokenScopeRule("account_security:write"),
@@ -119,6 +121,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"PUT /api/user/":                                   accessTokenScopeRule("user:write"),
 	"DELETE /api/user/:id":                             accessTokenScopeRule("user:write"),
 	"DELETE /api/user/:id/reset_passkey":               accessTokenScopeRule("user:write"),
+	"DELETE /api/user/:id/avatar":                      accessTokenScopeRule("user:write"),
 	"GET /api/user/2fa/stats":                          accessTokenScopeRule("user:read"),
 	"DELETE /api/user/:id/2fa":                         accessTokenScopeRule("user:write"),
 

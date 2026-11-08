@@ -16,8 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { RollingNumber } from '@/components/rolling-number'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useLiveBalanceTotals } from '@/hooks/use-live-balance'
 import { toIntlLocale } from '@/i18n/languages'
@@ -30,7 +32,7 @@ type MeowWalletStatsCardProps = {
   loading?: boolean
 }
 
-function StatTile(props: { label: string; value: string }) {
+function StatTile(props: { label: string; value: ReactNode }) {
   return (
     <div className='bg-card border-border flex h-full min-w-0 flex-col justify-between gap-3 rounded-[22px] border p-5 sm:p-6'>
       <span className='text-muted-foreground text-sm font-bold'>
@@ -46,7 +48,8 @@ function StatTile(props: { label: string; value: string }) {
 /**
  * Wallet header stats in the MeowAPI look: the balance on a dark tile with
  * the calico glow, then total usage and request count. Same props as the
- * original `WalletStatsCard`; the numbers stay live while the page is open.
+ * original `WalletStatsCard`; the numbers stay live while the page is open
+ * and roll when they change.
  */
 export function MeowWalletStatsCard(props: MeowWalletStatsCardProps) {
   const { t, i18n } = useTranslation()
@@ -74,19 +77,26 @@ export function MeowWalletStatsCard(props: MeowWalletStatsCardProps) {
           {t('Current Balance')}
         </span>
         <span className='text-4xl font-extrabold tracking-[-0.03em] tabular-nums sm:text-[2.75rem]'>
-          {formatQuota(totals.quota)}
+          <RollingNumber value={totals.quota} format={formatQuota} />
         </span>
       </div>
       <div className='lg:col-span-3'>
         <StatTile
           label={t('Total Usage')}
-          value={formatQuota(totals.usedQuota)}
+          value={
+            <RollingNumber value={totals.usedQuota} format={formatQuota} />
+          }
         />
       </div>
       <div className='lg:col-span-3'>
         <StatTile
           label={t('API Requests')}
-          value={formatNumber(totals.requestCount, locale)}
+          value={
+            <RollingNumber
+              value={totals.requestCount}
+              format={(count) => formatNumber(count, locale)}
+            />
+          }
         />
       </div>
     </div>
