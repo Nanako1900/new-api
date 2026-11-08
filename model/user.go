@@ -243,6 +243,68 @@ func UpdateUserBindColumn(userId int, column string, value string) error {
 	return DB.Model(&User{}).Where("id = ?", userId).Update(column, value).Error
 }
 
+// EnsureUserAffCode returns the user's invitation code, assigning one first
+// when the user has none. It writes only aff_code and only while it is still
+// empty or NULL, so a ban or role change made since the read is never written
+// back, and two racing requests both return the code that was kept.
+func EnsureUserAffCode(userId int) (string, error) {
+	if userId <= 0 {
+		return "", common.NewMessage("ID is empty!")
+	}
+	var user User
+	if err := DB.Select("id", "aff_code").First(&user, userId).Error; err != nil {
+		return "", err
+	}
+	if user.AffCode != "" {
+		return user.AffCode, nil
+	}
+	code := common.GetRandomString(4)
+	result := DB.Model(&User{}).Where("id = ? AND (aff_code IS NULL OR aff_code = ?)", userId, "").Update("aff_code", code)
+	if result.Error != nil {
+		return "", result.Error
+	}
+	if result.RowsAffected == 1 {
+		return code, nil
+	}
+	// Another request assigned a code after the read; return the one it kept.
+	if err := DB.Select("id", "aff_code").First(&user, userId).Error; err != nil {
+		return "", err
+	}
+	return user.AffCode, nil
+}
+
+// PromoteUserToAdmin makes a common user an administrator and returns the
+// stored role and status. It writes only the role, with the row locked from
+// the role check to the write, so a ban or group change committed after the
+// caller read the user is kept. The auth version advances in the same
+// transaction; after commit the user cache is republished and the user's
+// sessions are revoked.
+func PromoteUserToAdmin(userId int) (*User, error) {
+	var promoted User
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).Select("id", "role", "status").First(&promoted, userId).Error; err != nil {
+			return err
+		}
+		if promoted.Role >= common.RoleAdminUser {
+			return common.NewMessage("This user is already an administrator")
+		}
+		if _, err := IncrementUserAuthVersionWithTx(tx, userId); err != nil {
+			return err
+		}
+		promoted.Role = common.RoleAdminUser
+		return tx.Model(&User{}).Where("id = ?", userId).Update("role", promoted.Role).Error
+	}); err != nil {
+		return nil, err
+	}
+	if err := PublishUserAuthCache(userId); err != nil {
+		return nil, err
+	}
+	if _, err := RevokeAllUserSessions(userId, "user_security_changed"); err != nil {
+		return nil, err
+	}
+	return &promoted, nil
+}
+
 // 根据用户角色生成默认的边栏配置
 func generateDefaultSidebarConfigForRole(userRole int) string {
 	defaultConfig := map[string]any{}

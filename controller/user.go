@@ -459,25 +459,16 @@ func TransferAffQuota(c *gin.Context) {
 }
 
 func GetAffCode(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
+	affCode, err := model.EnsureUserAffCode(c.GetInt("id"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if user.AffCode == "" {
-		user.AffCode = common.GetRandomString(4)
-		if err := user.Update(false); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    user.AffCode,
+		"data":    affCode,
 	})
-	return
 }
 
 func GetSelf(c *gin.Context) {
@@ -1160,7 +1151,6 @@ func ManageUser(c *gin.Context) {
 			common.ApiErrorT(c, "This user is already an administrator")
 			return
 		}
-		user.Role = common.RoleAdminUser
 	case "demote":
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorT(c, "Cannot demote super administrator user")
@@ -1180,7 +1170,17 @@ func ManageUser(c *gin.Context) {
 	if authorization == nil {
 		return
 	}
-	if req.Action == "demote" {
+	switch req.Action {
+	case "promote":
+		// The user read above may be stale by now; the promote writes only the
+		// role, so a ban or group change committed meanwhile is kept.
+		promoted, err := model.PromoteUserToAdmin(user.Id)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		user.Role, user.Status = promoted.Role, promoted.Status
+	case "demote":
 		if err := model.DB.Transaction(func(tx *gorm.DB) error {
 			if err := user.UpdateWithTx(tx, false); err != nil {
 				return err
@@ -1202,14 +1202,14 @@ func ManageUser(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-	} else {
+	default:
 		if err := user.Update(false); err != nil {
 			common.ApiError(c, err)
 			return
 		}
 	}
-	// Update/UpdateWithTx has already published the new user hash and revoked
-	// browser sessions exactly once. Only PAT/relay token caches still need an
+	// Each branch has already published the new user hash and revoked browser
+	// sessions exactly once. Only PAT/relay token caches still need an
 	// explicit invalidation; deleting the user hash here would discard the
 	// freshly published auth-version floor.
 	if err := model.InvalidateUserTokensCache(user.Id); err != nil {

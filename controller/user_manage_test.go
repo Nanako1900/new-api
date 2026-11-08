@@ -944,3 +944,138 @@ func TestOverlappingSettingWritersKeepBothChanges(t *testing.T) {
 	assert.Nil(t, user.GetSetting().Avatar, "the removed avatar came back")
 	assert.Equal(t, "rotated-secret", user.GetSetting().WebhookSecret, "the rotated secret was lost")
 }
+
+// holdNextUserRead parks the next read of the users table, after it returns
+// and before the caller sees the row, until release is closed. A test commits
+// a concurrent change in that window, between a handler's read of the user and
+// its write. The read holds no connection or lock while parked.
+func holdNextUserRead(t *testing.T, db *gorm.DB) (held chan struct{}, release chan struct{}) {
+	t.Helper()
+	var armed atomic.Bool
+	armed.Store(true)
+	held, release = make(chan struct{}), make(chan struct{})
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register("test:hold_next_user_read", func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" && armed.CompareAndSwap(true, false) {
+			close(held)
+			<-release
+		}
+	}))
+	return held, release
+}
+
+// Promote writes only the role. When another administrator bans the user
+// between the promote request's read of the user and its write, the ban is
+// kept: the copy the request read must not re-enable the user. Either way the
+// promote advances the auth version once and revokes the user's sessions.
+func TestManageUserPromoteWritesOnlyTheRole(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		banDuringRequest bool
+		wantStatus       int
+		wantAuthVersion  int64
+	}{
+		{name: "promote", wantStatus: common.UserStatusEnabled, wantAuthVersion: 2},
+		{name: "ban committed during the request", banDuringRequest: true, wantStatus: common.UserStatusDisabled, wantAuthVersion: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			now := time.Now().Unix()
+			user := model.User{
+				Username: "managed-promote-user", Password: "password", Role: common.RoleCommonUser,
+				Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "promote-aff",
+			}
+			require.NoError(t, db.Create(&user).Error)
+			require.NoError(t, db.Create(&model.UserSession{
+				SID: "managed-promote-session", UserID: user.Id, Version: 1, UserAuthVersion: 1,
+				Status: model.UserSessionStatusActive, RefreshHash: "refresh-hash", LoginMethod: "password",
+				LastActiveAt: now, ExpiresAt: now + 3600,
+			}).Error)
+			operation := func(action string) service.VerificationOperation {
+				return service.VerificationOperation{Scope: service.VerificationScopeAdminUserManage, Context: []byte(fmt.Sprintf(`{"user_id":%d,"action":%q}`, user.Id, action))}
+			}
+			identity, promoteProof := manageUserProof(t, db, operation("promote"))
+			banBinding, err := service.BindVerificationOperation(operation("disable"))
+			require.NoError(t, err)
+			banProof, _, err := service.IssueSecurityProof(identity, service.VerificationMethodPassword, banBinding)
+			require.NoError(t, err)
+
+			var held, release chan struct{}
+			if tc.banDuringRequest {
+				held, release = holdNextUserRead(t, db)
+			}
+			promote := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				promote <- performVerifiedManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"promote"}`, user.Id), identity, promoteProof)
+			}()
+			if tc.banDuringRequest {
+				select {
+				case <-held:
+				case recorder := <-promote:
+					require.FailNow(t, "the promote finished without reading the user", recorder.Body.String())
+				}
+				ban := performVerifiedManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"disable"}`, user.Id), identity, banProof)
+				assert.Contains(t, ban.Body.String(), `"success":true`)
+				close(release)
+			}
+			assert.Contains(t, (<-promote).Body.String(), `"success":true`)
+
+			var stored model.User
+			require.NoError(t, db.First(&stored, user.Id).Error)
+			assert.Equal(t, common.RoleAdminUser, stored.Role)
+			assert.Equal(t, tc.wantStatus, stored.Status, "the promote wrote back the status it read")
+			assert.Equal(t, tc.wantAuthVersion, stored.AuthVersion)
+			var session model.UserSession
+			require.NoError(t, db.First(&session, "sid = ?", "managed-promote-session").Error)
+			assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
+		})
+	}
+}
+
+// The invitation code is written only while the user has none, and nothing
+// else is written with it. A user without a code (NULL in rows from before
+// the column existed) gets one. When a ban and another request's code commit
+// between the request's read of the user and its write, both are kept and the
+// request returns the code that was kept.
+func TestGetAffCodeOnlyFillsAMissingCode(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	user := model.User{
+		Username: "aff-code-user", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Model(&user).Update("aff_code", nil).Error)
+	getAffCode := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/user/aff", nil)
+		c.Set("id", user.Id)
+		GetAffCode(c)
+		return recorder
+	}
+
+	recorder := getAffCode()
+	var stored model.User
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	assert.Len(t, stored.AffCode, 4)
+	assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"data":%q`, stored.AffCode))
+
+	require.NoError(t, db.Model(&user).Update("aff_code", "").Error)
+	held, release := holdNextUserRead(t, db)
+	request := make(chan *httptest.ResponseRecorder, 1)
+	go func() { request <- getAffCode() }()
+	select {
+	case <-held:
+	case recorder := <-request:
+		require.FailNow(t, "the request finished without reading the user", recorder.Body.String())
+	}
+	assert.NoError(t, db.Model(&model.User{}).Where("id = ?", user.Id).Updates(map[string]any{
+		"status": common.UserStatusDisabled, "aff_code": "kept",
+	}).Error)
+	close(release)
+
+	assert.Contains(t, (<-request).Body.String(), `"data":"kept"`)
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	assert.Equal(t, "kept", stored.AffCode)
+	assert.Equal(t, common.UserStatusDisabled, stored.Status, "the request wrote back the status it read")
+	assert.Contains(t, getAffCode().Body.String(), `"data":"kept"`, "a stored code must be returned as it is")
+}
