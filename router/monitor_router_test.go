@@ -219,7 +219,8 @@ func TestMonitorUserCarriesTheAvatarOnly(t *testing.T) {
 }
 
 const monitorTestPreferences = `{"version":1,"layout":[{"i":"logs","x":0,"y":0,"w":7,"h":10},{"i":"balance","x":7,"y":0,"w":5,"h":2}],` +
-	`"settings":{"logs":{"showToken":false},"usage":{"view":"chart"}},"theme":{"id":"ocean","mode":"dark"},"unknown":"dropped"}`
+	`"settings":{"logs":{"showToken":false},"usage":{"view":"chart"},"top-users":{"window":"3h"}},"theme":{"id":"ocean","mode":"dark"},` +
+	`"global_layout":[{"i":"top-users","x":0,"y":0,"w":4,"h":6}],"unknown":"dropped"}`
 
 func TestMonitorPreferencesRoundTrip(t *testing.T) {
 	env := setupMonitorRouterTest(t)
@@ -242,6 +243,7 @@ func TestMonitorPreferencesRoundTrip(t *testing.T) {
 	assert.Len(t, preferences["layout"], 2)
 	assert.Equal(t, map[string]any{"id": "ocean", "mode": "dark"}, preferences["theme"])
 	assert.Equal(t, map[string]any{"showToken": false}, preferences["settings"].(map[string]any)["logs"])
+	assert.Equal(t, []any{map[string]any{"i": "top-users", "x": 0.0, "y": 0.0, "w": 4.0, "h": 6.0}}, preferences["global_layout"])
 	assert.NotContains(t, preferences, "unknown", "only the known fields are stored")
 
 	for _, response := range []*httptest.ResponseRecorder{saved, read} {
@@ -291,6 +293,7 @@ func TestMonitorPreferencesRejectInvalidInput(t *testing.T) {
 		{"too many widgets", `{"version":1,"layout":[` + strings.Join(manyWidgets, ",") + `],"settings":{},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
 		{"numeric setting", `{"version":1,"layout":` + layout + `,"settings":{"logs":{"rows":5}},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
 		{"free text setting", `{"version":1,"layout":` + layout + `,"settings":{"logs":{"view":"Chart Only!"}},"theme":{"id":"calico","mode":"auto"}}`, http.StatusBadRequest},
+		{"bad site-wide layout", `{"version":1,"layout":` + layout + `,"settings":{},"theme":{"id":"calico","mode":"auto"},"global_layout":[{"i":"top-users","x":0,"y":0,"w":0,"h":1}]}`, http.StatusBadRequest},
 		{"unknown theme mode", `{"version":1,"layout":` + layout + `,"settings":{},"theme":{"id":"calico","mode":"sepia"}}`, http.StatusBadRequest},
 		{"not an object", `[1,2,3]`, http.StatusBadRequest},
 		{"larger than 8 KB", `{"version":1,"layout":` + layout + `,"settings":{},"theme":{"id":"calico","mode":"auto"}}` + strings.Repeat(" ", 9*1024), http.StatusRequestEntityTooLarge},
@@ -384,7 +387,12 @@ func TestMonitorSignOutFollowsTheMainSite(t *testing.T) {
 // that frames are flushed through gin instead of buffered.
 func openMonitorStream(t *testing.T, ctx context.Context, server *httptest.Server, accessToken string) *http.Response {
 	t.Helper()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/monitor/stream", nil)
+	return openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream")
+}
+
+func openMonitorStreamAt(t *testing.T, ctx context.Context, server *httptest.Server, accessToken, path string) *http.Response {
+	t.Helper()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+path, nil)
 	require.NoError(t, err)
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Accept", "text/event-stream")
@@ -529,4 +537,137 @@ func TestMonitorLogoutWithAStaleCookieFallsBackToTheAccessToken(t *testing.T) {
 
 	read := env.do(monitorTestRequest{method: http.MethodGet, path: "/api/monitor/self", bearer: accessToken})
 	assert.Equal(t, http.StatusUnauthorized, read.Code, "logout must end the session even when the cookie is stale")
+}
+
+// setUserRole changes the monitor test user's role, as an administrator would
+// on the main site.
+func (env *monitorTestEnv) setUserRole(t *testing.T, role int) {
+	t.Helper()
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", env.user.Id).Update("role", role).Error)
+}
+
+func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
+	env := setupMonitorRouterTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}))
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 8, Name: "upstream-8", Key: "k8"}).Error)
+	accessToken, _ := env.signIn(t)
+	get := func(path string) *httptest.ResponseRecorder {
+		return env.do(monitorTestRequest{method: http.MethodGet, path: path, origin: monitorTestOrigin, bearer: accessToken})
+	}
+
+	self := get("/api/monitor/self")
+	require.Equal(t, http.StatusOK, self.Code, self.Body.String())
+	assert.Equal(t, false, responseJSON(t, self)["data"].(map[string]any)["global_view"])
+	for _, path := range []string{"/api/monitor/global/overview", "/api/monitor/global/logs"} {
+		response := get(path)
+		assert.Equal(t, http.StatusForbidden, response.Code, path)
+		assert.Equal(t, "MONITOR_FORBIDDEN", responseJSON(t, response)["code"], path)
+		assert.Equal(t, monitorTestOrigin, response.Header().Get("Access-Control-Allow-Origin"), "the console can read the refusal")
+	}
+
+	now := common.GetTimestamp()
+	other := `{"admin_info":{"use_channel":["8"]},"root_info":{"upstream":"secret-diagnostics"}}`
+	require.NoError(t, model.LOG_DB.Create(&[]model.Log{
+		{UserId: 900, Username: "busy-user", Type: model.LogTypeConsume, CreatedAt: now - 60, ModelName: "gpt-x", ChannelId: 8,
+			Quota: 700, PromptTokens: 40, CompletionTokens: 2, Ip: "203.0.113.7", Other: other, RequestId: "req-global-1"},
+		{UserId: 901, Username: "quiet-user", Type: model.LogTypeError, CreatedAt: now - 30, ModelName: "gpt-x", ChannelId: 8, RequestId: "req-global-2"},
+		{UserId: 900, Username: "busy-user", Type: model.LogTypeTopup, CreatedAt: now - 20, Quota: 5000, RequestId: "req-global-3"},
+	}).Error)
+
+	env.setUserRole(t, common.RoleRootUser)
+	self = get("/api/monitor/self")
+	assert.Equal(t, true, responseJSON(t, self)["data"].(map[string]any)["global_view"])
+
+	overview := get("/api/monitor/global/overview?window=3h")
+	require.Equal(t, http.StatusOK, overview.Code, overview.Body.String())
+	data := responseJSON(t, overview)["data"].(map[string]any)
+	assert.Equal(t, "3h", data["window"])
+	assert.Equal(t, map[string]any{"quota": 700.0, "requests": 1.0, "tokens": 42.0, "errors": 1.0, "active_users": 1.0}, data["totals"])
+	assert.Equal(t, []any{map[string]any{"user_id": 900.0, "username": "busy-user", "quota": 700.0, "requests": 1.0, "tokens": 42.0}}, data["top_users"])
+	assert.Equal(t, []any{map[string]any{"channel_id": 8.0, "channel_name": "upstream-8", "requests": 1.0, "errors": 1.0}}, data["channels"])
+	assert.Equal(t, http.StatusBadRequest, get("/api/monitor/global/overview?window=7d").Code)
+
+	logs := get("/api/monitor/global/logs?p=1&page_size=10")
+	require.Equal(t, http.StatusOK, logs.Code, logs.Body.String())
+	page := responseJSON(t, logs)["data"].(map[string]any)
+	assert.EqualValues(t, 2, page["total"], "only request rows: the top-up is left out")
+	items := page["items"].([]any)
+	require.Len(t, items, 2)
+	newest, oldest := items[0].(map[string]any), items[1].(map[string]any)
+	assert.Equal(t, "quiet-user", newest["username"])
+	assert.EqualValues(t, 1, newest["id"], "ids are display indexes")
+	assert.Equal(t, "busy-user", oldest["username"])
+	assert.Equal(t, "upstream-8", oldest["channel_name"])
+	assert.Empty(t, oldest["ip"], "the console never gets client IPs")
+	assert.Contains(t, oldest["other"], "admin_info")
+	assert.NotContains(t, logs.Body.String(), "secret-diagnostics", "root-only diagnostics stay on the main site")
+	// A negative page size would drop the LIMIT; the others ask for rows the view does not have.
+	for _, query := range []string{"type=1", "type=0", "type=abc", "start_timestamp=1", "page_size=-1", "p=-1"} {
+		response := get("/api/monitor/global/logs?" + query)
+		assert.Equal(t, http.StatusBadRequest, response.Code, query)
+		assert.Equal(t, "MONITOR_REQUEST_INVALID", responseJSON(t, response)["code"], query)
+	}
+	filtered := responseJSON(t, get("/api/monitor/global/logs?username=busy-user"))["data"].(map[string]any)
+	assert.EqualValues(t, 1, filtered["total"])
+
+	env.setUserRole(t, common.RoleAdminUser)
+	assert.Equal(t, http.StatusForbidden, get("/api/monitor/global/logs").Code, "a demoted user loses the site-wide view at once")
+}
+
+func TestMonitorGlobalStreamCarriesEveryUsersRequestRows(t *testing.T) {
+	env := setupMonitorRouterTest(t)
+	ctx := startMonitorStreams(t, 5)
+	accessToken, _ := env.signIn(t)
+	server := httptest.NewServer(env.engine)
+	t.Cleanup(server.Close)
+
+	refused := openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream?scope=global")
+	assert.Equal(t, http.StatusForbidden, refused.StatusCode, "only the root user streams the whole site")
+	assert.Equal(t, http.StatusBadRequest, openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream?scope=everyone").StatusCode)
+
+	env.setUserRole(t, common.RoleRootUser)
+	response := openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream?scope=global")
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	reader := bufio.NewReader(response.Body)
+	name, _ := readSSEEvent(t, reader)
+	require.Equal(t, "hello", name)
+
+	model.RecordLog(env.user.Id+1000, model.LogTypeTopup, common.NewMessage("another user's top-up"))
+	model.RecordLog(env.user.Id+1000, model.LogTypeError, common.NewMessage("another user's failed request"))
+
+	name, data := readSSEEvent(t, reader)
+	require.Equal(t, "logs", name)
+	assert.Contains(t, data, "another user's failed request")
+	assert.NotContains(t, data, "another user's top-up", "only request rows reach the site-wide stream")
+
+	// A reconnect replays the rows it missed, in the same site-wide view.
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}))
+	require.NoError(t, model.DB.Create(&model.Channel{Id: 8, Name: "upstream-8", Key: "k8"}).Error)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{UserId: 902, Username: "replayed-user", Type: model.LogTypeConsume,
+		CreatedAt: common.GetTimestamp(), ModelName: "gpt-replay", ChannelId: 8, Ip: "203.0.113.8", RequestId: "req-replay",
+		Other: `{"admin_info":{"use_channel":["8"]},"root_info":{"upstream":"secret-diagnostics"}}`}).Error)
+	since := common.GetTimestamp() - 60
+	replayed := openMonitorStreamAt(t, ctx, server, accessToken, fmt.Sprintf("/api/monitor/stream?scope=global&since=%d", since))
+	require.Equal(t, http.StatusOK, replayed.StatusCode)
+	replayReader := bufio.NewReader(replayed.Body)
+	name, _ = readSSEEvent(t, replayReader)
+	require.Equal(t, "hello", name)
+	name, data = readSSEEvent(t, replayReader)
+	require.Equal(t, "logs", name)
+	var replay struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, common.UnmarshalJsonStr(data, &replay))
+	var row map[string]any
+	for _, item := range replay.Items {
+		if item["username"] == "replayed-user" {
+			row = item
+		}
+	}
+	require.NotNil(t, row, data)
+	assert.Equal(t, "upstream-8", row["channel_name"])
+	assert.Empty(t, row["ip"])
+	assert.Contains(t, row["other"], "admin_info")
+	assert.NotContains(t, data, "secret-diagnostics")
+	assert.NotContains(t, data, "another user's top-up")
 }

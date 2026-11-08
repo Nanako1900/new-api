@@ -90,6 +90,8 @@ var accessTokenExemptRoutes = []string{
 	"GET /api/monitor/stream",
 	"GET /api/monitor/preferences",
 	"PUT /api/monitor/preferences",
+	"GET /api/monitor/global/overview",
+	"GET /api/monitor/global/logs",
 }
 
 // accessTokenHelperRoutes are declared through handlePermissionRoute outside

@@ -489,6 +489,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 // Username and Channel are administrator filters.
 type LogFilter struct {
 	Type              int
+	Types             []int // the allowed types when Type is unset
 	StartTimestamp    int64
 	EndTimestamp      int64
 	ModelName         string
@@ -504,6 +505,8 @@ func (f LogFilter) apply(tx *gorm.DB) (*gorm.DB, error) {
 	var err error
 	if f.Type != LogTypeUnknown {
 		tx = tx.Where("logs.type = ?", f.Type)
+	} else if len(f.Types) > 0 {
+		tx = tx.Where("logs.type IN ?", f.Types)
 	}
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", f.ModelName); err != nil {
 		return nil, err
