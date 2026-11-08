@@ -20,12 +20,13 @@ import { Activity, BarChart3, WalletCards } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Card, CardContent } from '@/components/ui/card'
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatCompactNumber, formatQuota } from '@/lib/format'
+import { MEOW_AVATAR_FALLBACK_DELAY, getUserAvatarUrl } from '@/lib/meow-avatar'
 import { getRoleLabel } from '@/lib/roles'
 
 import { getDisplayName } from '../lib'
@@ -83,6 +84,7 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
   const avatarName = profile.username || displayName
   const avatarFallback = getUserAvatarFallback(avatarName)
   const avatarFallbackStyle = getUserAvatarStyle(avatarName)
+  const avatarUrl = getUserAvatarUrl(profile.id, profile.setting)
   const roleLabel = getRoleLabel(profile.role)
   const stats: {
     label: string
@@ -119,7 +121,13 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
       <CardContent className='p-3 sm:p-5'>
         <div className='flex items-center gap-3 text-left sm:gap-4'>
           <Avatar className='ring-background h-12 w-12 rounded-xl text-sm ring-2 sm:h-16 sm:w-16 sm:rounded-2xl sm:text-lg sm:ring-4'>
+            <AvatarImage
+              src={avatarUrl}
+              alt=''
+              className='rounded-xl sm:rounded-2xl'
+            />
             <AvatarFallback
+              delay={avatarUrl ? MEOW_AVATAR_FALLBACK_DELAY : undefined}
               className='rounded-xl font-semibold text-white sm:rounded-2xl'
               style={avatarFallbackStyle}
             >

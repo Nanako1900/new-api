@@ -262,9 +262,10 @@ it.each([false, true])(
   }
 )
 
-it('retains the user avatar and model badge in the mobile summary', () => {
+it('retains the user avatar and model badge in the mobile summary', async () => {
   renderLogs()
-  expect(screen.getByText('P')).toBeVisible()
+  // The cat image never loads in jsdom, so the initials appear after their delay.
+  expect(await screen.findByText('P')).toBeVisible()
   const modelButton = screen.getByRole('button', { name: `Model: ${longName}` })
   expect(modelButton.querySelector('[data-slot="status-badge"]')).not.toBeNull()
 })

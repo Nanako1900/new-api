@@ -16,23 +16,29 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Pencil } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useLiveBalanceTotals } from '@/hooks/use-live-balance'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatCompactNumber, formatQuota } from '@/lib/format'
+import { MEOW_AVATAR_FALLBACK_DELAY, getUserAvatarUrl } from '@/lib/meow-avatar'
 import { getRoleLabel } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 
 import { getDisplayName } from '../lib'
 import type { UserProfile } from '../types'
+import { AvatarEditorDialog } from './avatar-editor/avatar-editor-dialog'
 
 type MeowProfileHeaderProps = {
   profile: UserProfile | null
   loading: boolean
+  onProfileUpdate?: () => void
 }
 
 const BADGE_ON_DARK = 'border-white/15! bg-white/10! text-white/85!'
@@ -63,6 +69,7 @@ function StatTile(props: { label: string; value: string; accent?: boolean }) {
 export function MeowProfileHeader(props: MeowProfileHeaderProps) {
   const { t } = useTranslation()
   const totals = useLiveBalanceTotals(props.profile)
+  const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
 
   if (props.loading) {
     return (
@@ -82,6 +89,7 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
 
   const displayName = getDisplayName(profile)
   const avatarName = profile.username || displayName
+  const avatarUrl = getUserAvatarUrl(profile.id, profile.setting)
   const details = [`@${profile.username}`, profile.email, profile.group].filter(
     Boolean
   )
@@ -94,14 +102,39 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
           className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-12 -z-10 h-44 w-60 rounded-full opacity-55 blur-[50px]'
         />
         <div className='flex items-center gap-4'>
-          <Avatar className='size-14 rounded-2xl text-lg ring-2 ring-white/15 sm:size-16'>
-            <AvatarFallback
-              className='rounded-2xl font-bold text-white'
-              style={getUserAvatarStyle(avatarName)}
+          <Button
+            variant='ghost'
+            aria-label={t('Change avatar')}
+            title={t('Change avatar')}
+            onClick={() => setAvatarEditorOpen(true)}
+            className='group/avatar-edit relative size-auto shrink-0 rounded-2xl p-0 hover:bg-transparent'
+          >
+            <Avatar className='size-14 rounded-2xl text-lg ring-2 ring-white/15 transition-transform group-hover/avatar-edit:scale-105 sm:size-16'>
+              <AvatarImage src={avatarUrl} alt='' className='rounded-2xl' />
+              <AvatarFallback
+                delay={avatarUrl ? MEOW_AVATAR_FALLBACK_DELAY : undefined}
+                className='rounded-2xl font-bold text-white'
+                style={getUserAvatarStyle(avatarName)}
+              >
+                {getUserAvatarFallback(avatarName)}
+              </AvatarFallback>
+            </Avatar>
+            <span
+              aria-hidden='true'
+              className='bg-meow-orange text-meow-ink ring-meow-ink absolute -right-1 -bottom-1 grid size-6 place-items-center rounded-full ring-2 dark:ring-[#25211C]'
             >
-              {getUserAvatarFallback(avatarName)}
-            </AvatarFallback>
-          </Avatar>
+              <Pencil className='size-3' />
+            </span>
+          </Button>
+          {avatarEditorOpen && (
+            <AvatarEditorDialog
+              open={avatarEditorOpen}
+              onOpenChange={setAvatarEditorOpen}
+              userId={profile.id}
+              setting={profile.setting}
+              onSaved={() => props.onProfileUpdate?.()}
+            />
+          )}
           <div className='flex min-w-0 flex-1 flex-col gap-2'>
             <div className='flex min-w-0 flex-wrap items-center gap-2'>
               <h1 className='truncate text-2xl font-extrabold tracking-[-0.03em] sm:text-[1.75rem]'>
