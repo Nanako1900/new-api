@@ -7262,7 +7262,6 @@
     "View API keys and their settings without the full key.": "API キーとその設定を表示します（完全なキーは含みません）。",
     "View API token key": "API トークンキーを表示",
     "View API token keys in batch": "API トークンキーを一括表示",
-    "View audit records from user and admin roles. Root records are always excluded.": "user と admin ロールの監査記録を表示します。root ロールの記録は常に除外されます。",
     "View balance, top-up records, subscriptions, and referral information.": "残高、チャージ履歴、サブスクリプション、紹介情報を表示します。",
     "View changelog source": "変更履歴のソースを表示",
     "View channel lists and details without secrets.": "シークレットを含まないチャネル一覧と詳細を表示します。",
@@ -7282,7 +7281,6 @@
     "View model statistics and charts": "モデルの統計とグラフを表示",
     "View models": "モデルを表示",
     "View models and vendors, and preview upstream sync.": "モデルとプロバイダーを表示し、アップストリーム同期をプレビューします。",
-    "View other accounts' audit logs": "他のアカウントの監査ログを表示",
     "View Passkey, two-factor, and sign-in binding status.": "Passkey、2要素認証、ログイン連携の状態を表示します。",
     "View performance, system tasks, and system information.": "パフォーマンス、システムタスク、システム情報を表示します。",
     "View Pricing": "価格を見る",
@@ -7733,6 +7731,9 @@
     "Review upstream error": "審査の上流エラー",
     "Client canceled": "クライアントによるキャンセル",
     "Content safety log cleanup": "コンテンツ安全ログのクリーンアップ",
-    "Invalid content safety log query": "コンテンツ安全ログの検索条件が無効です"
+    "Invalid content safety log query": "コンテンツ安全ログの検索条件が無効です",
+    "View other accounts' audit and content safety logs": "他のアカウントの監査ログとコンテンツ安全ログを表示",
+    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "user と admin ロールの監査記録とコンテンツ安全記録（ユーザーのプロンプトの抜粋を含む）を表示します。root ロールの記録は常に除外されます。",
+    "Not covered: Realtime voice sessions, images, files and audio content.": "対象外：Realtime の音声セッション、画像、ファイル、音声コンテンツ。"
   }
 }

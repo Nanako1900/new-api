@@ -7262,7 +7262,6 @@
     "View API keys and their settings without the full key.": "Afficher les clés API et leurs paramètres, sans la clé complète.",
     "View API token key": "Consulter la clé d’un jeton API",
     "View API token keys in batch": "Consulter les clés de jetons API par lot",
-    "View audit records from user and admin roles. Root records are always excluded.": "Consulter les audits des rôles user et admin. Les événements du rôle root sont toujours exclus.",
     "View balance, top-up records, subscriptions, and referral information.": "Afficher le solde, l’historique des recharges, les abonnements et les informations de parrainage.",
     "View changelog source": "Voir le fichier source",
     "View channel lists and details without secrets.": "Afficher les listes et détails des canaux sans secrets.",
@@ -7282,7 +7281,6 @@
     "View model statistics and charts": "Afficher les statistiques et graphiques des modèles",
     "View models": "Voir les modèles",
     "View models and vendors, and preview upstream sync.": "Afficher les modèles et les fournisseurs, et prévisualiser la synchronisation amont.",
-    "View other accounts' audit logs": "Voir les journaux d’audit des autres comptes",
     "View Passkey, two-factor, and sign-in binding status.": "Afficher l’état des Passkeys, de l’authentification à deux facteurs et des liaisons de connexion.",
     "View performance, system tasks, and system information.": "Afficher les performances, les tâches système et les informations système.",
     "View Pricing": "Voir les tarifs",
@@ -7733,6 +7731,9 @@
     "Review upstream error": "Erreur en amont lors de la vérification",
     "Client canceled": "Annulé par le client",
     "Content safety log cleanup": "Nettoyage des journaux de modération",
-    "Invalid content safety log query": "Critères de recherche des journaux de modération invalides"
+    "Invalid content safety log query": "Critères de recherche des journaux de modération invalides",
+    "View other accounts' audit and content safety logs": "Voir les journaux d’audit et de sécurité du contenu des autres comptes",
+    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "Consulter les audits et les enregistrements de sécurité du contenu (y compris des extraits des prompts des utilisateurs) des rôles user et admin. Les événements du rôle root sont toujours exclus.",
+    "Not covered: Realtime voice sessions, images, files and audio content.": "Non couverts : les sessions vocales Realtime, les images, les fichiers et le contenu audio."
   }
 }

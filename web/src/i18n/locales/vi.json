@@ -7262,7 +7262,6 @@
     "View API keys and their settings without the full key.": "Xem khóa API và cài đặt của chúng, không gồm khóa đầy đủ.",
     "View API token key": "Xem khóa mã thông báo API",
     "View API token keys in batch": "Xem hàng loạt khóa mã thông báo API",
-    "View audit records from user and admin roles. Root records are always excluded.": "Xem bản ghi kiểm toán của vai trò user và admin. Luôn loại trừ bản ghi của vai trò root.",
     "View balance, top-up records, subscriptions, and referral information.": "Xem số dư, lịch sử nạp tiền, gói đăng ký và thông tin giới thiệu.",
     "View changelog source": "Xem tệp nguồn",
     "View channel lists and details without secrets.": "Xem danh sách và chi tiết kênh không chứa bí mật.",
@@ -7282,7 +7281,6 @@
     "View model statistics and charts": "Xem thống kê và biểu đồ mô hình",
     "View models": "Xem mô hình",
     "View models and vendors, and preview upstream sync.": "Xem mô hình và nhà cung cấp, xem trước đồng bộ từ thượng nguồn.",
-    "View other accounts' audit logs": "Xem nhật ký kiểm toán của tài khoản khác",
     "View Passkey, two-factor, and sign-in binding status.": "Xem trạng thái khóa truy cập, xác thực hai yếu tố và liên kết đăng nhập.",
     "View performance, system tasks, and system information.": "Xem hiệu năng, tác vụ hệ thống và thông tin hệ thống.",
     "View Pricing": "View price",
@@ -7733,6 +7731,9 @@
     "Review upstream error": "Lỗi thượng nguồn khi kiểm duyệt",
     "Client canceled": "Máy khách đã hủy",
     "Content safety log cleanup": "Dọn dẹp nhật ký kiểm duyệt",
-    "Invalid content safety log query": "Truy vấn nhật ký kiểm duyệt không hợp lệ"
+    "Invalid content safety log query": "Truy vấn nhật ký kiểm duyệt không hợp lệ",
+    "View other accounts' audit and content safety logs": "Xem nhật ký kiểm toán và an toàn nội dung của tài khoản khác",
+    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "Xem bản ghi kiểm toán và bản ghi an toàn nội dung (bao gồm đoạn trích từ prompt của người dùng) của vai trò user và admin. Luôn loại trừ bản ghi của vai trò root.",
+    "Not covered: Realtime voice sessions, images, files and audio content.": "Không áp dụng cho: phiên giọng nói Realtime, hình ảnh, tệp và nội dung âm thanh."
   }
 }

@@ -737,8 +737,8 @@ export const STATIC_I18N_KEYS = [
   'API token batch key access',
 
   // Channel status audit events
-  "View other accounts' audit logs",
-  'View audit records from user and admin roles. Root records are always excluded.',
+  "View other accounts' audit and content safety logs",
+  "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.",
   'Updated channel status (ID: {{id}})',
   'Batch updated channel status ({{count}}/{{total}} changed)',
 

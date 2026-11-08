@@ -7262,7 +7262,6 @@
     "View API keys and their settings without the full key.": "查看 API 密钥及其设置，不含完整密钥。",
     "View API token key": "查看 API 令牌密钥",
     "View API token keys in batch": "批量查看 API 令牌密钥",
-    "View audit records from user and admin roles. Root records are always excluded.": "查看 user 和 admin 角色的审计记录，始终排除 root 级别记录。",
     "View balance, top-up records, subscriptions, and referral information.": "查看余额、充值记录、订阅和邀请信息。",
     "View changelog source": "查看日志源文件",
     "View channel lists and details without secrets.": "查看不含密钥的渠道列表和详情。",
@@ -7282,7 +7281,6 @@
     "View model statistics and charts": "查看模型统计和图表",
     "View models": "查看模型",
     "View models and vendors, and preview upstream sync.": "查看模型和供应商，并预览上游同步。",
-    "View other accounts' audit logs": "查看其他账户审计日志",
     "View Passkey, two-factor, and sign-in binding status.": "查看 Passkey、两步验证和登录绑定状态。",
     "View performance, system tasks, and system information.": "查看性能、系统任务和系统信息。",
     "View Pricing": "查看定价",
@@ -7733,6 +7731,9 @@
     "Review upstream error": "审核上游错误",
     "Client canceled": "客户端已取消",
     "Content safety log cleanup": "内容审核记录清理",
-    "Invalid content safety log query": "内容审核记录查询参数无效"
+    "Invalid content safety log query": "内容审核记录查询参数无效",
+    "View other accounts' audit and content safety logs": "查看其他账户审计和内容安全日志",
+    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "查看 user 和 admin 角色的审计记录和内容安全记录（包含用户提示词的片段），始终排除 root 级别记录。",
+    "Not covered: Realtime voice sessions, images, files and audio content.": "未覆盖：Realtime 语音会话、图片、文件和音频内容。"
   }
 }

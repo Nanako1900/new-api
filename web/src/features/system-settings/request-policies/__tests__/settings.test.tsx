@@ -507,7 +507,11 @@ describe('request policy settings', () => {
     )
     expect(
       screen.getByRole('group', { name: 'AI review options' })
-    ).toHaveAccessibleDescription(expect.stringMatching(/fails closed/))
+    ).toHaveAccessibleDescription(
+      expect.stringMatching(
+        /fails closed.*Not covered: Realtime voice sessions, images, files and audio content\./
+      )
+    )
   })
 
   it('numeric review options state their allowed range from one shared message', async () => {

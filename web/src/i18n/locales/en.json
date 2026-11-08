@@ -7262,7 +7262,6 @@
     "View API keys and their settings without the full key.": "View API keys and their settings without the full key.",
     "View API token key": "View API token key",
     "View API token keys in batch": "View API token keys in batch",
-    "View audit records from user and admin roles. Root records are always excluded.": "View audit records from user and admin roles. Root records are always excluded.",
     "View balance, top-up records, subscriptions, and referral information.": "View balance, top-up records, subscriptions, and referral information.",
     "View changelog source": "View changelog source",
     "View channel lists and details without secrets.": "View channel lists and details without secrets.",
@@ -7282,7 +7281,6 @@
     "View model statistics and charts": "View model statistics and charts",
     "View models": "View models",
     "View models and vendors, and preview upstream sync.": "View models and vendors, and preview upstream sync.",
-    "View other accounts' audit logs": "View other accounts' audit logs",
     "View Passkey, two-factor, and sign-in binding status.": "View Passkey, two-factor, and sign-in binding status.",
     "View performance, system tasks, and system information.": "View performance, system tasks, and system information.",
     "View Pricing": "View Pricing",
@@ -7733,6 +7731,9 @@
     "Review upstream error": "Review upstream error",
     "Client canceled": "Client canceled",
     "Content safety log cleanup": "Content safety log cleanup",
-    "Invalid content safety log query": "Invalid content safety log query"
+    "Invalid content safety log query": "Invalid content safety log query",
+    "View other accounts' audit and content safety logs": "View other accounts' audit and content safety logs",
+    "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.": "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.",
+    "Not covered: Realtime voice sessions, images, files and audio content.": "Not covered: Realtime voice sessions, images, files and audio content."
   }
 }
