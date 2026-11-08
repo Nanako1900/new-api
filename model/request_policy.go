@@ -226,8 +226,6 @@ func refreshRequestPolicySnapshot() error {
 	return err
 }
 
-// UpdateRequestPolicyOptions validates the entire resulting policy before any
-// write. Unknown JSON rule fields stay in the original option string.
 // validateContentSafetyReviewGroup rejects enabling the AI review with a group
 // that does not exist. It runs on the write path only: BuildRequestPolicy also
 // runs on every refresh, and a group deleted later must not discard the whole
@@ -247,6 +245,8 @@ func validateContentSafetyReviewGroup(values, options map[string]string) error {
 	return nil
 }
 
+// UpdateRequestPolicyOptions validates the entire resulting policy before any
+// write. Unknown JSON rule fields stay in the original option string.
 func UpdateRequestPolicyOptions(values map[string]string) error {
 	requestPolicyOptionMutex.Lock()
 	defer requestPolicyOptionMutex.Unlock()
