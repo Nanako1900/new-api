@@ -54,8 +54,22 @@ func limitLogTimeRange(startTimestamp int64, endTimestamp int64) (int64, error) 
 	return startTimestamp, nil
 }
 
-func GetAllLogs(c *gin.Context) {
+// boundedLogPage reads a log search's page. GetPageQuery passes a negative
+// page size through, and a negative LIMIT would return every row of the
+// range, so it falls back to the default page instead.
+func boundedLogPage(c *gin.Context) *common.PageInfo {
 	pageInfo := common.GetPageQuery(c)
+	if pageInfo.PageSize < 1 {
+		pageInfo.PageSize = common.ItemsPerPage
+	}
+	if pageInfo.Page < 1 {
+		pageInfo.Page = 1
+	}
+	return pageInfo
+}
+
+func GetAllLogs(c *gin.Context) {
+	pageInfo := boundedLogPage(c)
 	logs, total, err := model.GetAllLogs(logFilterFromQuery(c, true), pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
@@ -73,7 +87,7 @@ func GetAllLogs(c *gin.Context) {
 }
 
 func GetUserLogs(c *gin.Context) {
-	pageInfo := common.GetPageQuery(c)
+	pageInfo := boundedLogPage(c)
 	filter := logFilterFromQuery(c, false)
 	if c.GetInt("role") < common.RoleAdminUser {
 		startTimestamp, err := limitLogTimeRange(filter.StartTimestamp, filter.EndTimestamp)

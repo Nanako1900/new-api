@@ -610,6 +610,13 @@ func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
 	filtered := responseJSON(t, get("/api/monitor/global/logs?username=busy-user"))["data"].(map[string]any)
 	assert.EqualValues(t, 1, filtered["total"])
 
+	own := responseJSON(t, get("/api/monitor/logs?page_size=-1&p=-1"))["data"].(map[string]any)
+	assert.EqualValues(t, common.ItemsPerPage, own["page_size"], "a negative page size must not drop the LIMIT of the user's own logs")
+	assert.EqualValues(t, 1, own["page"])
+	adminLogs := env.do(monitorTestRequest{method: http.MethodGet, path: "/api/log/?page_size=-1", bearer: env.dashboardToken})
+	require.Equal(t, http.StatusOK, adminLogs.Code, adminLogs.Body.String())
+	assert.EqualValues(t, common.ItemsPerPage, responseJSON(t, adminLogs)["data"].(map[string]any)["page_size"], "nor of the admin log list")
+
 	env.setUserRole(t, common.RoleAdminUser)
 	assert.Equal(t, http.StatusForbidden, get("/api/monitor/global/logs").Code, "a demoted user loses the site-wide view at once")
 }
