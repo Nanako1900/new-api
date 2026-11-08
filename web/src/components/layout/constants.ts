@@ -63,3 +63,10 @@ export const MOBILE_DRAWER_CONFIG = {
     'fixed inset-x-0 bottom-3 z-50 mx-auto w-[95%] rounded-xl border border-border bg-background p-4 shadow-lg md:hidden',
   overlayClassName: 'fixed inset-0 z-40 bg-black/50 backdrop-blur-sm',
 } as const
+
+/**
+ * Id of the hidden focus target at the top of the console content area:
+ * the SkipToMain link target and where focus goes when the last console
+ * alert is dismissed.
+ */
+export const MAIN_CONTENT_ID = 'content'
