@@ -40,18 +40,24 @@ var contentSafetySetting = ContentSafetySetting{
 	LogRetentionDays:         30,
 }
 
-// contentSafetyIntBounds are the inclusive ranges of the integer options.
-var contentSafetyIntBounds = map[string][2]int{
-	"review_timeout_seconds":       {1, 60},
-	"review_max_concurrency":       {1, 256},
-	"review_rate_limit_per_minute": {1, 10000},
-	"window_chars":                 {50, 2000},
-	"max_windows":                  {1, 100},
-	"cache_ttl_seconds":            {0, 604800},
-	"log_retention_days":           {1, 3650},
+type contentSafetyIntOption struct {
+	field    string
+	min, max int
 }
 
-var contentSafetyTextFields = []string{"review_enabled", "review_words", "review_model", "review_group", "review_prompt"}
+// contentSafetyIntOptions lists the integer options in a fixed order with their
+// inclusive ranges, so validation errors are deterministic.
+var contentSafetyIntOptions = []contentSafetyIntOption{
+	{"review_timeout_seconds", 1, 60},
+	{"review_max_concurrency", 1, 256},
+	{"review_rate_limit_per_minute", 1, 10000},
+	{"window_chars", 50, 2000},
+	{"max_windows", 1, 100},
+	{"cache_ttl_seconds", 0, 604800},
+	{"log_retention_days", 1, 3650},
+}
+
+var contentSafetyNonIntFields = []string{"review_enabled", "review_words", "review_model", "review_group", "review_prompt"}
 
 func init() {
 	config.GlobalConfig.Register("content_safety_setting", &contentSafetySetting)
@@ -72,22 +78,46 @@ func (s *ContentSafetySetting) ReviewWordList() []string {
 	return words
 }
 
+// Bounded returns a copy with every integer clamped to its range and the model
+// and group names trimmed. Values loaded from the database bypass validation
+// (manual edits, older nodes), so consumers read this copy.
+func (s *ContentSafetySetting) Bounded() ContentSafetySetting {
+	bounded := *s
+	ints := map[string]*int{
+		"review_timeout_seconds":       &bounded.ReviewTimeoutSeconds,
+		"review_max_concurrency":       &bounded.ReviewMaxConcurrency,
+		"review_rate_limit_per_minute": &bounded.ReviewRateLimitPerMinute,
+		"window_chars":                 &bounded.WindowChars,
+		"max_windows":                  &bounded.MaxWindows,
+		"cache_ttl_seconds":            &bounded.CacheTTLSeconds,
+		"log_retention_days":           &bounded.LogRetentionDays,
+	}
+	for _, option := range contentSafetyIntOptions {
+		value := ints[option.field]
+		*value = min(max(*value, option.min), option.max)
+	}
+	bounded.ReviewModel = strings.TrimSpace(bounded.ReviewModel)
+	bounded.ReviewGroup = strings.TrimSpace(bounded.ReviewGroup)
+	return bounded
+}
+
 // ValidateContentSafetyOptions checks the content_safety_setting.* entries of
-// a complete request policy option map before it is stored.
+// a complete request policy option map on every load, refresh and write.
 func ValidateContentSafetyOptions(raw map[string]string) error {
 	for key := range raw {
 		field, ok := strings.CutPrefix(key, ContentSafetyOptionPrefix)
 		if !ok {
 			continue
 		}
-		if _, isInt := contentSafetyIntBounds[field]; !isInt && !slices.Contains(contentSafetyTextFields, field) {
+		isInt := slices.ContainsFunc(contentSafetyIntOptions, func(o contentSafetyIntOption) bool { return o.field == field })
+		if !isInt && !slices.Contains(contentSafetyNonIntFields, field) {
 			return fmt.Errorf("unknown content safety option: %s", key)
 		}
 	}
-	for field, bounds := range contentSafetyIntBounds {
-		value, err := strconv.Atoi(raw[ContentSafetyOptionPrefix+field])
-		if err != nil || value < bounds[0] || value > bounds[1] {
-			return fmt.Errorf("%s%s must be an integer from %d to %d", ContentSafetyOptionPrefix, field, bounds[0], bounds[1])
+	for _, option := range contentSafetyIntOptions {
+		value, err := strconv.Atoi(raw[ContentSafetyOptionPrefix+option.field])
+		if err != nil || value < option.min || value > option.max {
+			return fmt.Errorf("%s%s must be an integer from %d to %d", ContentSafetyOptionPrefix, option.field, option.min, option.max)
 		}
 	}
 	enabled, err := strconv.ParseBool(raw[ContentSafetyOptionPrefix+"review_enabled"])

@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -122,6 +123,10 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 }
 
 func TestBuildRequestPolicyValidatesContentSafety(t *testing.T) {
+	previousGroups := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroups)) })
+
 	const p = operation_setting.ContentSafetyOptionPrefix
 	enabled := map[string]string{p + "review_enabled": "true", p + "review_model": "judge", p + "review_group": "default", p + "review_words": "knife"}
 	with := func(key, value string) map[string]string {
@@ -132,27 +137,65 @@ func TestBuildRequestPolicyValidatesContentSafety(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		options map[string]string
-		wantErr bool
+		wantErr string
 	}{
 		{name: "defaults are valid", options: nil},
 		{name: "enabled with model, group and words", options: enabled},
-		{name: "enabled without model", options: with(p+"review_model", " "), wantErr: true},
-		{name: "enabled without review words", options: with(p+"review_words", ""), wantErr: true},
-		{name: "enabled with an unknown group", options: with(p+"review_group", "no-such-group"), wantErr: true},
-		{name: "timeout above its bound", options: map[string]string{p + "review_timeout_seconds": "61"}, wantErr: true},
-		{name: "window below its bound", options: map[string]string{p + "window_chars": "49"}, wantErr: true},
+		{name: "enabled without model", options: with(p+"review_model", " "), wantErr: "review_model"},
+		{name: "enabled without review words", options: with(p+"review_words", ""), wantErr: "review_words"},
+		{name: "refresh accepts a group that no longer exists", options: with(p+"review_group", "no-such-group")},
+		{name: "timeout above its bound", options: map[string]string{p + "review_timeout_seconds": "61"}, wantErr: "review_timeout_seconds"},
+		{name: "window below its bound", options: map[string]string{p + "window_chars": "49"}, wantErr: "window_chars"},
 		{name: "zero cache ttl disables the cache", options: map[string]string{p + "cache_ttl_seconds": "0"}},
-		{name: "non-integer concurrency", options: map[string]string{p + "review_max_concurrency": "1.5"}, wantErr: true},
-		{name: "unknown content safety field", options: map[string]string{p + "mode": "strict"}, wantErr: true},
-		{name: "non-boolean switch", options: map[string]string{p + "review_enabled": "yes"}, wantErr: true},
+		{name: "non-integer concurrency", options: map[string]string{p + "review_max_concurrency": "1.5"}, wantErr: "review_max_concurrency"},
+		{name: "unknown content safety field", options: map[string]string{p + "mode": "strict"}, wantErr: "unknown content safety option"},
+		{name: "non-boolean switch", options: map[string]string{p + "review_enabled": "yes"}, wantErr: "review_enabled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := BuildRequestPolicy(tc.options)
-			if tc.wantErr {
-				assert.Error(t, err)
+			if tc.wantErr != "" {
+				assert.ErrorContains(t, err, tc.wantErr)
 				return
 			}
 			assert.NoError(t, err)
 		})
 	}
+}
+
+func TestUpdateRequestPolicyOptionsRejectsMissingReviewGroup(t *testing.T) {
+	previousGroups := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	previousSnapshot := requestPolicySnapshot.Load()
+	snapshot, err := BuildRequestPolicy(nil)
+	require.NoError(t, err)
+	requestPolicySnapshot.Store(snapshot)
+	t.Cleanup(func() {
+		requestPolicySnapshot.Store(previousSnapshot)
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousGroups))
+	})
+
+	const p = operation_setting.ContentSafetyOptionPrefix
+	for _, enabled := range []string{"true", "1"} {
+		err := UpdateRequestPolicyOptions(map[string]string{
+			p + "review_enabled": enabled, p + "review_model": "judge",
+			p + "review_words": "knife", p + "review_group": "no-such-group",
+		})
+		assert.ErrorContains(t, err, "does not exist")
+		assert.Same(t, snapshot, CurrentRequestPolicy())
+	}
+}
+
+func TestContentSafetySettingBounded(t *testing.T) {
+	setting := operation_setting.ContentSafetySetting{
+		ReviewModel: " judge ", ReviewGroup: " default ",
+		ReviewTimeoutSeconds: -1, ReviewMaxConcurrency: 0, ReviewRateLimitPerMinute: 99999,
+		WindowChars: 10, MaxWindows: 1000, CacheTTLSeconds: -5, LogRetentionDays: 0,
+	}
+	bounded := setting.Bounded()
+	assert.Equal(t, operation_setting.ContentSafetySetting{
+		ReviewModel: "judge", ReviewGroup: "default",
+		ReviewTimeoutSeconds: 1, ReviewMaxConcurrency: 1, ReviewRateLimitPerMinute: 10000,
+		WindowChars: 50, MaxWindows: 100, CacheTTLSeconds: 0, LogRetentionDays: 1,
+	}, bounded)
+	assert.Equal(t, -1, setting.ReviewTimeoutSeconds)
 }

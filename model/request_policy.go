@@ -162,10 +162,6 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 	if err := operation_setting.ValidateContentSafetyOptions(raw); err != nil {
 		return nil, err
 	}
-	if raw[operation_setting.ContentSafetyOptionPrefix+"review_enabled"] == "true" &&
-		!ratio_setting.ContainsGroupRatio(raw[operation_setting.ContentSafetyOptionPrefix+"review_group"]) {
-		return nil, fmt.Errorf("content safety review group does not exist")
-	}
 	if err := operation_setting.ValidateChannelTestConcurrency(raw["monitor_setting.channel_test_concurrency"]); err != nil {
 		return nil, err
 	}
@@ -245,6 +241,18 @@ func UpdateRequestPolicyOptions(values map[string]string) error {
 	snapshot, err := BuildRequestPolicy(options)
 	if err != nil {
 		return err
+	}
+	// Checked on write only: BuildRequestPolicy also runs on every refresh, and a
+	// group deleted later must not discard the whole snapshot. At runtime a
+	// missing group just means no review channel, so the request fails closed.
+	_, enabledChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_enabled"]
+	_, groupChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_group"]
+	if enabledChanged || groupChanged {
+		enabled, _ := strconv.ParseBool(options[operation_setting.ContentSafetyOptionPrefix+"review_enabled"])
+		group := options[operation_setting.ContentSafetyOptionPrefix+"review_group"]
+		if enabled && !ratio_setting.ContainsGroupRatio(group) {
+			return fmt.Errorf("content safety review group %q does not exist", group)
+		}
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		for key, value := range values {
