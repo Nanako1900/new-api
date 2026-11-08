@@ -1318,7 +1318,7 @@ func TestGetContentSafetyLogsHidesRootUsersFromNonRootAuditors(t *testing.T) {
 	rootToken := "root-safety-token"
 	root := &model.User{Username: "root-safety", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &rootToken, AffCode: "root-safety"}
 	require.NoError(t, model.DB.Create(root).Error)
-	commonUser := &model.User{Username: "common-safety", Role: 1, Status: 1, AuthVersion: 1, AffCode: "common-safety"}
+	commonUser := &model.User{Username: "common-safety", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "common-safety"}
 	require.NoError(t, model.DB.Create(commonUser).Error)
 	require.NoError(t, model.MigrateContentSafetyLogs())
 	model.RecordContentSafetyLog(model.ContentSafetyLog{RequestId: "root-row", UserId: root.Id, Decision: model.ContentSafetyDecisionKeywordBlocked, Snippets: `["root prompt excerpt"]`})

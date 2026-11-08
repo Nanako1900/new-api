@@ -111,7 +111,7 @@ func GetContentSafetyLogs(filter ContentSafetyLogFilter, start, limit int, viewe
 	query := LOG_DB.Model(&ContentSafetyLog{})
 	if viewerRole < common.RoleRootUser {
 		var rootIds []int
-		if err := DB.Model(&User{}).Where("role >= ?", common.RoleRootUser).Pluck("id", &rootIds).Error; err != nil {
+		if err := DB.Unscoped().Model(&User{}).Where("role >= ?", common.RoleRootUser).Pluck("id", &rootIds).Error; err != nil {
 			return nil, 0, err
 		}
 		// An empty slice would render as NOT IN (NULL) and match nothing.
