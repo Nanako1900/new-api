@@ -11,30 +11,44 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-// rawMediaMinLen is the shortest raw base64 run examined for a media signature.
-const rawMediaMinLen = 1024
+const (
+	// rawMediaMinLen and dataURLMediaMinLen are the shortest encoded payloads
+	// skipped as media; shorter values are scanned.
+	rawMediaMinLen     = 1024
+	dataURLMediaMinLen = 256
+	// maxDataURLHeader bounds the "data:...;base64" header of a media data URL.
+	maxDataURLHeader = 256
+	// Compressed media encoded as base64 holds about 15% digits and 40% each of
+	// upper and lower case; text written in the alphabet falls far below.
+	minDigitPercent = 5
+	minUpperPercent = 15
+	minLowerPercent = 15
+)
 
 // mediaHeader matches the header of a base64 data URL for image, video or audio.
 var mediaHeader = regexp.MustCompile(`(?i)^data:(image|video|audio)/[a-z0-9.+-]+(;[a-z0-9._+=-]+)*;base64$`)
 
-// mediaMagics are the leading bytes of the media formats accepted as raw
-// base64: bytes at offset must equal magic.
-var mediaMagics = []struct {
-	offset int
-	magic  string
+// mediaSignatures are the leading bytes of the accepted media formats. magic
+// sits at offset, tag (when set) at offset 8 of a RIFF container, and families
+// lists the declared data URL families the format belongs to.
+var mediaSignatures = []struct {
+	families string
+	offset   int
+	magic    string
+	tag      string
 }{
-	{0, "\x89PNG\r\n\x1a\n"},
-	{0, "\xFF\xD8\xFF"},
-	{0, "GIF87a"},
-	{0, "GIF89a"},
-	{0, "RIFF"}, // WEBP or WAVE follows at offset 8, checked in hasMediaMagic
-	{4, "ftyp"},
-	{0, "ID3"},
-	{0, "\xFF\xFB"},
-	{0, "\xFF\xF3"},
-	{0, "\xFF\xF2"},
-	{0, "OggS"},
-	{0, "fLaC"},
+	{"image", 0, "\x89PNG\r\n\x1a\n", ""},
+	{"image", 0, "\xFF\xD8\xFF", ""},
+	{"image", 0, "GIF87a", ""},
+	{"image", 0, "GIF89a", ""},
+	{"image", 0, "RIFF", "WEBP"},
+	{"image audio video", 4, "ftyp", ""},
+	{"audio", 0, "ID3", ""},
+	{"audio video", 0, "OggS", ""},
+	{"audio", 0, "fLaC", ""},
+	{"audio", 0, "RIFF", "WAVE"},
+	{"video", 0, "RIFF", "AVI "},
+	{"video", 0, "\x1A\x45\xDF\xA3", ""},
 }
 
 // CollectJSONText joins every string value of a JSON document, one per line,
@@ -71,15 +85,54 @@ func collectStrings(value any, builder *strings.Builder) {
 }
 
 // isInlineMedia reports whether s is an image, video or audio payload: a
-// base64 data URL with a media type, or a long raw base64 run that starts with
-// a known media signature. Alphabet alone never qualifies, because prompts
-// written in snake_case or camelCase share it. Everything else, however large,
-// is text a user could have written.
+// base64 data URL with a media type, or a raw base64 run. Either must look like
+// encoded media (see looksLikeEncodedMedia); alphabet alone never qualifies,
+// because prompts written in snake_case or camelCase share it. Everything
+// else, however large, is text a user could have written.
 func isInlineMedia(s string) bool {
-	if header, payload, ok := strings.Cut(s, ","); ok {
-		return mediaHeader.MatchString(header) && isBase64Payload(payload, true)
+	header, payload, isDataURL := strings.Cut(s, ",")
+	if !isDataURL {
+		return looksLikeEncodedMedia(s, "")
 	}
-	return len(s) >= rawMediaMinLen && isBase64Payload(s, false) && hasMediaMagic(s)
+	if len(header) > maxDataURLHeader {
+		return false
+	}
+	match := mediaHeader.FindStringSubmatch(header)
+	return match != nil && looksLikeEncodedMedia(payload, strings.ToLower(match[1]))
+}
+
+// looksLikeEncodedMedia checks a base64 payload for minimum length, the
+// character statistics of compressed media and a media signature. family is
+// the declared data URL family, or "" for a raw run, which accepts any family.
+func looksLikeEncodedMedia(payload, family string) bool {
+	if !isBase64Payload(payload, family != "") {
+		return false
+	}
+	var total, digits, upper, lower int
+	for i := range len(payload) {
+		switch c := payload[i]; {
+		case c >= '0' && c <= '9':
+			digits++
+		case c >= 'A' && c <= 'Z':
+			upper++
+		case c >= 'a' && c <= 'z':
+			lower++
+		case c == '=' || c == '\r' || c == '\n':
+			continue
+		}
+		total++
+	}
+	minLen := rawMediaMinLen
+	if family != "" {
+		minLen = dataURLMediaMinLen
+	}
+	if total < minLen ||
+		digits*100 < minDigitPercent*total ||
+		upper*100 < minUpperPercent*total ||
+		lower*100 < minLowerPercent*total {
+		return false
+	}
+	return hasMediaMagic(payload, family)
 }
 
 // isBase64Payload checks the base64 alphabet (standard or URL-safe), with '='
@@ -102,11 +155,14 @@ func isBase64Payload(s string, allowLineBreaks bool) bool {
 	return true
 }
 
-// hasMediaMagic decodes the first 32 characters of a raw base64 run and
-// compares them with the known media signatures.
-func hasMediaMagic(s string) bool {
-	head := strings.TrimRight(s[:32], "=")
-	head = head[:len(head)/4*4]
+// hasMediaMagic decodes the first 32 characters of a payload and compares them
+// with the signatures of family (any family when empty).
+func hasMediaMagic(payload, family string) bool {
+	head := strings.NewReplacer("\r", "", "\n", "").Replace(payload[:min(len(payload), 64)])
+	if len(head) < 32 {
+		return false
+	}
+	head = head[:32]
 	decoded, err := base64.RawStdEncoding.DecodeString(head)
 	if err != nil {
 		decoded, err = base64.RawURLEncoding.DecodeString(head)
@@ -114,14 +170,14 @@ func hasMediaMagic(s string) bool {
 			return false
 		}
 	}
-	for _, m := range mediaMagics {
-		if !bytes.HasPrefix(decoded[min(m.offset, len(decoded)):], []byte(m.magic)) {
+	for _, sig := range mediaSignatures {
+		if family != "" && !slices.Contains(strings.Fields(sig.families), family) {
 			continue
 		}
-		if m.magic != "RIFF" {
-			return true
+		if !bytes.HasPrefix(decoded[min(sig.offset, len(decoded)):], []byte(sig.magic)) {
+			continue
 		}
-		if kind := decoded[min(8, len(decoded)):]; bytes.HasPrefix(kind, []byte("WEBP")) || bytes.HasPrefix(kind, []byte("WAVE")) {
+		if sig.tag == "" || bytes.HasPrefix(decoded[min(8, len(decoded)):], []byte(sig.tag)) {
 			return true
 		}
 	}

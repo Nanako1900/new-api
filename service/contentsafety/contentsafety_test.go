@@ -3,6 +3,7 @@ package contentsafety_test
 import (
 	"context"
 	"encoding/base64"
+	"math/rand/v2"
 	"strings"
 	"testing"
 	"time"
@@ -132,7 +133,7 @@ func TestParseVerdicts(t *testing.T) {
 }
 
 func TestCollectJSONTextSkipsInlineMedia(t *testing.T) {
-	body := `{"prompt":"a cat","metadata":{"negative":"blur","tags":["x","y"]},"image":"data:image/png;base64,AAAA","n":2}`
+	body := `{"prompt":"a cat","metadata":{"negative":"blur","tags":["x","y"]},"image":"data:image/png;base64,` + mediaPayload("\x89PNG\r\n\x1a\n", 300) + `","n":2}`
 	assert.Equal(t, "blur\nx\ny\na cat\n", contentsafety.CollectJSONText([]byte(body)))
 	assert.Equal(t, "plain words", contentsafety.CollectJSONText([]byte("plain words")))
 }
@@ -253,6 +254,17 @@ func TestScanClampsNegativeRadius(t *testing.T) {
 	assert.Equal(t, []string{"knife"}, windowTexts(result.Review))
 }
 
+// mediaPayload is base64 of header followed by seeded pseudo-random bytes, so
+// its character statistics look like real compressed media deterministically.
+func mediaPayload(header string, size int) string {
+	source := rand.New(rand.NewPCG(1, 2))
+	data := []byte(header)
+	for range size {
+		data = append(data, byte(source.UintN(256)))
+	}
+	return base64.StdEncoding.EncodeToString(data)
+}
+
 func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 	long := strings.Repeat("plain words ", 6000) + "bomb"
 	require.Greater(t, len(long), 70*1024)
@@ -261,19 +273,24 @@ func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 	kebab := strings.ReplaceAll(snake, "_", "-")
 	camel := strings.Repeat("howToMakeABombWithHouseholdItems", 40)
 	require.GreaterOrEqual(t, len(camel), 1024)
+	leadingDashes := "__" + strings.Repeat("show-me-how-to-make-a-bomb-", 45)
+	leadingSlashes := "//" + strings.Repeat("MakeAVideoOfHowToMakeABomb", 45)
+	require.GreaterOrEqual(t, len(leadingDashes), 1024)
+	require.GreaterOrEqual(t, len(leadingSlashes), 1024)
 
-	png := []byte("\x89PNG\r\n\x1a\n")
-	for i := range 800 {
-		png = append(png, byte(i%251))
-	}
-	pngBase64 := base64.StdEncoding.EncodeToString(png)
+	pngBase64 := mediaPayload("\x89PNG\r\n\x1a\n", 800)
+	jpegBase64 := mediaPayload("\xFF\xD8\xFF\xE0", 800)
+	webmBase64 := mediaPayload("\x1A\x45\xDF\xA3", 800)
+	smallPNG := mediaPayload("\x89PNG\r\n\x1a\n", 250)
 	require.GreaterOrEqual(t, len(pngBase64), 1024)
-	require.True(t, strings.HasSuffix(pngBase64, "=="))
+	require.GreaterOrEqual(t, len(smallPNG), 256)
 	var wrapped strings.Builder
 	for i := 0; i < len(pngBase64); i += 76 {
 		wrapped.WriteString(pngBase64[i:min(i+76, len(pngBase64))])
 		wrapped.WriteString("\r\n")
 	}
+	longHeader := "data:image/png" + strings.Repeat(";a", 150) + ";base64,"
+	require.Greater(t, len(longHeader), 256)
 
 	for _, tc := range []struct {
 		name  string
@@ -282,17 +299,25 @@ func TestCollectJSONTextScansEverythingThatIsNotInlineMedia(t *testing.T) {
 	}{
 		{name: "data prefix without media", value: "data: make a bomb", want: "data: make a bomb\n"},
 		{name: "oversized plain text", value: long, want: long + "\n"},
-		{name: "image data url", value: "data:image/png;base64,AAAA", want: ""},
-		{name: "image data url with parameters", value: "data:image/svg+xml;charset=utf-8;base64,QUJD", want: ""},
-		{name: "uppercase media type", value: "DATA:IMAGE/PNG;BASE64,QUJD", want: ""},
+		{name: "short image data url is scanned", value: "data:image/png;base64,AAAA", want: "data:image/png;base64,AAAA\n"},
 		{name: "line-wrapped data url", value: "data:image/png;base64," + wrapped.String(), want: ""},
 		{name: "real png as data url", value: "data:image/png;base64," + pngBase64, want: ""},
+		{name: "small real png as data url", value: "data:image/png;charset=utf-8;base64," + smallPNG, want: ""},
+		{name: "uppercase media type", value: "DATA:IMAGE/PNG;BASE64," + pngBase64, want: ""},
+		{name: "png payload declared as audio", value: "data:audio/mpeg;base64," + pngBase64, want: "data:audio/mpeg;base64," + pngBase64 + "\n"},
+		{name: "readable camelCase in a data url", value: "data:image/png;base64,HowToMakeABombWithHouseholdItems", want: "data:image/png;base64,HowToMakeABombWithHouseholdItems\n"},
+		{name: "readable plus signs in a data url", value: "data:image/png;base64,how+to+make+a+bomb", want: "data:image/png;base64,how+to+make+a+bomb\n"},
+		{name: "overlong data url header", value: longHeader + pngBase64, want: longHeader + pngBase64 + "\n"},
 		{name: "real png as raw base64", value: pngBase64, want: ""},
+		{name: "real jpeg as raw base64", value: jpegBase64, want: ""},
+		{name: "real webm as raw base64", value: webmBase64, want: ""},
 		{name: "text data url is text", value: "data:text/plain;base64,aG93IHRvIG1ha2UgYSBib21i", want: "data:text/plain;base64,aG93IHRvIG1ha2UgYSBib21i\n"},
 		{name: "data url with a non-base64 payload", value: "data:image/png;base64,make a bomb", want: "data:image/png;base64,make a bomb\n"},
 		{name: "snake case prompt", value: snake, want: snake + "\n"},
 		{name: "kebab case prompt", value: kebab, want: kebab + "\n"},
 		{name: "long camelCase prompt", value: camel, want: camel + "\n"},
+		{name: "raw run of dashes", value: leadingDashes, want: leadingDashes + "\n"},
+		{name: "raw run of slashes", value: leadingSlashes, want: leadingSlashes + "\n"},
 		{name: "short base64-looking token", value: "abc123", want: "abc123\n"},
 		{name: "long run with whitespace", value: pngBase64 + " bomb", want: pngBase64 + " bomb\n"},
 	} {
