@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	verdictCacheNamespace = "new-api:content_safety:verdict:v1"
-	verdictCacheCapacity  = 100000
-	verdictCacheMaxTTL    = 7 * 24 * time.Hour
+	verdictCacheNamespace  = "new-api:content_safety:verdict:v1"
+	verdictCacheCapacity   = 100000
+	verdictCacheDefaultTTL = 7 * 24 * time.Hour
 )
 
 // CachedVerdict is a definitive conclusion kept for one window text.
@@ -40,7 +40,7 @@ func getVerdictCache() *cachex.HybridCache[CachedVerdict] {
 			RedisCodec: cachex.JSONCodec[CachedVerdict]{},
 			Memory: func() *hot.HotCache[string, CachedVerdict] {
 				return hot.NewHotCache[string, CachedVerdict](hot.LRU, verdictCacheCapacity).
-					WithTTL(verdictCacheMaxTTL).
+					WithTTL(verdictCacheDefaultTTL).
 					WithJanitor().
 					Build()
 			},
@@ -49,10 +49,10 @@ func getVerdictCache() *cachex.HybridCache[CachedVerdict] {
 	return verdictCache
 }
 
-// CacheKey identifies a window text under one review model and prompt, so
-// changing either invalidates earlier conclusions.
+// CacheKey identifies a window text under one review model, prompt and reply
+// contract, so changing any of them invalidates earlier conclusions.
 func CacheKey(model, prompt, text string) string {
-	sum := sha256.Sum256([]byte(model + "\x00" + prompt + "\x00" + text))
+	sum := sha256.Sum256([]byte(model + "\x00" + prompt + "\x00" + outputContract + "\x00" + text))
 	return hex.EncodeToString(sum[:])
 }
 

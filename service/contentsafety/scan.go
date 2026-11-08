@@ -37,18 +37,31 @@ type Result struct {
 // against the review list. Review windows extend reviewRadius runes around
 // each hit, and overlapping windows merge.
 func Scan(text string, blockWords, reviewWords []string, reviewRadius int) Result {
-	runes := []rune(text)
-	lower := make([]rune, len(runes))
-	for i, r := range runes {
+	if len(blockWords) == 0 && len(reviewWords) == 0 {
+		return Result{}
+	}
+	lower := []rune(text)
+	for i, r := range lower {
 		lower[i] = unicode.ToLower(r)
 	}
-	if blocked := windowsAround(runes, service.AcMatches(lower, blockWords), SnippetRadius); len(blocked) > 0 {
+	blockMatches := service.AcMatches(lower, blockWords)
+	reviewMatches := []service.AcMatch(nil)
+	if len(blockMatches) == 0 {
+		reviewMatches = service.AcMatches(lower, reviewWords)
+	}
+	if len(blockMatches) == 0 && len(reviewMatches) == 0 {
+		return Result{}
+	}
+	runes := []rune(text)
+	if blocked := windowsAround(runes, blockMatches, SnippetRadius); len(blocked) > 0 {
 		return Result{Blocked: blocked}
 	}
-	return Result{Review: windowsAround(runes, service.AcMatches(lower, reviewWords), reviewRadius)}
+	return Result{Review: windowsAround(runes, reviewMatches, max(0, reviewRadius))}
 }
 
-// windowsAround turns sorted hits into merged context windows.
+// windowsAround turns hits into context windows. Overlapping hits merge while
+// the merged window stays within 4*radius plus the word length, so a dense
+// text yields several bounded windows instead of one spanning everything.
 func windowsAround(runes []rune, matches []service.AcMatch, radius int) []Window {
 	if len(matches) == 0 {
 		return nil
@@ -56,10 +69,11 @@ func windowsAround(runes []rune, matches []service.AcMatch, radius int) []Window
 	slices.SortFunc(matches, func(a, b service.AcMatch) int { return a.Pos - b.Pos })
 	windows := make([]Window, 0, len(matches))
 	for _, match := range matches {
-		hitEnd := match.Pos + len([]rune(match.Word))
+		wordLen := len([]rune(match.Word))
+		hitEnd := match.Pos + wordLen
 		start := max(0, match.Pos-radius)
 		end := min(len(runes), hitEnd+radius)
-		if n := len(windows); n > 0 && start <= windows[n-1].End {
+		if n := len(windows); n > 0 && start <= windows[n-1].End && max(windows[n-1].End, end)-windows[n-1].Start <= 4*radius+wordLen {
 			last := &windows[n-1]
 			last.End = max(last.End, end)
 			if !slices.Contains(last.Words, match.Word) {
