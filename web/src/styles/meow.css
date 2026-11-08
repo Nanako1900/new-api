@@ -324,6 +324,45 @@ header nav.backdrop-blur-2xl {
 }
 
 /*
+ * Home hero (meow-hero.tsx): the badge, headline, subtitle, buttons and the
+ * visual rise in one after another. While the splash from index.html is on
+ * screen (html.meow-splash-active) they wait at the start, so they rise as
+ * it leaves. Backwards fill only: no transform stays on the elements after.
+ */
+.meow-hero-enter > :first-child > *,
+.meow-hero-enter > :last-child {
+  animation: meow-hero-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.meow-hero-enter > :first-child > :nth-child(2) {
+  animation-delay: 70ms;
+}
+.meow-hero-enter > :first-child > :nth-child(3) {
+  animation-delay: 140ms;
+}
+.meow-hero-enter > :first-child > :nth-child(4) {
+  animation-delay: 210ms;
+}
+.meow-hero-enter > :last-child {
+  animation-delay: 280ms;
+}
+html.meow-splash-active .meow-hero-enter > :first-child > *,
+html.meow-splash-active .meow-hero-enter > :last-child {
+  animation-play-state: paused;
+}
+@keyframes meow-hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .meow-hero-enter > :first-child > *,
+  .meow-hero-enter > :last-child {
+    animation: none;
+  }
+}
+
+/*
  * Console panel (upstream SidebarInset, inset variant): end it higher than
  * upstream's 0.5rem margin, so the console cat (meow-console-cat.tsx) can
  * lie on its bottom edge with its tail hanging below.

@@ -58,9 +58,228 @@
     </script>
     <!--umami-->
     <!--Google Analytics-->
+    <!-- MeowAPI splash. It shows only when the app is not ready after 0.2s
+         (0.8s for returning visitors), so quick loads never flash it. Once
+         shown, the logo and name always finish (0.5s) and pause (0.15s)
+         before src/lib/meow-splash.ts flies the logo into the header.
+         Keep the timings in sync with that file. -->
+    <style>
+      #meow-splash {
+        --meow-splash-delay: 0.2s;
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: #f6eee2;
+        color: #1e1b17;
+        opacity: 0;
+        pointer-events: none;
+        animation: meow-splash-in 0.2s ease-out var(--meow-splash-delay)
+          forwards;
+      }
+      #meow-splash.is-returning {
+        --meow-splash-delay: 0.8s;
+      }
+      #meow-splash.is-shown {
+        pointer-events: auto;
+      }
+      #meow-splash.is-leaving {
+        animation: meow-splash-out 0.25s ease-in-out forwards;
+      }
+      html.dark #meow-splash {
+        background: #15130f;
+        color: #f3efe8;
+      }
+      .meow-splash-tile {
+        width: 88px;
+        height: 88px;
+        border-radius: 22px;
+        overflow: hidden;
+        opacity: 0;
+        animation: meow-splash-pop 0.3s cubic-bezier(0.22, 1, 0.36, 1)
+          var(--meow-splash-delay) forwards;
+      }
+      .meow-splash-tile svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      /* "Meow API" in Plus Jakarta Sans 700 as outlines, so it needs no
+         font download. Each letter closes in from a wider spacing, then the
+         letters dim in turn while the app is still loading. */
+      .meow-splash-word {
+        height: 20px;
+        overflow: visible;
+        fill: currentColor;
+      }
+      .meow-splash-word g {
+        animation: meow-splash-wave 1.6s ease-in-out
+          calc(var(--meow-splash-delay) + 0.5s + var(--i) * 90ms) infinite;
+      }
+      .meow-splash-word path {
+        opacity: 0;
+        animation: meow-splash-track 0.45s cubic-bezier(0.22, 1, 0.36, 1)
+          calc(var(--meow-splash-delay) + 0.05s) forwards;
+      }
+      @keyframes meow-splash-in {
+        to {
+          opacity: 1;
+        }
+      }
+      @keyframes meow-splash-out {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+      @keyframes meow-splash-pop {
+        from {
+          opacity: 0;
+          transform: scale(0.94);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes meow-splash-track {
+        from {
+          opacity: 0;
+          transform: translateX(var(--s));
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes meow-splash-wave {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        45% {
+          opacity: 0.3;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .meow-splash-tile,
+        .meow-splash-word path {
+          opacity: 1;
+          animation: none;
+        }
+        .meow-splash-word g {
+          animation: none;
+        }
+      }
+    </style>
   </head>
 
   <body>
     <div id="root" translate="no" class="notranslate"></div>
+    <div id="meow-splash" aria-hidden="true">
+      <div class="meow-splash-tile">
+        <svg viewBox="0 0 120 120">
+          <defs>
+            <clipPath id="meow-splash-head">
+              <path
+                d="M22 52 L24 17 Q25 11 30 14 L48 30 Q60 26 72 30 L90 14 Q95 11 96 17 L98 52 Q106 63 104 77 Q100 105 60 106 Q20 105 16 77 Q14 63 22 52 Z"
+              />
+            </clipPath>
+          </defs>
+          <rect width="120" height="120" rx="28" fill="#1E1B17" />
+          <g transform="translate(-4.6 -3.9) scale(1.08)">
+            <path
+              d="M22 52 L24 17 Q25 11 30 14 L48 30 Q60 26 72 30 L90 14 Q95 11 96 17 L98 52 Q106 63 104 77 Q100 105 60 106 Q20 105 16 77 Q14 63 22 52 Z"
+              fill="#FFFFFF"
+            />
+            <path
+              clip-path="url(#meow-splash-head)"
+              d="M0 0 H62 C61 14 63 26 58 36 C54 44 50 52 42 55 C34 58 28 58 22 62 C18 65 14 70 8 74 L0 76 Z"
+              fill="#EE8A3C"
+            />
+            <path
+              d="M70 56 C76 50 86 50 94 54 C95.3 54.7 96.4 55.4 97.6 56 Q101.3 57.3 99.2 53.8 L112 52 L112 80 L103.8 78.1 Q104.3 74.2 101.2 75.6 C99.6 76.3 97.8 77.8 96 80 C90 86 80 88 72 84 C64 80 62 64 70 56 Z"
+              fill="#1E1B17"
+            />
+            <ellipse cx="45" cy="70" rx="4.8" ry="6.3" fill="#1E1B17" />
+            <ellipse cx="75" cy="70" rx="4.8" ry="6.3" fill="#FFFFFF" />
+            <path
+              d="M56.6 81.2 Q60 80 63.4 81.2 Q64.8 82 63.8 83.4 L61.2 86.2 Q60 87.4 58.8 86.2 L56.2 83.4 Q55.2 82 56.6 81.2 Z"
+              fill="#EE8A3C"
+            />
+          </g>
+        </svg>
+      </div>
+      <svg class="meow-splash-word" viewBox="7 0 499 76">
+        <g style="--i: 0; --s: -98px">
+          <path
+            d="M7.2 74.5L7.2 0L20.2 0L48.1 37.9L41.9 37.9L69.2 0L82.2 0L82.2 74.5L68.5 74.5L68.5 15.5L73.8 16.8L45.5 54.5L43.9 54.5L16.3 16.8L20.8 15.5L20.8 74.5Z"
+          />
+        </g>
+        <g style="--i: 1; --s: -70px">
+          <path
+            d="M125.2 75.7Q116.8 75.7 110.5 71.9Q104.2 68.1 100.7 61.6Q97.2 55.1 97.2 47.2Q97.2 39 100.8 32.7Q104.3 26.3 110.5 22.6Q116.6 18.9 124.2 18.9Q130.6 18.9 135.5 21Q140.3 23.1 143.7 26.8Q147.1 30.5 148.9 35.3Q150.7 40 150.7 45.5Q150.7 46.9 150.6 48.4Q150.4 49.9 150 51L108 51L108 41L142.6 41L136.4 45.7Q137.3 41.1 136 37.5Q134.6 33.9 131.6 31.8Q128.5 29.7 124.2 29.7Q120.1 29.7 116.9 31.8Q113.7 33.8 112.1 37.8Q110.4 41.7 110.8 47.3Q110.4 52.3 112.2 56.2Q113.9 60 117.4 62.1Q120.8 64.2 125.3 64.2Q129.8 64.2 133 62.3Q136.1 60.4 137.9 57.2L148.5 62.4Q146.9 66.3 143.5 69.3Q140.1 72.3 135.5 74Q130.8 75.7 125.2 75.7Z"
+          />
+        </g>
+        <g style="--i: 2; --s: -42px">
+          <path
+            d="M191.2 75.7Q183.2 75.7 176.7 72Q170.1 68.3 166.3 61.9Q162.4 55.5 162.4 47.3Q162.4 39.1 166.3 32.7Q170.1 26.3 176.6 22.6Q183.1 18.9 191.2 18.9Q199.2 18.9 205.7 22.6Q212.2 26.3 216.1 32.7Q219.9 39 219.9 47.3Q219.9 55.5 216 61.9Q212.1 68.3 205.6 72Q199.1 75.7 191.2 75.7ZM191.2 63.7Q195.6 63.7 199 61.6Q202.3 59.5 204.3 55.8Q206.2 52 206.2 47.3Q206.2 42.5 204.3 38.9Q202.3 35.2 199 33.1Q195.6 30.9 191.2 30.9Q186.7 30.9 183.3 33.1Q179.9 35.2 178 38.9Q176 42.5 176 47.3Q176 52 178 55.8Q179.9 59.5 183.3 61.6Q186.7 63.7 191.2 63.7Z"
+          />
+        </g>
+        <g style="--i: 3; --s: -14px">
+          <path
+            d="M246.5 74.5L227.8 20.1L241.6 20.1L255.3 61.4L250.5 61.3L265.1 20.1L276.7 20.1L291.2 61.3L286.4 61.4L300.1 20.1L313.9 20.1L295.2 74.5L283.5 74.5L268.7 31.4L273.1 31.4L258.1 74.5Z"
+          />
+        </g>
+        <g style="--i: 5; --s: 42px">
+          <path
+            d="M341.9 74.5L367.6 0L385.2 0L410.9 74.5L396.1 74.5L390.8 58.5L362 58.5L356.6 74.5ZM365.9 46.5L386.9 46.5L374.5 9.4L378.3 9.4Z"
+          />
+        </g>
+        <g style="--i: 6; --s: 70px">
+          <path
+            d="M423.2 74.5L423.2 0L451 0Q458.6 0 464.4 2.8Q470.3 5.5 473.6 10.8Q476.9 16 476.9 23.5Q476.9 30.9 473.5 36.2Q470.2 41.4 464.4 44.2Q458.6 47 451 47L436.8 47L436.8 74.5ZM436.8 35L451.2 35Q454.9 35 457.6 33.6Q460.3 32.1 461.8 29.5Q463.3 26.9 463.3 23.5Q463.3 20 461.8 17.5Q460.3 14.9 457.6 13.5Q454.9 12 451.2 12L436.8 12Z"
+          />
+        </g>
+        <g style="--i: 7; --s: 98px">
+          <path d="M491.9 74.5L491.9 0L505.5 0L505.5 74.5Z" />
+        </g>
+      </svg>
+    </div>
+    <script>
+      // Splash bookkeeping that must run before the app loads: the later
+      // reveal for returning visitors, when it actually appeared (read by
+      // src/lib/meow-splash.ts), and a failsafe if the app never mounts.
+      ;(function () {
+        var splash = document.getElementById('meow-splash')
+        if (!splash) return
+        try {
+          if (localStorage.getItem('meow:splash:v1:seen')) {
+            splash.classList.add('is-returning')
+          }
+        } catch (e) {}
+        splash.addEventListener('animationstart', function (event) {
+          if (event.target !== splash || splash.dataset.shownAt) return
+          splash.dataset.shownAt = String(performance.now())
+          splash.classList.add('is-shown')
+          document.documentElement.classList.add('meow-splash-active')
+        })
+        setTimeout(function () {
+          if (!splash.isConnected || splash.dataset.leaving) return
+          splash.dataset.leaving = 'true'
+          splash.classList.add('is-leaving')
+          document.documentElement.classList.remove('meow-splash-active')
+          setTimeout(function () {
+            splash.remove()
+          }, 250)
+        }, 10000)
+      })()
+    </script>
   </body>
 </html>
