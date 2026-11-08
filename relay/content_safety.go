@@ -49,13 +49,17 @@ type contentReview struct {
 // before pre-consume; review windows wait in the context until
 // EnforceContentSafety runs after pre-consume.
 func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, text string) *types.NewAPIError {
-	if info != nil {
-		text = requestScanText(info.Request, text)
-	}
 	cfg := operation_setting.GetContentSafetySetting().Bounded()
 	var reviewWords []string
 	if cfg.ReviewEnabled {
 		reviewWords = cfg.ReviewWordList()
+	}
+	// Without words nothing can match, so the request is not decoded at all.
+	if len(setting.SensitiveWords) == 0 && len(reviewWords) == 0 {
+		return nil
+	}
+	if info != nil {
+		text = requestScanText(info.Request, text)
 	}
 	result := contentsafety.Scan(text, setting.SensitiveWords, reviewWords, cfg.WindowChars)
 	if len(result.Blocked) > 0 {
@@ -101,39 +105,46 @@ func requestScanText(request dto.Request, combineText string) string {
 			parts = []string{counted.GetTokenCountMeta().CombineText}
 		}
 		parts = append(parts, decoded...)
-		parts = append(parts, contentsafety.CollectJSONText(r.Functions))
+		parts = append(parts, contentsafety.CollectJSONText(r.Functions), contentsafety.CollectJSONText(r.Prediction))
 		if r.ResponseFormat != nil {
 			parts = append(parts, contentsafety.CollectJSONText(r.ResponseFormat.JsonSchema))
 		}
 	case *dto.OpenAIResponsesRequest:
-		// Token counting reads these members raw (instructions unless a plain
-		// string), so the rest is counted again on a copy without them.
-		counted := *r
-		counted.Instructions, counted.Metadata, counted.Text, counted.ToolChoice, counted.Prompt, counted.Tools = nil, nil, nil, nil, nil, nil
-		parts = []string{counted.GetTokenCountMeta().CombineText}
-		for _, member := range [][]byte{r.Instructions, r.Metadata, r.Text, r.ToolChoice, r.Prompt, r.Tools} {
-			parts = append(parts, contentsafety.CollectJSONText(member))
+		// Token counting appends these members raw after the input, in this
+		// order; instructions only when not a plain string, which it decodes.
+		// Their raw text is cut from the end and scanned decoded instead. Were
+		// that layout ever different, nothing is cut and the members are
+		// scanned twice, which costs only the per-window cache.
+		members := [][]byte{r.Instructions, r.Metadata, r.Text, r.ToolChoice, r.Prompt, r.Tools}
+		if common.GetJsonType(r.Instructions) == "string" {
+			members[0] = nil
 		}
+		var raw []string
+		for _, member := range members {
+			if len(member) > 0 {
+				raw, parts = append(raw, string(member)), append(parts, contentsafety.CollectJSONText(member))
+			}
+		}
+		parts[0] = strings.TrimSuffix(combineText, strings.Join(raw, "\n"))
 	case *dto.OpenAIResponsesCompactionRequest:
 		// Token counting reads instructions and input raw and skips the rest.
 		parts = []string{contentsafety.CollectJSONText(r.Instructions), contentsafety.CollectJSONText(r.Input),
 			contentsafety.CollectJSONText(r.Tools), contentsafety.CollectJSONText(r.Text)}
 	case *dto.GeminiChatRequest:
-		// Token counting reads tools raw.
-		counted := *r
-		counted.Tools = nil
-		parts = []string{counted.GetTokenCountMeta().CombineText, contentsafety.CollectJSONText(r.Tools)}
+		// Token counting appends tools raw at the end, as in Responses.
+		parts = []string{strings.TrimSuffix(combineText, string(r.Tools)), contentsafety.CollectJSONText(r.Tools)}
 	case *dto.ClaudeRequest:
 		// Token counting skips the legacy prompt, which a Claude channel still
-		// forwards, and document blocks.
-		parts = append(parts, r.Prompt)
+		// forwards, documents and search results, and drops every block of a
+		// list that does not parse into its typed blocks, as a list with a
+		// search result does not. System and messages are read from their
+		// decoded blocks instead; only tools come from a count without them.
+		counted := *r
+		counted.System, counted.Messages = nil, nil
+		parts = []string{counted.GetTokenCountMeta().CombineText, r.Prompt}
+		parts = append(parts, claudeContentText(r.System)...)
 		for _, message := range r.Messages {
-			blocks, _ := message.Content.([]any)
-			for _, block := range blocks {
-				if document, _ := block.(map[string]any); document["type"] == "document" {
-					parts = append(parts, claudeDocumentText(document)...)
-				}
-			}
+			parts = append(parts, claudeContentText(message.Content)...)
 		}
 	case *dto.AudioRequest:
 		// Speech instructions are plain text, not JSON.
@@ -143,6 +154,39 @@ func requestScanText(request dto.Request, combineText string) string {
 		parts = []string{contentsafety.CollectJSONText([]byte(combineText))}
 	}
 	return strings.Join(slices.DeleteFunc(parts, func(part string) bool { return part == "" }), "\n")
+}
+
+// claudeContentText is the plain text a model reads from Claude content as
+// decoded from request JSON: a string, or the text, tool use, tool result,
+// document and search result blocks of a list. Images and thinking are not
+// read as text.
+func claudeContentText(content any) []string {
+	if text, ok := content.(string); ok {
+		return []string{text}
+	}
+	blocks, _ := content.([]any)
+	var texts []string
+	for _, block := range blocks {
+		item, _ := block.(map[string]any)
+		switch item["type"] {
+		case "text":
+			text, _ := item["text"].(string)
+			texts = append(texts, text)
+		case "tool_use":
+			name, _ := item["name"].(string)
+			texts = append(texts, name, contentsafety.CollectValueText(item["input"]))
+		case "tool_result":
+			texts = append(texts, claudeContentText(item["content"])...)
+		case "document":
+			texts = append(texts, claudeDocumentText(item)...)
+		case "search_result":
+			title, _ := item["title"].(string)
+			source, _ := item["source"].(string)
+			texts = append(texts, title, source)
+			texts = append(texts, claudeContentText(item["content"])...)
+		}
+	}
+	return texts
 }
 
 // claudeDocumentText is the plain text a model reads from a Claude document
@@ -158,17 +202,7 @@ func claudeDocumentText(document map[string]any) []string {
 		data, _ := source["data"].(string)
 		texts = append(texts, data)
 	case "content":
-		// The content is a string or a list of content blocks.
-		if content, ok := source["content"].(string); ok {
-			texts = append(texts, content)
-		}
-		blocks, _ := source["content"].([]any)
-		for _, block := range blocks {
-			if item, _ := block.(map[string]any); item["type"] == "text" {
-				text, _ := item["text"].(string)
-				texts = append(texts, text)
-			}
-		}
+		texts = append(texts, claudeContentText(source["content"])...)
 	}
 	return texts
 }

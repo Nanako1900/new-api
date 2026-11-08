@@ -62,8 +62,14 @@ func CollectJSONText(body []byte) string {
 	if err := common.Unmarshal(body, &document); err != nil {
 		return string(body)
 	}
+	return CollectValueText(document)
+}
+
+// CollectValueText joins the text of a decoded JSON value the way
+// CollectJSONText joins the text of a document.
+func CollectValueText(value any) string {
 	var builder strings.Builder
-	collectStrings(document, &builder)
+	collectStrings(value, &builder)
 	return builder.String()
 }
 

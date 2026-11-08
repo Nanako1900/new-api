@@ -140,6 +140,7 @@ func TestCollectJSONTextWritesKeysAndSkipsInlineMedia(t *testing.T) {
 	assert.Equal(t, "image\nmetadata\nnegative\nblur\ntags\nx\ny\nn\nprompt\na cat\n", contentsafety.CollectJSONText([]byte(body)))
 	assert.Equal(t, "filters\nbomb\nquery\nhello\n", contentsafety.CollectJSONText([]byte(`{"query":"hello","filters":{"b\u006fmb":true}}`)), "an escaped key is decoded")
 	assert.Equal(t, "plain words", contentsafety.CollectJSONText([]byte("plain words")))
+	assert.Equal(t, "filters\nbomb\nquery\nhello\n", contentsafety.CollectValueText(map[string]any{"query": "hello", "filters": map[string]any{"bomb": true}}), "a decoded value is read like its document")
 }
 
 func TestVerdictCacheHonorsTTLSetting(t *testing.T) {
