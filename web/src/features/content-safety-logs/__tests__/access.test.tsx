@@ -23,7 +23,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { act, render, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
 
 import { ROLE } from '@/lib/roles'
@@ -34,11 +34,11 @@ afterEach(() => {
   useAuthStore.getState().auth.reset()
 })
 
-async function openAsAdmin(permissions: UserPermissions | undefined) {
+async function openAs(role: number, permissions: UserPermissions | undefined) {
   useAuthStore.getState().auth.setUser({
     id: 1,
-    username: 'admin',
-    role: ROLE.ADMIN,
+    username: 'tester',
+    role,
     permissions,
   })
   const root = createRootRoute()
@@ -48,8 +48,13 @@ async function openAsAdmin(permissions: UserPermissions | undefined) {
         getParentRoute: () => root,
         path: '/usage-logs/content-safety',
         beforeLoad: ContentSafetyRoute.options.beforeLoad as () => void,
+        component: () => <p>Content safety page</p>,
       }),
-      createRoute({ getParentRoute: () => root, path: '/403' }),
+      createRoute({
+        getParentRoute: () => root,
+        path: '/403',
+        component: () => <p>Forbidden page</p>,
+      }),
     ]),
     history: createMemoryHistory({
       initialEntries: ['/usage-logs/content-safety'],
@@ -60,19 +65,40 @@ async function openAsAdmin(permissions: UserPermissions | undefined) {
   return router
 }
 
+const auditRead = { admin_permissions: { audit: { read: true } } }
+
 it.each([
   {
-    label: 'without the audit read permission',
+    label: 'an admin without the audit read permission',
+    role: ROLE.ADMIN,
     permissions: undefined,
     pathname: '/403',
+    text: 'Forbidden page',
   },
   {
-    label: 'with the audit read permission',
-    permissions: { admin_permissions: { audit: { read: true } } },
+    label: 'an admin with the audit read permission',
+    role: ROLE.ADMIN,
+    permissions: auditRead,
     pathname: '/usage-logs/content-safety',
+    text: 'Content safety page',
   },
-])('an admin $label ends up on $pathname', async (testCase) => {
-  const router = await openAsAdmin(testCase.permissions)
+  {
+    label: 'a regular user holding the audit read permission',
+    role: ROLE.USER,
+    permissions: auditRead,
+    pathname: '/403',
+    text: 'Forbidden page',
+  },
+  {
+    label: 'a root user without explicit permissions',
+    role: ROLE.SUPER_ADMIN,
+    permissions: undefined,
+    pathname: '/usage-logs/content-safety',
+    text: 'Content safety page',
+  },
+])('$label ends up on $pathname', async (testCase) => {
+  const router = await openAs(testCase.role, testCase.permissions)
+  expect(await screen.findByText(testCase.text)).toBeVisible()
   await waitFor(() =>
     expect(router.state.location.pathname).toBe(testCase.pathname)
   )

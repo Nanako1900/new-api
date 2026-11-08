@@ -135,3 +135,8 @@ test('admins with the audit read permission find Content Safety Logs in the Admi
   })
   expect(entries).toContain('admin: Content Safety Logs')
 })
+
+test('root users see Content Safety Logs without explicit permissions', async () => {
+  const entries = await sidebarEntries(ROLE.SUPER_ADMIN)
+  expect(entries).toContain('admin: Content Safety Logs')
+})

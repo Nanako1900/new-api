@@ -16,12 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import {
+  markAuditReadRevoked,
+  refreshUserCapabilities,
+} from '@/features/usage-logs/audit/lib/audit-access'
+import { getServerErrorStatus } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { useContentSafetyLogs } from '../api'
 import { CONTENT_SAFETY_LOG_PAGE_SIZE } from '../constants'
@@ -77,6 +84,15 @@ export function ContentSafetyLogTable() {
   }
   const canQuery = !invalidRange && Object.keys(fieldErrors).length === 0
   const query = useContentSafetyLogs(filters, canQuery)
+  const navigate = useNavigate()
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const accessDenied = getServerErrorStatus(query.error) === 403
+  useEffect(() => {
+    if (!accessDenied) return
+    markAuditReadRevoked(userId)
+    void navigate({ to: '/403', replace: true })
+    void refreshUserCapabilities(userId)
+  }, [accessDenied, navigate, userId])
   const columns = useContentSafetyLogColumns()
   const { table } = useDataTable({
     columns,

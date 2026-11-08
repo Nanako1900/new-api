@@ -18,6 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from '@tanstack/react-router'
+import {
   fireEvent,
   render,
   screen,
@@ -29,6 +36,8 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { PageFooterProvider } from '@/components/layout/components/page-footer'
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { ContentSafetyLogTable } from '../components/content-safety-log-table'
 import type { ContentSafetyLog } from '../types'
@@ -73,6 +82,7 @@ const footers: HTMLDivElement[] = []
 afterEach(() => {
   footers.splice(0).forEach((footer) => footer.remove())
   vi.restoreAllMocks()
+  useAuthStore.getState().auth.reset()
 })
 
 function renderTable() {
@@ -341,4 +351,52 @@ it('removes the previous rows and shows the empty state while a filter is invali
   await screen.findByText('User ID must be a positive integer')
   expect(screen.queryByRole('row', { name: /alice/ })).not.toBeInTheDocument()
   expect(screen.getByText('No records')).toBeVisible()
+})
+
+it('leaves for /403 and records the lost permission when the API answers 403', async () => {
+  useAuthStore.getState().auth.setUser({
+    id: 1,
+    username: 'admin',
+    role: ROLE.ADMIN,
+    permissions: { admin_permissions: { audit: { read: true } } },
+  })
+  vi.spyOn(api, 'get').mockRejectedValue(
+    Object.assign(new Error('forbidden'), { response: { status: 403 } })
+  )
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const footer = document.body.appendChild(document.createElement('div'))
+  footers.push(footer)
+  const root = createRootRoute()
+  const router = createRouter({
+    routeTree: root.addChildren([
+      createRoute({
+        getParentRoute: () => root,
+        path: '/usage-logs/content-safety',
+        component: ContentSafetyLogTable,
+      }),
+      createRoute({
+        getParentRoute: () => root,
+        path: '/403',
+        component: () => <p>Forbidden page</p>,
+      }),
+    ]),
+    history: createMemoryHistory({
+      initialEntries: ['/usage-logs/content-safety'],
+    }),
+  })
+  render(
+    <PageFooterProvider container={footer}>
+      <QueryClientProvider client={client}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </PageFooterProvider>
+  )
+  expect(await screen.findByText('Forbidden page')).toBeVisible()
+  expect(router.state.location.pathname).toBe('/403')
+  expect(
+    useAuthStore.getState().auth.user?.permissions?.admin_permissions?.audit
+      ?.read
+  ).toBe(false)
 })
