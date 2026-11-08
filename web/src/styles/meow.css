@@ -514,19 +514,22 @@ html.meow-splash-active .meow-hero-enter > :last-child {
 
 /*
  * Brand in the console header (upstream SystemBrand, variant "inline").
+ * Not the public header (header.fixed), which keeps its larger brand above;
+ * there this rule only matched once the logo image had loaded, so the logo
+ * shrank from 2.625rem to 1.875rem right after the page appeared.
  */
-header a[href='/']:has(> div > img[alt]) {
+header:not(.fixed) a[href='/']:has(> div > img[alt]) {
   height: 2.25rem;
   gap: 0.55rem;
   font-size: 1.0625rem;
   font-weight: 800;
   letter-spacing: -0.01em;
 }
-header a[href='/']:has(> div > img[alt]) > div:first-child {
+header:not(.fixed) a[href='/']:has(> div > img[alt]) > div:first-child {
   width: 1.875rem;
   height: 1.875rem;
 }
-header a[href='/']:has(> div > img[alt]) > div:first-child > img {
+header:not(.fixed) a[href='/']:has(> div > img[alt]) > div:first-child > img {
   border-radius: 0.5rem;
 }
 
