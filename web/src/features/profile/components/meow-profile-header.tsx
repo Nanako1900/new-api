@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Pencil } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
@@ -43,28 +43,37 @@ type MeowProfileHeaderProps = {
 
 const BADGE_ON_DARK = 'border-white/15! bg-white/10! text-white/85!'
 
-function StatTile(props: { label: string; value: string; accent?: boolean }) {
+/** One figure in the card's stats panel; the balance is the accented one. */
+function CardStat(props: {
+  label: string
+  value: ReactNode
+  title: string
+  accent?: boolean
+}) {
   return (
-    <div className='isolate flex min-w-0 flex-col justify-between gap-3 rounded-[20px] border border-white/85 bg-[#fffbf5]/60 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_24px_48px_-30px_rgba(30,27,23,0.3)] sm:px-6 sm:py-5 dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none'>
-      <span className='text-muted-foreground truncate text-[13px] font-bold'>
+    <div className='flex min-w-0 flex-col gap-1.5 px-3 sm:px-5'>
+      <dt className='truncate text-xs font-bold text-white/55 sm:text-[13px]'>
         {props.label}
-      </span>
-      <span
+      </dt>
+      <dd
+        title={props.title}
         className={cn(
-          'truncate text-xl leading-none font-extrabold tracking-[-0.03em] tabular-nums sm:text-[1.75rem]',
-          props.accent && 'text-meow-heading'
+          'truncate text-lg leading-none font-extrabold tracking-[-0.03em] tabular-nums sm:text-2xl @4xl:text-[1.625rem]',
+          props.accent && 'text-meow-orange'
         )}
       >
         {props.value}
-      </span>
+      </dd>
     </div>
   )
 }
 
 /**
- * Profile header in the MeowAPI look: the account on a dark tile with the
- * calico glow, then balance, usage and requests. Same props and content as
- * the original `ProfileHeader`; the numbers stay live while the page is open.
+ * Profile header in the MeowAPI look: one dark card with the calico glow,
+ * holding the account on the left and its balance, usage and requests on
+ * the right once the card is 56rem wide (below the account when narrower,
+ * whatever the sidebar does). Same props and content as the original
+ * `ProfileHeader`; the numbers stay live while the page is open.
  */
 export function MeowProfileHeader(props: MeowProfileHeaderProps) {
   const { t } = useTranslation()
@@ -72,16 +81,7 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
   const [avatarEditorOpen, setAvatarEditorOpen] = useState(false)
 
   if (props.loading) {
-    return (
-      <div className='flex flex-col gap-4'>
-        <Skeleton className='h-[136px] rounded-[22px] sm:h-[168px]' />
-        <div className='grid grid-cols-3 gap-3 sm:gap-4'>
-          {['balance', 'usage', 'requests'].map((key) => (
-            <Skeleton key={key} className='h-24 rounded-[20px]' />
-          ))}
-        </div>
-      </div>
-    )
+    return <Skeleton className='h-[272px] rounded-[22px] xl:h-[162px]' />
   }
 
   const profile = props.profile
@@ -94,15 +94,23 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
     Boolean
   )
 
+  const balance = formatQuota(totals.quota)
+  const usage = formatQuota(totals.usedQuota)
+  const requests = formatCompactNumber(totals.requestCount)
+
   return (
-    <div className='flex flex-col gap-4'>
-      <div className='bg-meow-ink relative isolate overflow-hidden rounded-[22px] px-5 py-6 text-white sm:px-8 sm:py-8 dark:bg-[#25211C]'>
-        <div
-          aria-hidden='true'
-          className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-12 -z-10 h-52 w-72 rounded-full opacity-55 blur-[56px]'
-        />
+    <div className='bg-meow-ink @container relative isolate overflow-hidden rounded-[22px] px-5 py-6 text-white sm:px-8 sm:py-7 dark:bg-[#25211C]'>
+      <div
+        aria-hidden='true'
+        className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-16 -left-12 -z-10 h-52 w-72 rounded-full opacity-55 blur-[56px]'
+      />
+      <div
+        aria-hidden='true'
+        className='meow-drift-b bg-meow-orange pointer-events-none absolute -right-20 -bottom-28 -z-10 h-60 w-96 rounded-full opacity-20 blur-[64px]'
+      />
+      <div className='flex flex-col gap-6 @4xl:flex-row @4xl:items-center @4xl:gap-8'>
         {/* The avatar leads the card; its corners follow the logo's (23%). */}
-        <div className='flex items-center gap-5 sm:gap-7'>
+        <div className='flex min-w-0 flex-1 items-center gap-5 sm:gap-7'>
           <Button
             variant='ghost'
             aria-label={t('Change avatar')}
@@ -163,30 +171,21 @@ export function MeowProfileHeader(props: MeowProfileHeaderProps) {
             </div>
           </div>
         </div>
-      </div>
 
-      <div className='relative isolate grid grid-cols-3 gap-3 sm:gap-4'>
-        <div
-          aria-hidden='true'
-          className='meow-drift-a bg-meow-orange pointer-events-none absolute -top-6 -left-4 -z-10 h-36 w-60 rounded-full opacity-50 blur-[50px]'
-        />
-        <div
-          aria-hidden='true'
-          className='meow-drift-b bg-meow-ink pointer-events-none absolute top-4 right-8 -z-10 h-32 w-44 rounded-full opacity-25 blur-[54px] dark:bg-white dark:opacity-10'
-        />
-        <StatTile
-          label={t('Current Balance')}
-          value={formatQuota(totals.quota)}
-          accent
-        />
-        <StatTile
-          label={t('Total Usage')}
-          value={formatQuota(totals.usedQuota)}
-        />
-        <StatTile
-          label={t('API Requests')}
-          value={formatCompactNumber(totals.requestCount)}
-        />
+        <dl className='grid shrink-0 grid-cols-3 divide-x divide-white/10 rounded-[18px] bg-white/[0.06] py-4 ring-1 ring-white/10 @4xl:grid-cols-[repeat(3,minmax(8.5rem,auto))] @4xl:py-5'>
+          <CardStat
+            label={t('Current Balance')}
+            value={balance}
+            title={balance}
+            accent
+          />
+          <CardStat label={t('Total Usage')} value={usage} title={usage} />
+          <CardStat
+            label={t('API Requests')}
+            value={requests}
+            title={requests}
+          />
+        </dl>
       </div>
     </div>
   )

@@ -57,6 +57,17 @@ test('the profile card leads with the name as the page heading', () => {
   expect(screen.getByText('meowfan@example.com')).toBeInTheDocument()
 })
 
+test('the profile card lists the balance, usage and requests as labelled figures', () => {
+  renderHeader()
+
+  expect(screen.getAllByRole('term').map((term) => term.textContent)).toEqual([
+    'Current Balance',
+    'Total Usage',
+    'API Requests',
+  ])
+  expect(screen.getAllByRole('definition')).toHaveLength(3)
+})
+
 test('the large profile avatar opens the avatar editor', async () => {
   renderHeader()
 
