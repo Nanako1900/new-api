@@ -23,6 +23,7 @@ import { SkipToMain } from '@/components/skip-to-main'
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { LayoutProvider } from '@/context/layout-provider'
 import { SearchProvider } from '@/context/search-provider'
+import { ConsoleAlerts } from '@/features/console-alerts/components/console-alerts'
 import { useLiveBalance } from '@/hooks/use-live-balance'
 import { getCookie } from '@/lib/cookies'
 import { cn } from '@/lib/utils'
@@ -58,6 +59,7 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
                 'peer-data-[variant=inset]:h-[calc(100svh-var(--app-header-height,0px)-(var(--spacing)*4))]'
               )}
             >
+              <ConsoleAlerts />
               {props.children ?? <AnimatedOutlet />}
             </SidebarInset>
             <MeowConsoleCat />
