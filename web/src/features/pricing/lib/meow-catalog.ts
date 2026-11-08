@@ -55,10 +55,15 @@ export type MeowUsableGroups = Record<
   string | { desc?: string; ratio?: number }
 >
 
-/** Per-channel metrics: model name → group → metrics, plus the window end. */
-export type MeowChannelPerf = {
-  byModel: Map<string, Map<string, PerformanceGroup>>
+/** One model's metrics by group, with the end of its 24h window. */
+export type MeowModelPerf = {
   windowEnd: number | undefined
+  groups: Map<string, PerformanceGroup>
+}
+
+/** Per-channel metrics, indexed by model name. */
+export type MeowChannelPerf = {
+  byModel: Map<string, MeowModelPerf>
 }
 
 /** One hour of the 24h status bar; `successRate` is null without traffic. */

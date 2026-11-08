@@ -16,12 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { createAppQueryClient } from '@/lib/query-client'
 
 import { MeowPricingCatalog } from '../components/meow/meow-pricing-catalog'
 import type { PricingData, PricingModel } from '../types'
@@ -57,17 +59,27 @@ const PRICING: PricingData = {
 /** Serves the page requests; `perf` maps group → success rate, or fails. */
 function mockApi(
   options: {
-    pricing?: PricingData | 'fail'
+    pricing?: PricingData | 'fail' | 'fail-once'
     perf?: Record<string, number> | 'fail'
   } = {}
 ) {
+  let pricingCalls = 0
   vi.spyOn(api, 'get').mockImplementation(async (url, config) => {
     if (url === '/api/pricing') {
+      pricingCalls += 1
       if (options.pricing === 'fail') throw new Error('pricing down')
+      if (options.pricing === 'fail-once' && pricingCalls === 1) {
+        throw new Error('pricing down')
+      }
+      if (options.pricing === 'fail-once') return { data: PRICING }
       return { data: options.pricing ?? PRICING }
     }
     if (url === '/api/perf-metrics') {
-      if (options.perf === 'fail') throw new Error('metrics down')
+      if (options.perf === 'fail') {
+        throw Object.assign(new Error('metrics down'), {
+          response: { status: 500 },
+        })
+      }
       const groups = Object.entries(options.perf ?? {}).map(
         ([group, rate]) => ({
           group,
@@ -94,10 +106,11 @@ function mockApi(
   })
 }
 
-function renderCatalog(status = { price: 1, usd_exchange_rate: 1 }) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
+function renderCatalog(
+  status = { price: 1, usd_exchange_rate: 1 },
+  onInternalServerError = vi.fn()
+) {
+  const client = createAppQueryClient(onInternalServerError)
   client.setQueryData(['status'], status)
   render(
     <QueryClientProvider client={client}>
@@ -164,9 +177,14 @@ describe('meow pricing catalog', () => {
     expect(await sonnetRow('Claude · Kiro')).toHaveTextContent('97.80%')
   })
 
-  it('keeps prices and shows dashes when the metrics request fails', async () => {
+  it('keeps prices, stays on the page and stays quiet when the metrics request fails', async () => {
+    const toastError = vi.spyOn(toast, 'error')
+    const onInternalServerError = vi.fn()
     mockApi({ perf: 'fail' })
-    const client = renderCatalog()
+    const client = renderCatalog(
+      { price: 1, usd_exchange_rate: 1 },
+      onInternalServerError
+    )
 
     const row = await sonnetRow('Claude · Official')
     await waitFor(() =>
@@ -174,6 +192,8 @@ describe('meow pricing catalog', () => {
         client.getQueryState(['perf-metrics', 'claude-sonnet'])?.status
       ).toBe('error')
     )
+    expect(onInternalServerError).not.toHaveBeenCalled()
+    expect(toastError).not.toHaveBeenCalled()
     const cells = within(row).getAllByRole('cell')
     expect(cells[1]).toHaveTextContent('$4.5')
     expect(cells[4]).toHaveTextContent('—')
@@ -192,5 +212,16 @@ describe('meow pricing catalog', () => {
 
     expect(await screen.findByText('Failed to load models')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('loads the price list after a retry when pricing failed once', async () => {
+    const user = userEvent.setup()
+    mockApi({ pricing: 'fail-once' })
+    renderCatalog()
+
+    expect(await screen.findByText('Failed to load models')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+
+    expect(await sonnetRow('Claude · Official')).toBeInTheDocument()
   })
 })

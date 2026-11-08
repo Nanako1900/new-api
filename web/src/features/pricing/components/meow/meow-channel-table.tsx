@@ -109,19 +109,20 @@ export function MeowChannelTable(props: MeowChannelTableProps) {
             {`${t('Latency short')} · ${t('Throughput short')}`}
           </div>
         </div>
-        {props.channel.models.map((model) => (
-          <MeowModelRow
-            key={model.model_name}
-            model={model}
-            group={props.channel.group}
-            prices={props.prices}
-            perf={props.perf.byModel
-              .get(model.model_name)
-              ?.get(props.channel.group)}
-            windowEnd={props.perf.windowEnd}
-            onSelect={props.onSelect}
-          />
-        ))}
+        {props.channel.models.map((model) => {
+          const modelPerf = props.perf.byModel.get(model.model_name)
+          return (
+            <MeowModelRow
+              key={model.model_name}
+              model={model}
+              group={props.channel.group}
+              prices={props.prices}
+              perf={modelPerf?.groups.get(props.channel.group)}
+              windowEnd={modelPerf?.windowEnd}
+              onSelect={props.onSelect}
+            />
+          )
+        })}
       </div>
     </div>
   )

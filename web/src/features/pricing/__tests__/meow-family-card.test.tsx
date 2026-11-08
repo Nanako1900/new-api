@@ -40,7 +40,7 @@ const PRICES: MeowPriceOptions = {
   groupRatio: GROUP_RATIO,
 }
 const LAST_HOUR = 1_800_000_000
-const NO_PERF: MeowChannelPerf = { byModel: new Map(), windowEnd: undefined }
+const NO_PERF: MeowChannelPerf = { byModel: new Map() }
 
 const SONNET: PricingModel = {
   id: 1,
@@ -261,13 +261,15 @@ describe('meow family card', () => {
         byModel: new Map([
           [
             'claude-sonnet',
-            new Map([
-              ['official', perfGroup('official', 99.95)],
-              ['kiro', perfGroup('kiro', 97.8)],
-            ]),
+            {
+              windowEnd: LAST_HOUR,
+              groups: new Map([
+                ['official', perfGroup('official', 99.95)],
+                ['kiro', perfGroup('kiro', 97.8)],
+              ]),
+            },
           ],
         ]),
-        windowEnd: LAST_HOUR,
       },
     })
 

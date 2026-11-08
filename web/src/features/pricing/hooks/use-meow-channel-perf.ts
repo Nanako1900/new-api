@@ -19,12 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQueries } from '@tanstack/react-query'
 
 import { getPerfMetrics } from '@/features/performance-metrics/api'
-import type { PerformanceGroup } from '@/features/performance-metrics/types'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import type { MeowChannelPerf } from '../lib/meow-catalog'
+import type { MeowChannelPerf, MeowModelPerf } from '../lib/meow-catalog'
 
-// The details drawer reads the same key and window, so both share the cache.
+// The details drawer (OverviewSummaryGrid in model-details.tsx and
+// model-details-performance.tsx) reads the same key and window, so all share
+// the cache.
 const PERF_WINDOW_HOURS = 24
 
 /** Last-24h metrics for each model, indexed by model name and group. */
@@ -38,24 +39,22 @@ export function useMeowChannelPerf(modelNames: string[]): MeowChannelPerf {
         ),
       staleTime: 60 * 1000,
       retry: false,
-      meta: { errorToast: false },
+      meta: { errorToast: false, errorPage: false },
     })),
     combine: (results) => {
-      const byModel = new Map<string, Map<string, PerformanceGroup>>()
-      let windowEnd: number | undefined
+      const byModel = new Map<string, MeowModelPerf>()
       results.forEach((result, index) => {
         const data = result.data?.data
         if (!data) return
-        // Queries refresh at different times; keep the newest window end.
-        if (data.window_end !== undefined) {
-          windowEnd = Math.max(windowEnd ?? data.window_end, data.window_end)
-        }
-        byModel.set(
-          modelNames[index],
-          new Map((data.groups ?? []).map((group) => [group.group, group]))
-        )
+        // Queries refresh at different times, so each model keeps its own window.
+        byModel.set(modelNames[index], {
+          windowEnd: data.window_end,
+          groups: new Map(
+            (data.groups ?? []).map((group) => [group.group, group])
+          ),
+        })
       })
-      return { byModel, windowEnd }
+      return { byModel }
     },
   })
 }

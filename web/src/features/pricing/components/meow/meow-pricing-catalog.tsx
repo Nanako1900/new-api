@@ -86,9 +86,7 @@ export function MeowPricingCatalog() {
     body = (
       <ErrorState
         title={t('Failed to load models')}
-        onRetry={() => {
-          pricing.refetch()
-        }}
+        onRetry={() => void pricing.refetch()}
       />
     )
   } else if (families.length === 0) {
