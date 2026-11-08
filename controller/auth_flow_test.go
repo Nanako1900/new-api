@@ -9,21 +9,27 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/fxamacker/cbor/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/go-redis/redis/v8"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -825,6 +831,7 @@ type legacyGitHubOAuthProvider struct {
 	authFlowTestOAuthProvider
 	providerUserID     string
 	legacyID           string
+	profileEmail       string
 	verifiedEmails     []string
 	verifiedEmailsErr  error
 	verifiedEmailCalls int
@@ -832,7 +839,7 @@ type legacyGitHubOAuthProvider struct {
 
 func (*legacyGitHubOAuthProvider) GetName() string { return "GitHub" }
 func (provider *legacyGitHubOAuthProvider) GetUserInfo(context.Context, *oauth.OAuthToken) (*oauth.OAuthUser, error) {
-	return &oauth.OAuthUser{ProviderUserID: provider.providerUserID, Username: provider.legacyID, Extra: map[string]any{"legacy_id": provider.legacyID}}, nil
+	return &oauth.OAuthUser{ProviderUserID: provider.providerUserID, Username: provider.legacyID, Email: provider.profileEmail, Extra: map[string]any{"legacy_id": provider.legacyID}}, nil
 }
 func (provider *legacyGitHubOAuthProvider) GetVerifiedEmails(context.Context, *oauth.OAuthToken) ([]string, error) {
 	provider.verifiedEmailCalls++
@@ -1122,4 +1129,433 @@ func TestOAuthBindIgnoresLegacyGitHubUsernames(t *testing.T) {
 			assert.Equal(t, "This GitHub account has already been bound", result.Message)
 		})
 	}
+}
+
+// TestOAuthSignUpKeepsOnlyVerifiedPolicyCompliantEmail covers the provider email
+// a new OAuth account stores. Only an address the provider has verified and the
+// site's email policy accepts is kept. Any other address is dropped before the
+// availability check, so the account is created without an email and an
+// unverified claim can neither reveal nor block an existing address.
+func TestOAuthSignUpKeepsOnlyVerifiedPolicyCompliantEmail(t *testing.T) {
+	const slug = "signup-email-test"
+	tests := []struct {
+		name              string
+		provider          string
+		userInfo          string
+		emailField        string
+		profileEmail      string
+		verifiedEmails    []string
+		verifiedEmailsErr error
+		domainWhitelist   []string
+		aliasRestricted   bool
+		takenEmail        string
+		expectEmail       string
+		expectRejected    bool
+		expectEmailCalls  int
+	}{
+		{name: "oidc verified email is kept", provider: "oidc", userInfo: `{"sub":"oidc-user","email":" New.User@Example.com ","email_verified":true}`, expectEmail: "new.user@example.com"},
+		{name: "oidc string true claim is kept", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com","email_verified":"true"}`, expectEmail: "user@example.com"},
+		{name: "oidc unverified email is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com","email_verified":false}`},
+		{name: "oidc email without claim is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com"}`},
+		{name: "oidc string false claim is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com","email_verified":"false"}`},
+		{name: "oidc numeric claim is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@example.com","email_verified":1}`},
+		{name: "oidc non-ASCII address is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"\u212Aevin@example.com","email_verified":true}`},
+		{name: "oidc unverified email held by another account still registers", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"Victim@Example.com","email_verified":false}`, takenEmail: "victim@example.com"},
+		{name: "oidc verified email held by another account is rejected", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"Victim@Example.com","email_verified":true}`, takenEmail: "victim@example.com", expectRejected: true},
+		{name: "domain outside the whitelist is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@blocked.com","email_verified":true}`, domainWhitelist: []string{"example.com"}},
+		{name: "policy check runs before the availability check", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user@blocked.com","email_verified":true}`, domainWhitelist: []string{"example.com"}, takenEmail: "user@blocked.com"},
+		{name: "alias address is dropped when aliases are restricted", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"user+tag@example.com","email_verified":true}`, aliasRestricted: true},
+		{name: "address over 50 characters is dropped", provider: "oidc", userInfo: `{"sub":"oidc-user","email":"` + strings.Repeat("a", 40) + `@example.com","email_verified":true}`},
+		{name: "custom verified claim next to a top-level email is kept", provider: "custom", emailField: "email", userInfo: `{"sub":"custom-user","email":"custom@example.com","email_verified":true}`, expectEmail: "custom@example.com"},
+		{name: "custom verified claim next to a nested email is kept", provider: "custom", emailField: "data.email", userInfo: `{"sub":"custom-user","data":{"email":"Custom@Example.com","email_verified":true}}`, expectEmail: "custom@example.com"},
+		{name: "custom email without claim is dropped", provider: "custom", emailField: "email", userInfo: `{"sub":"custom-user","email":"custom@example.com"}`},
+		{name: "custom claim beside another field does not verify the email", provider: "custom", emailField: "data.email", userInfo: `{"sub":"custom-user","email_verified":true,"data":{"email":"custom@example.com"}}`},
+		{name: "custom field using gjson syntax fails closed", provider: "custom", emailField: "data|email", userInfo: `{"sub":"custom-user","email_verified":true,"data":{"email":"custom@example.com"}}`},
+		{name: "github email in the verified list is kept", provider: "github", profileEmail: "Octo@Example.com", verifiedEmails: []string{"other@example.com", "octo@example.com"}, expectEmail: "octo@example.com", expectEmailCalls: 1},
+		{name: "github email missing from the verified list is dropped", provider: "github", profileEmail: "octo@example.com", verifiedEmails: []string{"other@example.com"}, expectEmailCalls: 1},
+		{name: "github verified list failure drops the email", provider: "github", profileEmail: "octo@example.com", verifiedEmailsErr: errors.New("emails unavailable"), expectEmailCalls: 1},
+		{name: "github account without a profile email skips the lookup", provider: "github", verifiedEmails: []string{"octo@example.com"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			setupSecurityEnrollmentTest(t)
+			previousRegister := common.RegisterEnabled
+			previousDomainRestricted, previousWhitelist := common.EmailDomainRestrictionEnabled, common.EmailDomainWhitelist
+			previousAliasRestricted := common.EmailAliasRestrictionEnabled
+			common.RegisterEnabled = true
+			common.EmailDomainRestrictionEnabled, common.EmailDomainWhitelist = len(test.domainWhitelist) > 0, test.domainWhitelist
+			common.EmailAliasRestrictionEnabled = test.aliasRestricted
+			t.Cleanup(func() {
+				common.RegisterEnabled = previousRegister
+				common.EmailDomainRestrictionEnabled, common.EmailDomainWhitelist = previousDomainRestricted, previousWhitelist
+				common.EmailAliasRestrictionEnabled = previousAliasRestricted
+			})
+			if test.takenEmail != "" {
+				require.NoError(t, model.DB.Create(&model.User{Username: "email-owner", Email: test.takenEmail, Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "email-owner", AuthVersion: 1}).Error)
+			}
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/token" {
+					_, _ = w.Write([]byte(`{"access_token":"provider-token","token_type":"Bearer"}`))
+					return
+				}
+				_, _ = w.Write([]byte(test.userInfo))
+			}))
+			t.Cleanup(upstream.Close)
+			var github *legacyGitHubOAuthProvider
+			switch test.provider {
+			case "oidc":
+				settings := system_setting.GetOIDCSettings()
+				previousSettings := *settings
+				*settings = system_setting.OIDCSettings{Enabled: true, ClientId: "client", ClientSecret: "secret", TokenEndpoint: upstream.URL + "/token", UserInfoEndpoint: upstream.URL + "/userinfo"}
+				t.Cleanup(func() { *settings = previousSettings })
+				oauth.Register(slug, &oauth.OIDCProvider{})
+			case "custom":
+				require.NoError(t, oauth.RegisterCustom(slug, oauth.NewGenericOAuthProvider(&model.CustomOAuthProvider{
+					Id: 42, Slug: slug, Name: "Custom", Enabled: true, ClientId: "client", ClientSecret: "secret", UserIdField: "sub", EmailField: test.emailField,
+					TokenEndpoint: upstream.URL + "/token", UserInfoEndpoint: upstream.URL + "/userinfo",
+				})))
+			case "github":
+				github = &legacyGitHubOAuthProvider{providerUserID: "900001", legacyID: "octocat", profileEmail: test.profileEmail, verifiedEmails: test.verifiedEmails, verifiedEmailsErr: test.verifiedEmailsErr}
+				oauth.Register(slug, github)
+			}
+			t.Cleanup(func() { oauth.Unregister(slug) })
+			token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{Purpose: model.AuthFlowPurposeOAuth, Provider: slug, Intent: model.AuthFlowIntentLogin, Payload: `{}`, ExpiresAt: time.Now().Add(time.Minute)})
+			require.NoError(t, err)
+			var usersBefore int64
+			require.NoError(t, model.DB.Model(&model.User{}).Count(&usersBefore).Error)
+			router := gin.New()
+			router.GET("/api/oauth/:provider", HandleOAuth)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/oauth/"+slug+"?state="+token+"&code=provider-code", nil))
+
+			var result struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+				Data    struct {
+					User struct {
+						Id int `json:"id"`
+					} `json:"user"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+			if github != nil {
+				assert.Equal(t, test.expectEmailCalls, github.verifiedEmailCalls)
+			}
+			var usersAfter int64
+			require.NoError(t, model.DB.Model(&model.User{}).Count(&usersAfter).Error)
+			if test.expectRejected {
+				assert.False(t, result.Success)
+				assert.Equal(t, "Email address is already in use", result.Message)
+				assert.Equal(t, usersBefore, usersAfter, "no account is created")
+				return
+			}
+			require.True(t, result.Success, response.Body.String())
+			var created model.User
+			require.NoError(t, model.DB.First(&created, result.Data.User.Id).Error)
+			assert.Equal(t, test.expectEmail, created.Email)
+			if test.takenEmail != "" {
+				count, err := model.CountUsersByEmail(test.takenEmail)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, count, "the existing owner keeps the address")
+			}
+		})
+	}
+}
+
+// setupCaptchaRiskTest turns GeeTest risk mode on over the security
+// enrollment fixture. Each test gets its own Redis so risk events stay apart.
+func setupCaptchaRiskTest(t *testing.T) *model.User {
+	t.Helper()
+	user, _ := setupSecurityEnrollmentTest(t)
+	previousEnabled, previousMode := common.GeetestCheckEnabled, common.GeetestCheckMode
+	previousID, previousKey := common.GeetestCaptchaId, common.GeetestCaptchaKey
+	previousPasswordLogin, previousRDB := common.PasswordLoginEnabled, common.RDB
+	client := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	t.Cleanup(func() {
+		_ = client.Close()
+		common.GeetestCheckEnabled, common.GeetestCheckMode = previousEnabled, previousMode
+		common.GeetestCaptchaId, common.GeetestCaptchaKey = previousID, previousKey
+		common.PasswordLoginEnabled, common.RDB = previousPasswordLogin, previousRDB
+		common.RedisEnabled = false
+	})
+	common.GeetestCheckEnabled, common.GeetestCheckMode = true, common.GeetestCheckModeRisk
+	common.GeetestCaptchaId, common.GeetestCaptchaKey = "captcha-id", "captcha-key"
+	common.PasswordLoginEnabled = true
+	common.RedisEnabled, common.RDB = true, client
+	return user
+}
+
+type captchaRiskReply struct {
+	Success bool   `json:"success"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func newCaptchaRiskRequest(target, ip string, userID int, body io.Reader) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, target, body)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Test-User", strconv.Itoa(userID))
+	request.RemoteAddr = ip + ":40000"
+	return request
+}
+
+func serveCaptchaRiskRequest(t *testing.T, engine *gin.Engine, request *http.Request) captchaRiskReply {
+	t.Helper()
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	var reply captchaRiskReply
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &reply), response.Body.String())
+	return reply
+}
+
+// disconnectingBody cancels the request context once the handler has read
+// the body, as the server does when a client half-closes its connection
+// after sending the request.
+type disconnectingBody struct {
+	io.Reader
+	disconnect context.CancelFunc
+}
+
+func (body disconnectingBody) Read(p []byte) (int, error) {
+	n, err := body.Reader.Read(p)
+	body.disconnect()
+	return n, err
+}
+
+func newCaptchaRiskLoginEngine(t *testing.T) *gin.Engine {
+	t.Helper()
+	engine := gin.New()
+	require.NoError(t, engine.SetTrustedProxies(nil))
+	engine.POST("/api/user/login", Login)
+	return engine
+}
+
+// captchaRiskLoginBody sends password as the encrypted field when password
+// encryption is on; nothing can decrypt it.
+func captchaRiskLoginBody(t *testing.T, username, password string) string {
+	t.Helper()
+	fields := map[string]string{"username": username, "password": password}
+	if common.PasswordLoginEncryptionEnabled {
+		fields = map[string]string{"username": username, "password_encrypted": "v2." + password, "encryption_key_id": "unknown-key"}
+	}
+	body, err := common.Marshal(fields)
+	require.NoError(t, err)
+	return string(body)
+}
+
+// In risk mode a password login needs GeeTest only once a failure signal
+// fires: per submitted username (known or not), per account however it is
+// named, per IP, distinct usernames per IP. A correct password clears no
+// failures.
+func TestPasswordLoginCaptchaRiskSignals(t *testing.T) {
+	type attempt struct {
+		ip, username string
+		password     string // empty for a wrong password
+		captcha      bool   // GeeTest is required
+		disconnect   bool   // the client half-closes after sending
+	}
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, user *model.User)
+		attempts []attempt
+	}{
+		{
+			name: "existing username from any IP",
+			attempts: []attempt{
+				{ip: "198.51.100.1", username: "enrollment-user"},
+				{ip: "198.51.100.2", username: "enrollment-user"},
+				{ip: "198.51.100.3", username: "enrollment-user"},
+				{ip: "198.51.100.4", username: " Enrollment-User ", password: "enrollment-password", captcha: true},
+			},
+		},
+		{
+			name: "unknown username from any IP",
+			attempts: []attempt{
+				{ip: "198.51.100.1", username: "ghost-user"},
+				{ip: "198.51.100.2", username: "ghost-user"},
+				{ip: "198.51.100.3", username: "ghost-user"},
+				{ip: "198.51.100.4", username: "GHOST-USER", captcha: true},
+			},
+		},
+		{
+			// The count is keyed on the submitted name before any lookup, so it
+			// never tells whether two names reach the same account: the email
+			// gets the same answer as any other fresh name.
+			name: "accent and case spellings share the failure count, the email has its own",
+			setup: func(t *testing.T, user *model.User) {
+				require.NoError(t, model.DB.Model(user).Update("email", "victim@example.com").Error)
+			},
+			attempts: []attempt{
+				{ip: "198.51.100.1", username: "enrollment-user"},
+				{ip: "198.51.100.2", username: "enrollment-user"},
+				{ip: "198.51.100.3", username: "enrollment-user"},
+				{ip: "198.51.100.4", username: "ÉNRÖLLMENT-USER", captcha: true},
+				{ip: "198.51.100.5", username: "victim@example.com"},
+				{ip: "198.51.100.6", username: "victim@example.com", password: "enrollment-password"},
+			},
+		},
+		{
+			name: "a success clears no failures, not even for another account that differs only in case",
+			setup: func(t *testing.T, _ *model.User) {
+				if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+					t.Skip("MySQL usernames are case-insensitive, so the case variant cannot be another account")
+				}
+				password, err := common.Password2Hash("attacker-password")
+				require.NoError(t, err)
+				require.NoError(t, model.DB.Create(&model.User{Username: "ENROLLMENT-USER", Password: password, AffCode: "case-variant", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1}).Error)
+			},
+			attempts: []attempt{
+				{ip: "198.51.100.1", username: "enrollment-user"},
+				{ip: "198.51.100.2", username: "enrollment-user"},
+				{ip: "198.51.100.3", username: "ENROLLMENT-USER", password: "attacker-password"},
+				{ip: "198.51.100.4", username: "enrollment-user"},
+				{ip: "198.51.100.5", username: "enrollment-user", captcha: true},
+			},
+		},
+		{
+			name: "failures from one IP",
+			attempts: []attempt{
+				{ip: "198.51.100.1", username: "user-a"},
+				{ip: "198.51.100.1", username: "user-a"},
+				{ip: "198.51.100.1", username: "user-b"},
+				{ip: "198.51.100.1", username: "user-b"},
+				{ip: "198.51.100.1", username: "user-a"},
+				{ip: "198.51.100.1", username: "user-b", captcha: true},
+				{ip: "198.51.100.2", username: "user-b"},
+			},
+		},
+		{
+			name: "distinct usernames from one IP",
+			attempts: []attempt{
+				{ip: "198.51.100.1", username: "user-a"},
+				{ip: "198.51.100.1", username: "user-b"},
+				{ip: "198.51.100.1", username: "user-c"},
+				{ip: "198.51.100.1", username: "user-d", captcha: true},
+				{ip: "198.51.100.2", username: "user-d"},
+			},
+		},
+		{
+			name: "a client that disconnects after sending is still counted",
+			attempts: []attempt{
+				{ip: "198.51.100.1", username: "enrollment-user", disconnect: true},
+				{ip: "198.51.100.2", username: "enrollment-user", disconnect: true},
+				{ip: "198.51.100.3", username: "enrollment-user", disconnect: true},
+				{ip: "198.51.100.4", username: "enrollment-user", captcha: true},
+			},
+		},
+		{
+			name: "a password that cannot be decrypted is a failure",
+			setup: func(*testing.T, *model.User) {
+				common.PasswordLoginEncryptionEnabled = true
+			},
+			attempts: []attempt{
+				{ip: "198.51.100.1", username: "enrollment-user"},
+				{ip: "198.51.100.2", username: "enrollment-user"},
+				{ip: "198.51.100.3", username: "enrollment-user"},
+				{ip: "198.51.100.4", username: "enrollment-user", captcha: true},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			user := setupCaptchaRiskTest(t)
+			if test.setup != nil {
+				test.setup(t, user)
+			}
+			engine := newCaptchaRiskLoginEngine(t)
+
+			for i, attempt := range test.attempts {
+				password := attempt.password
+				if password == "" {
+					password = "wrong-password"
+				}
+				var body io.Reader = strings.NewReader(captchaRiskLoginBody(t, attempt.username, password))
+				ctx, disconnect := context.WithCancel(context.Background())
+				t.Cleanup(disconnect)
+				if attempt.disconnect {
+					body = disconnectingBody{Reader: body, disconnect: disconnect}
+				}
+				request := newCaptchaRiskRequest("/api/user/login", attempt.ip, 0, body).WithContext(ctx)
+
+				reply := serveCaptchaRiskRequest(t, engine, request)
+
+				switch {
+				case attempt.captcha:
+					assert.Equal(t, "CAPTCHA_REQUIRED", reply.Code, "attempt %d", i)
+					assert.False(t, reply.Success, "attempt %d", i)
+				case attempt.password != "":
+					assert.True(t, reply.Success, "attempt %d: %s", i, reply.Message)
+				default:
+					assert.Empty(t, reply.Code, "attempt %d", i)
+					assert.Equal(t, "Username or password is incorrect, or user has been banned", reply.Message, "attempt %d", i)
+				}
+			}
+		})
+	}
+}
+
+// The gate records an attempt in the same step that counts the earlier ones,
+// so a burst of parallel guesses for one username stops at the limit instead
+// of all passing before the first failure is recorded.
+func TestPasswordLoginCaptchaRiskParallelGuessesStopAtLimit(t *testing.T) {
+	setupCaptchaRiskTest(t)
+	engine := newCaptchaRiskLoginEngine(t)
+	body := captchaRiskLoginBody(t, "enrollment-user", "wrong-password")
+
+	responses := make([]*httptest.ResponseRecorder, 12)
+	var wg sync.WaitGroup
+	for i := range responses {
+		request := newCaptchaRiskRequest("/api/user/login", "198.51.100."+strconv.Itoa(i+1), 0, strings.NewReader(body))
+		responses[i] = httptest.NewRecorder()
+		wg.Go(func() { engine.ServeHTTP(responses[i], request) })
+	}
+	wg.Wait()
+
+	codes := map[string]int{}
+	for _, response := range responses {
+		var reply captchaRiskReply
+		require.NoError(t, common.Unmarshal(response.Body.Bytes(), &reply), response.Body.String())
+		codes[reply.Code]++
+	}
+	assert.Equal(t, map[string]int{"": 3, "CAPTCHA_REQUIRED": 9}, codes, "only the first 3 guesses per username skip the check")
+}
+
+// In risk mode a check-in needs GeeTest when another account checked in from
+// the same IP; the account's own earlier check-in does not count.
+func TestCheckinCaptchaRiskCountsOtherAccountsFromIP(t *testing.T) {
+	user := setupCaptchaRiskTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Checkin{}))
+	require.NoError(t, model.LOG_DB.AutoMigrate(&model.Log{}))
+	checkinSetting := operation_setting.GetCheckinSetting()
+	previousSetting := *checkinSetting
+	t.Cleanup(func() { *checkinSetting = previousSetting })
+	*checkinSetting = operation_setting.CheckinSetting{Enabled: true, MinQuota: 1, MaxQuota: 1}
+	other := &model.User{Username: "checkin-other", AffCode: "checkin-other", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1}
+	require.NoError(t, model.DB.Create(other).Error)
+	engine := gin.New()
+	require.NoError(t, engine.SetTrustedProxies(nil))
+	engine.POST("/api/user/self/checkin", func(c *gin.Context) {
+		userID, err := strconv.Atoi(c.GetHeader("X-Test-User"))
+		require.NoError(t, err)
+		c.Set("id", userID)
+	}, middleware.CaptchaGate(middleware.CaptchaScopeCheckin), DoCheckin)
+
+	checkin := func(ip string, userID int) captchaRiskReply {
+		return serveCaptchaRiskRequest(t, engine, newCaptchaRiskRequest("/api/user/self/checkin", ip, userID, http.NoBody))
+	}
+
+	first := checkin("198.51.100.1", user.Id)
+	require.True(t, first.Success, first.Message)
+
+	sameIP := checkin("198.51.100.1", other.Id)
+	assert.False(t, sameIP.Success)
+	assert.Equal(t, "CAPTCHA_REQUIRED", sameIP.Code)
+
+	again := checkin("198.51.100.1", user.Id)
+	assert.Empty(t, again.Code, "the account's own check-in does not count")
+	assert.Equal(t, "Already checked in today", again.Message)
+
+	otherIP := checkin("198.51.100.2", other.Id)
+	assert.True(t, otherIP.Success, otherIP.Message)
 }

@@ -10,13 +10,39 @@ import (
 	"time"
 )
 
-func generateMessageID() (string, error) {
-	split := strings.Split(SMTPFrom, "@")
-	if len(split) < 2 {
+func generateMessageID(from string) (string, error) {
+	_, domain, found := strings.Cut(from, "@")
+	if !found {
 		return "", fmt.Errorf("invalid SMTP account")
 	}
-	domain := strings.Split(SMTPFrom, "@")[1]
 	return fmt.Sprintf("<%d.%s@%s>", time.Now().UnixNano(), GetRandomString(12), domain), nil
+}
+
+// smtpSender is the envelope sender. Installations that never saved SMTPFrom
+// send as the SMTP account.
+func smtpSender() string {
+	if SMTPFrom != "" {
+		return SMTPFrom
+	}
+	return SMTPAccount
+}
+
+// IsEmailDeliveryConfigured reports whether the selected provider has the
+// local settings it needs to send. It never contacts the provider.
+func IsEmailDeliveryConfigured() bool {
+	OptionMapRWMutex.RLock()
+	provider := OptionMap["EmailProvider"]
+	resendKey := OptionMap["ResendApiKey"]
+	resendFrom := OptionMap["ResendFrom"]
+	OptionMapRWMutex.RUnlock()
+	switch provider {
+	case "resend":
+		return ValidateResendConfiguration(resendKey, resendFrom) == nil
+	case "", "smtp":
+		return SMTPServer != "" && strings.Contains(smtpSender(), "@")
+	default:
+		return false
+	}
 }
 
 func shouldUseSMTPLoginAuth() bool {
@@ -90,15 +116,15 @@ func SendEmail(subject string, receiver string, content string) error {
 	default:
 		return NewMessage("Email sending method must be SMTP or Resend")
 	}
-	if SMTPFrom == "" { // for compatibility
-		SMTPFrom = SMTPAccount
-	}
-	id, err2 := generateMessageID()
-	if err2 != nil {
-		return err2
-	}
-	if SMTPServer == "" && SMTPAccount == "" {
+	// Read the sender into a local: writing the SMTPFrom global here would race
+	// with option updates.
+	from := smtpSender()
+	if SMTPServer == "" {
 		return NewMessage("SMTP server is not configured")
+	}
+	id, err := generateMessageID(from)
+	if err != nil {
+		return err
 	}
 	encodedSubject := fmt.Sprintf("=?UTF-8?B?%s?=", base64.StdEncoding.EncodeToString([]byte(subject)))
 	mail := []byte(fmt.Sprintf("To: %s\r\n"+
@@ -107,11 +133,10 @@ func SendEmail(subject string, receiver string, content string) error {
 		"Date: %s\r\n"+
 		"Message-ID: %s\r\n"+ // 添加 Message-ID 头
 		"Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n",
-		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, content))
+		receiver, SystemName, from, encodedSubject, time.Now().Format(time.RFC1123Z), id, content))
 	auth := getSMTPAuth()
 	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
 	to := strings.Split(receiver, ";")
-	var err error
 	client, err := newSMTPClient(addr)
 	if err != nil {
 		return err
@@ -122,7 +147,7 @@ func SendEmail(subject string, receiver string, content string) error {
 			return err
 		}
 	}
-	if err = client.Mail(SMTPFrom); err != nil {
+	if err = client.Mail(from); err != nil {
 		return err
 	}
 	for _, receiver := range to {

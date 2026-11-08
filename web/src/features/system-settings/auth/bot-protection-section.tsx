@@ -32,6 +32,8 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
 
 import {
@@ -43,8 +45,11 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
+const GEETEST_CHECK_MODES = ['always', 'risk'] as const
+
 const botProtectionSchema = z.object({
   GeetestCheckEnabled: z.boolean(),
+  GeetestCheckMode: z.enum(GEETEST_CHECK_MODES),
   GeetestCaptchaId: z.string().optional(),
   GeetestCaptchaKey: z.string().optional(),
 })
@@ -60,6 +65,23 @@ export function BotProtectionSection({
 }: BotProtectionSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const modeOptions: Record<
+    (typeof GEETEST_CHECK_MODES)[number],
+    { title: string; description: string }
+  > = {
+    always: {
+      title: t('Every time'),
+      description: t(
+        'Every sign-in, sign-up or password reset email, and check-in asks for verification first.'
+      ),
+    },
+    risk: {
+      title: t('Only when risky'),
+      description: t(
+        'Asks only after repeated failed sign-ins, many emails or check-ins from one network, or a site-wide surge. Use a slide or icon captcha in GeeTest, not one-click.'
+      ),
+    },
+  }
 
   const form = useForm<BotProtectionFormValues>({
     resolver: zodResolver(botProtectionSchema),
@@ -108,7 +130,7 @@ export function BotProtectionSection({
                   <FormLabel>{t('Enable GeeTest')}</FormLabel>
                   <FormDescription>
                     {t(
-                      'Protect login, registration, email codes, password reset and check-in with GeeTest CAPTCHA v4'
+                      'Use GeeTest CAPTCHA v4 to protect sign-in, sign-up and password reset emails, and check-in'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>
@@ -119,6 +141,50 @@ export function BotProtectionSection({
                   />
                 </FormControl>
               </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='GeetestCheckMode'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('When to ask for verification')}</FormLabel>
+                <FormControl>
+                  <RadioGroup
+                    aria-label={t('When to ask for verification')}
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    className='grid gap-3 sm:grid-cols-2'
+                  >
+                    {GEETEST_CHECK_MODES.map((mode) => {
+                      const id = `geetest-check-mode-${mode}`
+                      return (
+                        <Label
+                          key={mode}
+                          htmlFor={id}
+                          className='hover:border-primary/40 focus-within:border-primary/50 has-data-[checked]:border-primary has-data-[checked]:ring-primary/20 bg-card flex cursor-pointer items-start gap-3 rounded-xl border p-4 font-normal transition-all has-data-[checked]:ring-2'
+                        >
+                          <RadioGroupItem
+                            id={id}
+                            value={mode}
+                            className='mt-0.5'
+                          />
+                          <span className='flex flex-col gap-1.5'>
+                            <span className='text-sm leading-none font-semibold'>
+                              {modeOptions[mode].title}
+                            </span>
+                            <span className='text-muted-foreground text-sm'>
+                              {modeOptions[mode].description}
+                            </span>
+                          </span>
+                        </Label>
+                      )
+                    })}
+                  </RadioGroup>
+                </FormControl>
+                <FormMessage />
+              </FormItem>
             )}
           />
 

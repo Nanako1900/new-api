@@ -30,6 +30,8 @@ const (
 	AuthFlowPurposeTwoFASetup        = "2fa_setup"
 	AuthFlowPurposeSecurityProof     = "security_proof"
 	AuthFlowPurposeEmailBinding      = "email_binding"
+	AuthFlowPurposeEmailRegistration = "email_registration"
+	AuthFlowPurposePasswordReset     = "password_reset"
 	// AuthFlowPurposeMonitorCode is the one-time authorization code a
 	// dashboard session issues to the monitor console (SSO with PKCE).
 	AuthFlowPurposeMonitorCode      = "monitor_code"

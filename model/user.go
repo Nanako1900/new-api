@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -1054,6 +1055,18 @@ func deleteUserAuthenticationData(tx *gorm.DB, userId int) error {
 	return deleteUserOAuthBindingsByUserId(tx, userId)
 }
 
+// accountPasswordDecoyHash is a hash of a random secret in the format new
+// account passwords are stored in (ACCOUNT_PASSWORD_HASH_ALGORITHM). Login
+// compares against it when there is no stored hash, so an unknown username
+// costs the same hash work, and the same length guard, as a wrong password.
+var accountPasswordDecoyHash = sync.OnceValue(func() string {
+	hash, err := common.HashAccountPassword(common.GetRandomString(32))
+	if err != nil {
+		return ""
+	}
+	return hash
+})
+
 // ValidateAndFill check password & user status
 func (user *User) ValidateAndFill() (err error) {
 	// When querying with struct, GORM will only query with non-zero fields,
@@ -1066,13 +1079,17 @@ func (user *User) ValidateAndFill() (err error) {
 	}
 	// find by username or email
 	err = DB.Where("username = ? OR email = ?", username, username).First(user).Error
+	// An unknown username and an account without a password still pay for one
+	// hash comparison, so the response time does not reveal which accounts exist.
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		common.ValidatePasswordAndHash(password, accountPasswordDecoyHash())
+		return ErrInvalidCredentials
+	}
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrInvalidCredentials
-		}
 		return fmt.Errorf("%w: %v", ErrDatabase, err)
 	}
 	if user.Password == "" {
+		common.ValidatePasswordAndHash(password, accountPasswordDecoyHash())
 		return ErrInvalidCredentials
 	}
 	okay := common.ValidatePasswordAndHash(password, user.Password)
@@ -1183,33 +1200,6 @@ func IsOidcIdAlreadyTaken(oidcId string) bool {
 
 func IsTelegramIdAlreadyTaken(telegramId string) bool {
 	return DB.Unscoped().Where("telegram_id = ?", telegramId).Find(&User{}).RowsAffected == 1
-}
-
-func ResetUserPasswordByEmail(email string, password string) error {
-	if email == "" || password == "" {
-		return common.NewMessage("Email or password is empty!")
-	}
-	user, err := GetUniqueUserByEmail(email)
-	if err != nil {
-		return err
-	}
-	hashedPassword, err := common.HashAccountPassword(password)
-	if err != nil {
-		return err
-	}
-	if err = DB.Transaction(func(tx *gorm.DB) error {
-		if _, err := IncrementUserAuthVersionWithTx(tx, user.Id); err != nil {
-			return err
-		}
-		return tx.Model(&User{}).Where("id = ?", user.Id).Update("password", hashedPassword).Error
-	}); err != nil {
-		return err
-	}
-	if err := PublishUserAuthCache(user.Id); err != nil {
-		return err
-	}
-	_, err = RevokeAllUserSessions(user.Id, "password_reset")
-	return err
 }
 
 func IsAdmin(userId int) bool {

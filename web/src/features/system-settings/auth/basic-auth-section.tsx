@@ -17,11 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { Link } from '@tanstack/react-router'
+import { AlertTriangle, Info } from 'lucide-react'
 import { useMemo } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Form,
   FormControl,
@@ -33,6 +36,7 @@ import {
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { useStatus } from '@/hooks/use-status'
 
 import {
   SettingsForm,
@@ -47,7 +51,6 @@ import { useUpdateOption } from '../hooks/use-update-option'
 const basicAuthSchema = z.object({
   PasswordLoginEnabled: z.boolean(),
   PasswordRegisterEnabled: z.boolean(),
-  EmailVerificationEnabled: z.boolean(),
   RegisterEnabled: z.boolean(),
   EmailDomainRestrictionEnabled: z.boolean(),
   EmailAliasRestrictionEnabled: z.boolean(),
@@ -63,6 +66,7 @@ type BasicAuthSectionProps = {
 export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const { status } = useStatus()
 
   const formDefaults = useMemo<BasicAuthFormValues>(
     () => ({
@@ -177,26 +181,33 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
             )}
           />
 
-          <FormField
-            control={form.control}
-            name='EmailVerificationEnabled'
-            render={({ field }) => (
-              <SettingsSwitchItem>
-                <SettingsSwitchContent>
-                  <FormLabel>{t('Email Verification')}</FormLabel>
-                  <FormDescription>
-                    {t('Require email verification for new accounts')}
-                  </FormDescription>
-                </SettingsSwitchContent>
-                <FormControl>
-                  <Switch
-                    checked={field.value}
-                    onCheckedChange={field.onChange}
-                  />
-                </FormControl>
-              </SettingsSwitchItem>
-            )}
-          />
+          <Alert role='note' className='border-info/30 bg-info/10 text-info'>
+            <Info aria-hidden='true' />
+            <AlertDescription className='text-inherit'>
+              {t('Password sign-up always requires email verification.')}
+            </AlertDescription>
+          </Alert>
+
+          {status?.email_delivery_configured === false && (
+            <Alert
+              role='status'
+              className='border-warning/40 bg-warning/10 text-amber-800 dark:text-amber-200'
+            >
+              <AlertTriangle aria-hidden='true' />
+              <AlertDescription className='text-inherit'>
+                {t(
+                  'Email delivery is not configured, so password sign-up is unavailable.'
+                )}{' '}
+                <Link
+                  to='/system-settings/operations/$section'
+                  params={{ section: 'email' }}
+                  className='font-medium'
+                >
+                  {t('Configure email delivery')}
+                </Link>
+              </AlertDescription>
+            </Alert>
+          )}
 
           <FormField
             control={form.control}

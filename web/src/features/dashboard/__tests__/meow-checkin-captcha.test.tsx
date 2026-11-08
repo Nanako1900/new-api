@@ -20,7 +20,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { InternalAxiosRequestConfig } from 'axios'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { toast } from 'sonner'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
@@ -34,43 +35,68 @@ type CheckinReply = {
   data?: { quota_awarded: number; checkin_date: string }
 }
 
+const CAPTCHA_REQUIRED: CheckinReply = {
+  success: false,
+  message: 'Please complete the human verification first',
+  code: 'CAPTCHA_REQUIRED',
+}
+const CHECKED_IN: CheckinReply = {
+  success: true,
+  message: 'Check-in successful',
+  data: { quota_awarded: 100, checkin_date: '2026-11-07' },
+}
+
 const originalAdapter = api.defaults.adapter
 let checkinRequests: InternalAxiosRequestConfig[] = []
 let checkinReplies: CheckinReply[] = []
+let checkedInToday = false
+let geetestStarts = 0
+let challengesShown = 0
+let challengeAnswers: Array<'pass' | 'close'> = []
 
-/** Stands in for gt4.js: its button passes the challenge when clicked. */
+/** Stands in for gt4.js in bind mode: the user answers each challenge at once. */
 function installFakeGeetest() {
   window.initGeetest4 = ((
     _config: unknown,
     callback: (captcha: unknown) => void
   ) => {
-    let succeed = () => {}
+    geetestStarts += 1
+    let onReady = () => {}
+    let onSuccess = () => {}
+    let onClose = () => {}
     const instance = {
-      appendTo: (target: HTMLElement) => {
-        const button = document.createElement('button')
-        button.textContent = 'Pass GeeTest'
-        button.addEventListener('click', () => succeed())
-        target.appendChild(button)
-        return instance
-      },
       getValidate: () => ({
         lot_number: 'lot',
         captcha_output: 'output',
         pass_token: 'pass',
         gen_time: '1700000000',
       }),
+      showCaptcha: () => {
+        challengesShown += 1
+        const answer = challengeAnswers.shift() ?? 'pass'
+        setTimeout(answer === 'pass' ? onSuccess : onClose)
+      },
+      onReady: (next: () => void) => {
+        onReady = next
+        return instance
+      },
       onSuccess: (next: () => void) => {
-        succeed = next
+        onSuccess = next
+        return instance
+      },
+      onClose: (next: () => void) => {
+        onClose = next
         return instance
       },
       onError: () => instance,
       destroy: () => {},
     }
     callback(instance)
+    onReady()
   }) as unknown as Window['initGeetest4']
 }
 
-function renderCard() {
+function renderCard(mode: 'always' | 'risk') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -78,6 +104,7 @@ function renderCard() {
     checkin_enabled: true,
     geetest_check: true,
     geetest_captcha_id: 'captcha-id',
+    geetest_check_mode: mode,
   })
   render(
     <QueryClientProvider client={client}>
@@ -86,9 +113,20 @@ function renderCard() {
   )
 }
 
+function sentTokens(): Array<string | null> {
+  return checkinRequests.map((config) => {
+    const token = config.headers.get('X-Captcha-Token')
+    return typeof token === 'string' ? token : null
+  })
+}
+
 beforeEach(() => {
   checkinRequests = []
   checkinReplies = []
+  checkedInToday = false
+  geetestStarts = 0
+  challengesShown = 0
+  challengeAnswers = []
   installFakeGeetest()
   api.defaults.adapter = async (config) => {
     let data: unknown = { success: false, message: '' }
@@ -98,7 +136,7 @@ beforeEach(() => {
     ) {
       data = {
         success: true,
-        data: { stats: { checked_in_today: false, records: [] } },
+        data: { stats: { checked_in_today: checkedInToday, records: [] } },
       }
     }
     if (config.url === '/api/user/checkin' && config.method === 'post') {
@@ -110,87 +148,91 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   api.defaults.adapter = originalAdapter
   delete window.initGeetest4
 })
 
 describe('Meow check-in with GeeTest', () => {
-  it('when the server asks for verification, opens GeeTest, retries with its token and closes', async () => {
-    checkinReplies = [
-      {
-        success: false,
-        message: 'Please complete the human verification first',
-        code: 'CAPTCHA_REQUIRED',
-      },
-      {
-        success: true,
-        message: 'Check-in successful',
-        data: { quota_awarded: 100, checkin_date: '2026-11-07' },
-      },
-    ]
+  it('in risk mode, checks in without a result and resends with one only when the server asks', async () => {
+    const success = vi.spyOn(toast, 'success')
+    checkinReplies = [CAPTCHA_REQUIRED, CHECKED_IN]
     const user = userEvent.setup()
-    renderCard()
+    renderCard('risk')
 
     await user.click(
       await screen.findByRole('button', { name: 'Check in now' })
     )
-    expect(await screen.findByRole('dialog')).toBeVisible()
-    await user.click(
-      await screen.findByRole('button', { name: 'Pass GeeTest' })
-    )
 
     await waitFor(() => expect(checkinRequests).toHaveLength(2))
-    expect(checkinRequests[0].headers.has('X-Captcha-Token')).toBe(false)
-    expect(
-      JSON.parse(checkinRequests[1].headers.get('X-Captcha-Token') as string)
-    ).toEqual({
+    expect(sentTokens()[0]).toBeNull()
+    expect(JSON.parse(sentTokens()[1] as string)).toEqual({
       lot_number: 'lot',
       captcha_output: 'output',
       pass_token: 'pass',
       gen_time: '1700000000',
     })
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    )
+    expect(challengesShown).toBe(1)
+    await waitFor(() => expect(success).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('when check-in fails after verification for another reason, closes the check', async () => {
-    checkinReplies = [
-      {
-        success: false,
-        message: 'Please complete the human verification first',
-        code: 'CAPTCHA_REQUIRED',
-      },
-      { success: false, message: 'Already checked in today' },
-    ]
-    const user = userEvent.setup()
-    renderCard()
-
-    await user.click(
-      await screen.findByRole('button', { name: 'Check in now' })
-    )
-    await user.click(
-      await screen.findByRole('button', { name: 'Pass GeeTest' })
-    )
-
-    await waitFor(() => expect(checkinRequests).toHaveLength(2))
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    )
-  })
-
-  it('when check-in fails for another reason, does not open GeeTest', async () => {
+  it('in risk mode, a failure that is not a captcha request shows no challenge', async () => {
+    const error = vi.spyOn(toast, 'error')
     checkinReplies = [
       { success: false, message: 'Check-in feature is not enabled' },
     ]
     const user = userEvent.setup()
-    renderCard()
+    renderCard('risk')
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Check in now' })
+    )
+
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith('Check-in feature is not enabled')
+    )
+    expect(checkinRequests).toHaveLength(1)
+    expect(challengesShown).toBe(0)
+  })
+
+  it('in always mode, challenges before the first check-in request', async () => {
+    checkinReplies = [CHECKED_IN]
+    const user = userEvent.setup()
+    renderCard('always')
 
     await user.click(
       await screen.findByRole('button', { name: 'Check in now' })
     )
 
     await waitFor(() => expect(checkinRequests).toHaveLength(1))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(sentTokens()[0]).not.toBeNull()
+    expect(challengesShown).toBe(1)
+  })
+
+  it('when the user closes the challenge, does not resend and re-enables the button', async () => {
+    checkinReplies = [CAPTCHA_REQUIRED]
+    challengeAnswers = ['close']
+    const user = userEvent.setup()
+    renderCard('risk')
+    const button = await screen.findByRole('button', { name: 'Check in now' })
+
+    await user.click(button)
+
+    await waitFor(() => expect(challengesShown).toBe(1))
+    await waitFor(() => expect(button).toBeEnabled())
+    expect(checkinRequests).toHaveLength(1)
+  })
+
+  it('when already checked in today, does not start GeeTest', async () => {
+    checkedInToday = true
+    renderCard('risk')
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Checked in today · see you tomorrow',
+      })
+    ).toBeDisabled()
+    expect(geetestStarts).toBe(0)
   })
 })

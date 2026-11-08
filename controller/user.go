@@ -62,9 +62,15 @@ func Login(c *gin.Context) {
 		return
 	}
 	username := loginRequest.Username
+	// In risk mode the gate records this attempt as a failed login right away;
+	// every outcome that is not one withdraws it.
+	if !middleware.RequireCaptcha(c, middleware.CaptchaScopeLogin, username) {
+		return
+	}
 	password := loginRequest.Password
 	if common.PasswordLoginEncryptionEnabled {
 		if loginRequest.PasswordEncrypted == "" || loginRequest.EncryptionKeyID == "" {
+			middleware.WithdrawCaptchaRisk(c)
 			common.ApiErrorT(c, "Invalid parameters")
 			return
 		}
@@ -75,6 +81,7 @@ func Login(c *gin.Context) {
 		}
 	}
 	if username == "" || password == "" {
+		middleware.WithdrawCaptchaRisk(c)
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
@@ -86,9 +93,11 @@ func Login(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrDatabase):
+			middleware.WithdrawCaptchaRisk(c)
 			common.SysLog(common.LogText("Login database error for user %s: %v", username, err))
 			common.ApiErrorT(c, "Database error, please contact the administrator")
 		case errors.Is(err, model.ErrUserEmptyCredentials):
+			middleware.WithdrawCaptchaRisk(c)
 			common.ApiErrorT(c, "Invalid parameters")
 		default:
 			common.ApiErrorT(c, "Username or password is incorrect, or user has been banned")
@@ -96,6 +105,10 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// A correct password is not a failure. Earlier failures stay counted:
+	// login names that differ only in case or accents share a failure count,
+	// so one account's success must not reset another's.
+	middleware.WithdrawCaptchaRisk(c)
 	setupLogin(&user, nil, c)
 }
 
@@ -105,7 +118,7 @@ func loginMethodFromContext(c *gin.Context) string {
 		return method
 	}
 	switch c.FullPath() {
-	case "/api/user/login":
+	case "/api/user/login", "/api/user/register":
 		return "password"
 	case "/api/user/login/2fa":
 		return "2fa"
@@ -214,125 +227,128 @@ func writeLoginResponse(c *gin.Context, user *model.User, bundle *service.AuthBu
 	})
 }
 
+type registerRequest struct {
+	Username          string `json:"username"`
+	Password          string `json:"password"`
+	RegistrationToken string `json:"registration_token"`
+	AffCode           string `json:"aff_code"`
+}
+
+// writeRegistrationError answers the registration errors callers may see and
+// reports whether err was one of them.
+func writeRegistrationError(c *gin.Context, err error) bool {
+	switch {
+	case errors.Is(err, model.ErrEmailRegistrationInvalid):
+		common.ApiErrorT(c, "Email verification expired or is invalid. Please verify your email again.")
+	case errors.Is(err, model.ErrEmailAlreadyTaken):
+		common.ApiErrorT(c, "Email address is already in use")
+	case errors.Is(err, service.ErrAccountEmailInvalid), errors.Is(err, service.ErrAccountEmailRestricted),
+		errors.Is(err, common.ErrAccountPasswordLength), errors.Is(err, common.ErrPasswordLegacyLimit):
+		writeSecurityOperationError(c, err)
+	default:
+		return false
+	}
+	return true
+}
+
+// Register creates a password account for the address verified through
+// RegisterEmailStart/RegisterEmailVerify and signs it in. The registration
+// token passed the captcha when its verification started and is single use.
 func Register(c *gin.Context) {
-	if !common.RegisterEnabled {
-		common.ApiErrorT(c, "New user registration has been disabled by administrator")
+	if rejectUnavailablePasswordRegistration(c) {
 		return
 	}
-	if !common.PasswordRegisterEnabled {
-		common.ApiErrorT(c, "Password registration has been disabled by administrator, please use third-party account verification")
-		return
-	}
-	var user model.User
-	err := common.DecodeJson(c.Request.Body, &user)
-	if err != nil {
+	var request registerRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
-	user.Username = strings.TrimSpace(user.Username)
-	user.Email = model.NormalizeEmail(user.Email)
-	if user.Username == "" {
+	// This route has no captcha of its own: check the token before anything
+	// about the username, so only a caller who passed the captcha and proved an
+	// inbox can learn whether a username is taken.
+	if _, err := service.VerifiedEmailRegistration(request.RegistrationToken); err != nil {
+		if !writeRegistrationError(c, err) {
+			common.SysLog(common.LogText("password registration token check failed: %v", err))
+			common.ApiErrorT(c, "Database error, please contact the administrator")
+		}
+		return
+	}
+	username := strings.TrimSpace(request.Username)
+	if username == "" {
 		common.ApiErrorT(c, "Invalid parameters")
 		return
+	}
+	// "@" is reserved so a username can never be mistaken for an email address.
+	if strings.Contains(username, "@") {
+		common.ApiErrorT(c, "Username cannot contain @")
+		return
+	}
+	inviterId := 0
+	if request.AffCode != "" {
+		inviterId, _ = model.GetUserIdByAffCode(request.AffCode)
+	}
+	user := model.User{
+		Username:    username,
+		Password:    request.Password,
+		DisplayName: username,
+		InviterId:   inviterId,
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		AuthVersion: 1,
 	}
 	if err := common.Validate.Struct(&user); err != nil {
 		common.ApiErrorT(c, "Invalid input {{error}}", map[string]any{"error": err.Error()})
 		return
 	}
-	if common.EmailVerificationEnabled {
-		if user.Email == "" || user.VerificationCode == "" {
-			common.ApiErrorT(c, "Email verification is enabled, please enter email address and verification code")
-			return
-		}
-		if !common.VerifyCodeWithKey(user.Email, user.VerificationCode, common.EmailVerificationPurpose) {
-			common.ApiErrorT(c, "Verification code is incorrect or has expired")
-			return
-		}
-		if err := model.EnsureEmailAvailable(user.Email, 0); err != nil {
-			if errors.Is(err, model.ErrEmailAlreadyTaken) {
-				common.ApiErrorT(c, "Email address is already in use")
-				return
-			}
-			common.ApiErrorT(c, "Database error, please contact the administrator")
-			return
-		}
-	}
-	emailForExistCheck := ""
-	if common.EmailVerificationEnabled {
-		emailForExistCheck = user.Email
-	}
-	exist, err := model.CheckUserExistOrDeleted(user.Username, emailForExistCheck)
+	exist, err := model.CheckUserExistOrDeleted(username, "")
 	if err != nil {
-		common.ApiErrorT(c, "Database error, please contact the administrator")
 		common.SysLog(common.LogText("CheckUserExistOrDeleted error: %v", err))
+		common.ApiErrorT(c, "Database error, please contact the administrator")
 		return
 	}
 	if exist {
 		common.ApiErrorT(c, "Username already exists or has been deleted")
 		return
 	}
-	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
-	cleanUser := model.User{
-		Username:    user.Username,
-		Password:    user.Password,
-		DisplayName: user.Username,
-		InviterId:   inviterId,
-		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
-	}
-	if common.EmailVerificationEnabled {
-		cleanUser.Email = user.Email
-	}
-	if err := cleanUser.Insert(inviterId); err != nil {
-		if errors.Is(err, model.ErrEmailAlreadyTaken) {
-			common.ApiErrorT(c, "Email address is already in use")
-			return
-		}
-		common.ApiError(c, err)
-		return
-	}
-
-	// 获取插入后的用户ID
-	var insertedUser model.User
-	if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err != nil {
-		common.ApiErrorT(c, "User registration failed or user ID retrieval failed")
-		return
-	}
-	// 生成默认令牌
+	var defaultToken *model.Token
 	if constant.GenerateDefaultToken {
 		key, err := common.GenerateKey()
 		if err != nil {
-			common.ApiErrorT(c, "Failed to generate default token")
 			common.SysLog(common.LogText("failed to generate token key: %s", err.Error()))
+			common.ApiErrorT(c, "Failed to generate default token")
 			return
 		}
-		// 生成默认令牌
-		token := model.Token{
-			UserId:             insertedUser.Id, // 使用插入后的用户ID
-			Name:               i18n.T(c, i18n.MsgUserDefaultTokenName, map[string]any{"Username": cleanUser.Username}),
-			Key:                key,
-			CreatedTime:        common.GetTimestamp(),
-			AccessedTime:       common.GetTimestamp(),
-			ExpiredTime:        -1,     // 永不过期
-			RemainQuota:        500000, // 示例额度
-			UnlimitedQuota:     true,
-			ModelLimitsEnabled: false,
+		now := common.GetTimestamp()
+		defaultToken = &model.Token{
+			Name:                i18n.T(c, i18n.MsgUserDefaultTokenName, map[string]any{"Username": username}),
+			Key:                 key,
+			CreatedTime:         now,
+			AccessedTime:        now,
+			ExpiredTime:         -1,     // 永不过期
+			RemainQuota:         500000, // 示例额度
+			UnlimitedQuota:      true,
+			AllowUserQuotaQuery: true,
 		}
-		token.AllowUserQuotaQuery = true
 		if setting.DefaultUseAutoGroup {
-			token.Group = "auto"
-		}
-		if err := token.Insert(); err != nil {
-			common.ApiErrorT(c, "Failed to create default token")
-			return
+			defaultToken.Group = "auto"
 		}
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-	})
-	return
+	if err := service.CompleteEmailRegistration(request.RegistrationToken, &user, inviterId, defaultToken); err != nil {
+		if writeRegistrationError(c, err) {
+			return
+		}
+		// A concurrent sign-up can take the username after the check above;
+		// the unique index then rejects the insert.
+		if exist, existErr := model.CheckUserExistOrDeleted(username, ""); existErr == nil && exist {
+			common.ApiErrorT(c, "Username already exists or has been deleted")
+			return
+		}
+		common.SysLog(common.LogText("password registration failed: %v", err))
+		common.ApiErrorT(c, "Database error, please contact the administrator")
+		return
+	}
+	user.FinishInsert(inviterId)
+	setupLogin(&user, nil, c)
 }
 
 func GetAllUsers(c *gin.Context) {

@@ -913,6 +913,12 @@ export const STATIC_I18N_KEYS = [
   'Set its quota and allowed models separately.',
   'Swap the Base URL',
   "Paste it into your client and you're ready.",
+  // Sign-up steps and form messages (features/auth/sign-up).
+  'Verify email',
+  'Set up account',
+  'Username must be 20 characters or fewer',
+  // Password reset link page (features/auth/reset-password-confirm).
+  'This password reset link is invalid or has expired. Request a new one.',
   // MeowAPI console overview greetings (dashboard/components/meow-overview).
   'Good morning, {{name}}',
   'Good afternoon, {{name}}',

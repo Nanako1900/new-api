@@ -29,10 +29,40 @@ export const loginFormSchema = z.object({
   password: z.string().min(1, 'Please enter your password'),
 })
 
-export const registerFormSchema = z
+// Sign-up step 1: the address to verify (backend: valid email, at most 50).
+export const registrationEmailSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .email({ message: 'Please enter a valid email address' })
+    .max(50, { message: 'Please enter a valid email address' }),
+})
+
+// Sign-up step 1: the code sent to that address.
+export const registrationCodeSchema = z.object({
+  code: z
+    .string()
+    .regex(/^\d{6}$/, 'Enter the 6-digit email verification code.'),
+})
+
+const USERNAME_MAX_LENGTH = 20
+
+// Sign-up step 2. Mirrors the backend: a trimmed username of at most 20
+// characters without "@", and the shared account password policy.
+export const accountSetupSchema = z
   .object({
-    username: z.string().min(1, 'Please enter your username'),
-    email: z.string().optional(),
+    username: z
+      .string()
+      .trim()
+      .min(1, 'Please enter your username')
+      .refine(
+        (username) => [...username].length <= USERNAME_MAX_LENGTH,
+        'Username must be 20 characters or fewer'
+      )
+      .refine(
+        (username) => !username.includes('@'),
+        'Username cannot contain @'
+      ),
     password: accountPasswordSchema,
     confirmPassword: z.string().min(1, 'Please confirm your password'),
   })
@@ -47,6 +77,17 @@ export const forgotPasswordFormSchema = z.object({
   }),
 })
 
+// The new password chosen on the reset link page (shared password policy).
+export const passwordResetFormSchema = z
+  .object({
+    password: accountPasswordSchema,
+    confirmPassword: z.string().min(1, 'Please confirm your password'),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords don't match.",
+    path: ['confirmPassword'],
+  })
+
 export const otpFormSchema = z.object({
   otp: z.string().min(1, 'Please enter a code.'),
 })
@@ -56,8 +97,11 @@ export const otpFormSchema = z.object({
 // ============================================================================
 
 export const PASSWORD_MIN_LENGTH = 8
-export const PASSWORD_MAX_LENGTH = 20
 export const OTP_LENGTH = 6
+// Mirrors model.EmailRegistrationResendDelay. Counted from when the code entry
+// appears rather than from the server's resend_at, so device clock skew cannot
+// stretch or skip the wait.
+export const REGISTRATION_RESEND_SECONDS = 60
 export const BACKUP_CODE_LENGTH = 9 // XXXX-XXXX format
 export const BACKUP_CODE_REGEX = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/i
 export const OTP_REGEX = /^\d{6}$/
@@ -66,8 +110,10 @@ export const OTP_REGEX = /^\d{6}$/
 // Countdown Constants
 // ============================================================================
 
-export const EMAIL_VERIFICATION_COUNTDOWN = 30 // seconds
-export const PASSWORD_RESET_COUNTDOWN = 30 // seconds
+// Mirrors the per-address limit of one mail a minute that the reset start
+// endpoint enforces (middleware.AllowEmailVerificationAddress); a shorter
+// countdown would offer a resend the server is certain to reject.
+export const PASSWORD_RESET_COUNTDOWN = 60 // seconds
 
 // ============================================================================
 // OAuth Constants

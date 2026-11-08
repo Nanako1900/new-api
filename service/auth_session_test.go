@@ -178,7 +178,12 @@ func TestPasswordResetDoesNotClearSessionIssuanceHistory(t *testing.T) {
 
 	_, err := CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
 	require.NoError(t, err)
-	require.NoError(t, model.ResetUserPasswordByEmail(email, "new-password"))
+	token, _, err := model.CreatePasswordReset(user.Id, email)
+	require.NoError(t, err)
+	_, err = CompletePasswordReset(token, "new-password")
+	require.NoError(t, err)
+	_, err = model.RevokeAllUserSessions(user.Id, "password_reset")
+	require.NoError(t, err)
 
 	_, err = CreateLoginSession(user.Id, "password", "127.0.0.1", "test-agent")
 	assert.ErrorIs(t, err, model.ErrUserSessionIssuanceLimit)

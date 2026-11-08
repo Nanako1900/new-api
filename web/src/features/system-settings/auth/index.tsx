@@ -27,7 +27,6 @@ import {
 const defaultAuthSettings: AuthSettings = {
   PasswordLoginEnabled: true,
   PasswordRegisterEnabled: true,
-  EmailVerificationEnabled: false,
   RegisterEnabled: true,
   EmailDomainRestrictionEnabled: false,
   EmailAliasRestrictionEnabled: false,
@@ -61,6 +60,7 @@ const defaultAuthSettings: AuthSettings = {
   WeChatServerToken: '',
   WeChatAccountQRCodeImageURL: '',
   GeetestCheckEnabled: false,
+  GeetestCheckMode: 'always',
   GeetestCaptchaId: '',
   GeetestCaptchaKey: '',
   'passkey.enabled': false,

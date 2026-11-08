@@ -1,7 +1,6 @@
 package model
 
 import (
-	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -362,7 +361,9 @@ func TestValidateAndFillRejectsPasswordlessUser(t *testing.T) {
 	assert.Empty(t, stored.Password)
 }
 
-func TestResetUserPasswordByEmailRequiresSingleActiveMatch(t *testing.T) {
+// The password reset link goes only to an account whose address is unique,
+// compared case-insensitively.
+func TestGetUniqueUserByEmailRequiresSingleMatch(t *testing.T) {
 	setupUserUpdateTestState(t)
 
 	require.NoError(t, DB.Create(&User{
@@ -379,15 +380,8 @@ func TestResetUserPasswordByEmailRequiresSingleActiveMatch(t *testing.T) {
 		AffCode:  "dupe2",
 		Status:   common.UserStatusEnabled,
 	}).Error)
-
-	err := ResetUserPasswordByEmail("legacy@example.com", "NewPassword123")
+	_, err := GetUniqueUserByEmail("legacy@example.com")
 	require.ErrorIs(t, err, ErrEmailAmbiguous)
-
-	var duplicates []User
-	require.NoError(t, DB.Where("LOWER(email) = ?", "legacy@example.com").Order("username asc").Find(&duplicates).Error)
-	require.Len(t, duplicates, 2)
-	assert.Equal(t, "old-1", duplicates[0].Password)
-	assert.Equal(t, "old-2", duplicates[1].Password)
 
 	require.NoError(t, DB.Create(&User{
 		Username: "unique",
@@ -396,15 +390,12 @@ func TestResetUserPasswordByEmailRequiresSingleActiveMatch(t *testing.T) {
 		AffCode:  "unique",
 		Status:   common.UserStatusEnabled,
 	}).Error)
+	unique, err := GetUniqueUserByEmail(" UNIQUE@example.com ")
+	require.NoError(t, err)
+	assert.Equal(t, "unique", unique.Username)
 
-	require.NoError(t, ResetUserPasswordByEmail("UNIQUE@example.com", "NewPassword123"))
-
-	var unique User
-	require.NoError(t, DB.Where("username = ?", "unique").First(&unique).Error)
-	assert.True(t, common.ValidatePasswordAndHash("NewPassword123", unique.Password))
-
-	err = ResetUserPasswordByEmail("missing@example.com", "NewPassword123")
-	require.True(t, errors.Is(err, ErrEmailNotFound))
+	_, err = GetUniqueUserByEmail("missing@example.com")
+	require.ErrorIs(t, err, ErrEmailNotFound)
 }
 
 func createAccessTokenTestUser(t *testing.T, username string) User {

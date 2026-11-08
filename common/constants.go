@@ -67,7 +67,7 @@ var MaxRecentItems = 1000
 var PasswordLoginEnabled = true
 var PasswordLoginEncryptionEnabled = false
 var PasswordRegisterEnabled = true
-var EmailVerificationEnabled = false
+var EmailVerificationEnabled = false // Deprecated: password registration always verifies the email; kept loadable, unused.
 var GitHubOAuthEnabled = false
 var LinuxDOOAuthEnabled = false
 var WeChatAuthEnabled = false
@@ -123,6 +123,15 @@ var WeChatAccountQRCodeImageURL = ""
 
 var GeetestCaptchaId = ""
 var GeetestCaptchaKey = ""
+
+// GeetestCheckMode decides when an enabled GeeTest check runs: on every
+// protected request (always) or only when the server sees a risk signal (risk).
+var GeetestCheckMode = GeetestCheckModeAlways
+
+const (
+	GeetestCheckModeAlways = "always"
+	GeetestCheckModeRisk   = "risk"
+)
 
 var TelegramBotToken = ""
 var TelegramBotName = ""

@@ -160,7 +160,6 @@ export type SiteSettings = {
 export type AuthSettings = {
   PasswordLoginEnabled: boolean
   PasswordRegisterEnabled: boolean
-  EmailVerificationEnabled: boolean
   RegisterEnabled: boolean
   EmailDomainRestrictionEnabled: boolean
   EmailAliasRestrictionEnabled: boolean
@@ -194,6 +193,8 @@ export type AuthSettings = {
   WeChatServerToken: string
   WeChatAccountQRCodeImageURL: string
   GeetestCheckEnabled: boolean
+  /** `always` or `risk`; see the Bot Protection section. */
+  GeetestCheckMode: string
   GeetestCaptchaId: string
   GeetestCaptchaKey: string
   'passkey.enabled': boolean

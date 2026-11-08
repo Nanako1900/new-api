@@ -33,7 +33,6 @@ const AUTH_SECTIONS = [
         defaultValues={{
           PasswordLoginEnabled: settings.PasswordLoginEnabled,
           PasswordRegisterEnabled: settings.PasswordRegisterEnabled,
-          EmailVerificationEnabled: settings.EmailVerificationEnabled,
           RegisterEnabled: settings.RegisterEnabled,
           EmailDomainRestrictionEnabled: settings.EmailDomainRestrictionEnabled,
           EmailAliasRestrictionEnabled: settings.EmailAliasRestrictionEnabled,
@@ -109,6 +108,8 @@ const AUTH_SECTIONS = [
       <BotProtectionSection
         defaultValues={{
           GeetestCheckEnabled: settings.GeetestCheckEnabled,
+          GeetestCheckMode:
+            settings.GeetestCheckMode === 'risk' ? 'risk' : 'always',
           GeetestCaptchaId: settings.GeetestCaptchaId,
           GeetestCaptchaKey: settings.GeetestCaptchaKey,
         }}

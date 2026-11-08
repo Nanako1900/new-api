@@ -83,6 +83,16 @@ if (!Range.prototype.getBoundingClientRect) {
   })
 }
 
+// jsdom has no layout, so no element is ever under a point. input-otp probes
+// this to make room for password manager badges.
+if (!document.elementFromPoint) {
+  Object.defineProperty(document, 'elementFromPoint', {
+    configurable: true,
+    writable: true,
+    value: () => null,
+  })
+}
+
 window.requestAnimationFrame = (callback: FrameRequestCallback) =>
   window.setTimeout(() => callback(performance.now()), 0)
 window.cancelAnimationFrame = (handle: number) => window.clearTimeout(handle)
