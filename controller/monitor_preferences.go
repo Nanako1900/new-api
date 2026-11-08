@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
 )
@@ -163,18 +164,11 @@ func UpdateMonitorPreferences(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetInt("id")
-	user, err := model.GetUserById(userID, true)
-	if err != nil {
+	if err := model.UpdateUserSettingWith(c.GetInt("id"), func(setting *dto.UserSetting) {
+		setting.MonitorPreferences = stored
+	}); err != nil {
 		writeMonitorError(c, err)
 		return
 	}
-	// A read-modify-write of the whole setting, like the other setting writers.
-	setting := user.GetSetting()
-	setting.MonitorPreferences = stored
-	if err := model.UpdateUserSetting(userID, setting); err != nil {
-		writeMonitorError(c, err)
-		return
-	}
-	writeMonitorPreferences(c, setting.MonitorPreferences)
+	writeMonitorPreferences(c, stored)
 }

@@ -118,14 +118,9 @@ func normalizeAvatarImage(dataURL string) (*dto.UserAvatar, string) {
 }
 
 func saveUserAvatar(c *gin.Context, userId int, avatar *dto.UserAvatar) bool {
-	user, err := model.GetUserById(userId, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return false
-	}
-	settings := user.GetSetting()
-	settings.Avatar = avatar
-	if err := model.UpdateUserSetting(userId, settings); err != nil {
+	if err := model.UpdateUserSettingWith(userId, func(setting *dto.UserSetting) {
+		setting.Avatar = avatar
+	}); err != nil {
 		common.ApiError(c, err)
 		return false
 	}

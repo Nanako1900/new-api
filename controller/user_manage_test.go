@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 
 	"github.com/gin-gonic/gin"
@@ -843,4 +845,102 @@ func TestResetAvatarGoesBackToTheDefault(t *testing.T) {
 			assert.Equal(t, avatar, savedAvatar(t, db, target))
 		})
 	}
+}
+
+// Two setting writers that overlap both keep their change. An administrator
+// removes a user's avatar while the user saves the notification form with a
+// rotated webhook secret. The removal is held between its read and its write
+// until the form has started reading: on MySQL and PostgreSQL until the form
+// sends its locking read, on SQLite (where BEGIN IMMEDIATE blocks before any
+// query) until the form has read the user. The form must not finish during the
+// hold, and neither the old avatar nor the old secret may come back.
+func TestOverlappingSettingWritersKeepBothChanges(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		// Production SQLite runs WAL with a busy timeout and BEGIN IMMEDIATE
+		// (common.SQLitePath), so a second writer waits instead of failing.
+		_, params, _ := strings.Cut(common.SQLitePath, "?")
+		var err error
+		db, err = gorm.Open(sqlite.Open(t.TempDir()+"/setting.db?"+params), &gorm.Config{})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			if sqlDB, err := db.DB(); err == nil {
+				_ = sqlDB.Close()
+			}
+		})
+		require.NoError(t, db.AutoMigrate(&model.User{}))
+		model.DB = db
+	}
+	user := createAvatarTestUser(t, db, "setting-race", common.RoleCommonUser, dto.UserSetting{
+		NotifyType: dto.NotifyTypeWebhook, WebhookUrl: "https://example.com/hook", WebhookSecret: "old-secret",
+		Avatar: &dto.UserAvatar{Kind: "cat", Cat: map[string]string{"coat": "calico"}},
+	})
+
+	var holding, watching atomic.Bool
+	var readOnce sync.Once
+	held, formRead, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register("test:hold_first_setting_write", func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" && holding.CompareAndSwap(false, true) {
+			close(held)
+			<-release
+		}
+	}))
+	sqliteDB := common.UsingMainDatabase(common.DatabaseTypeSQLite)
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:form_sends_locking_read", func(tx *gorm.DB) {
+		_, locking := tx.Statement.Clauses["FOR"]
+		if !sqliteDB && locking && tx.Statement.Table == "users" && watching.Load() {
+			readOnce.Do(func() { close(formRead) })
+		}
+	}))
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register("test:form_read_user", func(tx *gorm.DB) {
+		if sqliteDB && tx.Statement.Table == "users" && watching.Load() {
+			readOnce.Do(func() { close(formRead) })
+		}
+	}))
+
+	removal := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodDelete, "/api/user/"+strconv.Itoa(user.Id)+"/avatar", nil)
+		c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(user.Id)}}
+		c.Set("id", user.Id+1000)
+		c.Set("role", common.RoleAdminUser)
+		AdminResetUserAvatar(c)
+		removal <- recorder
+	}()
+	select {
+	case <-held:
+	case recorder := <-removal:
+		require.FailNow(t, "the avatar removal finished without writing the setting", recorder.Body.String())
+	}
+
+	watching.Store(true)
+	form := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/user/setting", strings.NewReader(
+			`{"notify_type":"webhook","webhook_url":"https://example.com/hook","webhook_secret":"rotated-secret"}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("id", user.Id)
+		UpdateUserSetting(c)
+		form <- recorder
+	}()
+	select {
+	case <-formRead:
+	case recorder := <-form:
+		// Let the removal finish before failing: it must not touch the database
+		// after the cleanup swaps it out.
+		close(release)
+		<-removal
+		require.FailNow(t, "the notification form finished while the avatar removal held the user", recorder.Body.String())
+	}
+	close(release)
+
+	assert.Contains(t, (<-removal).Body.String(), `"success":true`)
+	assert.Contains(t, (<-form).Body.String(), `"success":true`)
+	require.NoError(t, db.First(&user, user.Id).Error)
+	assert.Nil(t, user.GetSetting().Avatar, "the removed avatar came back")
+	assert.Equal(t, "rotated-secret", user.GetSetting().WebhookSecret, "the rotated secret was lost")
 }
