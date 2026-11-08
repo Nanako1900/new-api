@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ContentSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { AlertsSection } from './alerts-section'
 import { AnnouncementsSection } from './announcements-section'
 import { ApiInfoSection } from './api-info-section'
 import { ChatSettingsSection } from './chat-settings-section'
@@ -61,6 +62,13 @@ const CONTENT_SECTIONS = [
         enabled={settings['console_setting.announcements_enabled']}
         data={settings['console_setting.announcements']}
       />
+    ),
+  },
+  {
+    id: 'alerts',
+    titleKey: 'Alerts',
+    build: (settings: ContentSettings) => (
+      <AlertsSection data={settings['console_setting.alerts']} />
     ),
   },
   {
