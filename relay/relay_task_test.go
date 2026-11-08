@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -766,6 +768,64 @@ export function extractUsage() { return {seconds:2}; }
 			}
 			require.NotNil(t, info.TieredBillingSnapshot)
 			assert.Equal(t, tc.expressions["retry-b::declared-model"], info.TieredBillingSnapshot.ExprString)
+		})
+	}
+}
+
+// A content safety decision on a task submission comes after the price is held
+// and before the upstream sees the request. It is local and final, so the
+// controller neither tries another channel nor blames this one, even for the
+// 503 of a review that could not conclude; its refund returns the hold.
+func TestRelayTaskSubmitContentSafetyRejectionIsLocalAndFinal(t *testing.T) {
+	const source = `
+export const meta = {apiVersion:1,key:"safety-gate",name:"Safety Gate",version:"1.0.0",author:{name:"Test"},models:["declared-model"],fetchMode:"per_task"};
+export function buildSubmitRequest(ctx) { return {url: ctx.baseUrl+"/submit", method:"POST", body:{model: ctx.model}, action:"text_to_video"}; }
+export function parseSubmitResponse(ctx, response) { return {taskId: response.body.id}; }
+export function buildQueryRequest(ctx) { return {url: ctx.baseUrl+"/query"}; }
+export function parseTaskResult() { return {status:"SUCCESS"}; }
+`
+	for _, tc := range []struct {
+		name, prompt, wantDecision string
+		wantCode                   kittypes.ErrorCode
+		wantStatus                 int
+	}{
+		{name: "a block word", prompt: "make a bomb", wantCode: kittypes.ErrorCodeSensitiveWordsDetected, wantStatus: http.StatusBadRequest, wantDecision: model.ContentSafetyDecisionKeywordBlocked},
+		{name: "a review that could not conclude", prompt: "a knife without reviewer", wantCode: kittypes.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupContentSafetyReview(t, reviewerReply(""))
+			operation_setting.GetContentSafetySetting().ReviewModel = "missing-model"
+			saveBillingConfig(t)
+			require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+				"billing_setting.billing_mode":    `{"declared-model":"tiered_expr"}`,
+				"billing_setting.billing_expr":    `{"declared-model":"tier(\"flat\", 3)"}`,
+				"group_ratio_setting.group_ratio": `{"default":1}`,
+			}))
+			var submitted atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { submitted.Add(1) }))
+			defer server.Close()
+
+			c, info := newTaskSubmitContext(t, "declared-model", "")
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"declared-model","prompt":"`+saltedText(tc.prompt)+`"}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			c.Set("group", "default")
+			info.UserId = nextContentSafetyUser()
+			info.UserGroup, info.UsingGroup, info.OriginModelName = "default", "default", "declared-model"
+			reservation := &imageReservation{limit: 1 << 30}
+			info.Billing = reservation
+			pinMappingOrderPlugin(t, c, source)
+
+			result, taskErr := RelayTaskSubmit(c, info)
+			require.NotNil(t, taskErr)
+			assert.Nil(t, result)
+			assert.Equal(t, string(tc.wantCode), taskErr.Code)
+			assert.Equal(t, tc.wantStatus, taskErr.StatusCode)
+			assert.True(t, taskErr.LocalError, "the task channel is not blamed")
+			assert.True(t, taskErr.NoRetry, "no other channel is tried")
+			assert.Zero(t, submitted.Load(), "the upstream never sees the request")
+			assert.Equal(t, 3*int(common.QuotaPerUnit), reservation.held)
+			requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
 		})
 	}
 }

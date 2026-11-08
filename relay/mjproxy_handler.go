@@ -549,6 +549,9 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			Description: "quota_not_enough",
 		}
 	}
+	if apiErr := EnforceContentSafetyText(c, relayInfo, midjRequest.Prompt); apiErr != nil {
+		return service.MidjourneyErrorWrapper(constant.MjRequestError, apiErr.Error())
+	}
 
 	service.RequestPolicy(c).BeginAttempt(&model.Channel{Id: c.GetInt("channel_id")}, relayInfo.UsingGroup)
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)

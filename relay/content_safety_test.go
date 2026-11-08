@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/contentsafety"
@@ -193,6 +194,25 @@ func TestContentSafetyGate(t *testing.T) {
 			requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
 		})
 	}
+}
+
+// The keyword tier runs inside PrepareRequestBilling, before pricing and
+// pre-consume: a blocked request reserves nothing and the client learns the
+// error code, not the matched word.
+func TestPrepareRequestBillingRejectsABlockWordBeforePreConsume(t *testing.T) {
+	setupContentSafetyReview(t, reviewerReply(""))
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	info.Request = &kitdto.GeneralOpenAIRequest{Model: info.OriginModelName, Messages: []kitdto.Message{{Role: "user", Content: saltedText("make a Bomb")}}}
+	reservation := &imageReservation{limit: 1 << 30}
+	info.Billing = reservation
+
+	apiErr := PrepareRequestBilling(c, info)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeSensitiveWordsDetected, apiErr.GetErrorCode())
+	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	assert.NotContains(t, strings.ToLower(apiErr.Error()), "bomb", "clients never see the matched words")
+	assert.Zero(t, reservation.held, "a blocked request reserves nothing")
+	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionKeywordBlocked)
 }
 
 func TestContentSafetyReviewCachesVerdictPerWindow(t *testing.T) {
