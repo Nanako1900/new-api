@@ -120,3 +120,39 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildRequestPolicyValidatesContentSafety(t *testing.T) {
+	const p = operation_setting.ContentSafetyOptionPrefix
+	enabled := map[string]string{p + "review_enabled": "true", p + "review_model": "judge", p + "review_group": "default", p + "review_words": "knife"}
+	with := func(key, value string) map[string]string {
+		options := maps.Clone(enabled)
+		options[key] = value
+		return options
+	}
+	for _, tc := range []struct {
+		name    string
+		options map[string]string
+		wantErr bool
+	}{
+		{name: "defaults are valid", options: nil},
+		{name: "enabled with model, group and words", options: enabled},
+		{name: "enabled without model", options: with(p+"review_model", " "), wantErr: true},
+		{name: "enabled without review words", options: with(p+"review_words", ""), wantErr: true},
+		{name: "enabled with an unknown group", options: with(p+"review_group", "no-such-group"), wantErr: true},
+		{name: "timeout above its bound", options: map[string]string{p + "review_timeout_seconds": "61"}, wantErr: true},
+		{name: "window below its bound", options: map[string]string{p + "window_chars": "49"}, wantErr: true},
+		{name: "zero cache ttl disables the cache", options: map[string]string{p + "cache_ttl_seconds": "0"}},
+		{name: "non-integer concurrency", options: map[string]string{p + "review_max_concurrency": "1.5"}, wantErr: true},
+		{name: "unknown content safety field", options: map[string]string{p + "mode": "strict"}, wantErr: true},
+		{name: "non-boolean switch", options: map[string]string{p + "review_enabled": "yes"}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := BuildRequestPolicy(tc.options)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}

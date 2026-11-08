@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"gorm.io/gorm"
 )
 
@@ -40,8 +41,9 @@ var requestPolicyDefaults = requestPolicyDefaultOptions()
 func requestPolicyDefaultOptions() map[string]string {
 	defaults := make(map[string]string)
 	for prefix, value := range map[string]any{
-		"channel_affinity_setting.": operation_setting.GetChannelAffinitySetting(),
-		"monitor_setting.":          operation_setting.GetMonitorSetting(),
+		"channel_affinity_setting.":                 operation_setting.GetChannelAffinitySetting(),
+		"monitor_setting.":                          operation_setting.GetMonitorSetting(),
+		operation_setting.ContentSafetyOptionPrefix: operation_setting.GetContentSafetySetting(),
 	} {
 		fields, err := config.ConfigToMap(value)
 		if err != nil {
@@ -66,6 +68,9 @@ func requestPolicyDefaultOptions() map[string]string {
 
 func IsRequestPolicyOption(key string) bool {
 	if strings.HasPrefix(key, "channel_affinity_setting.") {
+		return true
+	}
+	if strings.HasPrefix(key, operation_setting.ContentSafetyOptionPrefix) {
 		return true
 	}
 	switch key {
@@ -153,6 +158,13 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 		if word = strings.TrimSpace(word); word != "" {
 			snapshot.TextKeywords = append(snapshot.TextKeywords, word)
 		}
+	}
+	if err := operation_setting.ValidateContentSafetyOptions(raw); err != nil {
+		return nil, err
+	}
+	if raw[operation_setting.ContentSafetyOptionPrefix+"review_enabled"] == "true" &&
+		!ratio_setting.ContainsGroupRatio(raw[operation_setting.ContentSafetyOptionPrefix+"review_group"]) {
+		return nil, fmt.Errorf("content safety review group does not exist")
 	}
 	if err := operation_setting.ValidateChannelTestConcurrency(raw["monitor_setting.channel_test_concurrency"]); err != nil {
 		return nil, err
