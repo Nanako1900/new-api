@@ -1257,18 +1257,34 @@ ENGINE = MergeTree()
 PARTITION BY toYYYYMM(toDateTime(created_at))
 ORDER BY (created_at, request_id)`
 
+// newContentSafetyLogTestRouter mirrors the production chain of the route.
+func newContentSafetyLogTestRouter() *gin.Engine {
+	router := gin.New()
+	router.GET("/api/content_safety/logs", middleware.DisableCache(), middleware.AdminAuth(), middleware.RequirePermission(authz.AuditRead), GetContentSafetyLogs)
+	return router
+}
+
+func grantAuditRead(t *testing.T, userId int) {
+	t.Helper()
+	require.NoError(t, model.DB.Transaction(func(tx *gorm.DB) error {
+		return authz.SetUserPermissionsInTx(tx, userId, authz.PermissionsMap{authz.ResourceAudit: {authz.ActionRead: true}})
+	}))
+	require.NoError(t, authz.ReloadPolicy())
+}
+
 func TestGetContentSafetyLogsFiltersAndRejectsInvalidQueries(t *testing.T) {
-	_, pat := setupAccessTokenAudit(t)
+	admin, pat := setupAccessTokenAudit(t)
+	grantAuditRead(t, admin.Id)
 	require.NoError(t, model.MigrateContentSafetyLogs())
 	now := time.Now().Unix()
 	model.RecordContentSafetyLog(model.ContentSafetyLog{CreatedAt: now, RequestId: "req-blocked", UserId: 7, Decision: model.ContentSafetyDecisionKeywordBlocked})
 	model.RecordContentSafetyLog(model.ContentSafetyLog{CreatedAt: now, RequestId: "req-passed", UserId: 7, Decision: model.ContentSafetyDecisionReviewPassed})
-	router := gin.New()
-	router.GET("/api/content_safety/logs", middleware.AdminAuth(), GetContentSafetyLogs)
+	router := newContentSafetyLogTestRouter()
 
 	var result struct {
-		Success bool
-		Data    struct {
+		Success    bool
+		MessageKey string `json:"message_key"`
+		Data       struct {
 			Items []model.ContentSafetyLog
 			Total int
 		}
@@ -1289,7 +1305,43 @@ func TestGetContentSafetyLogsFiltersAndRejectsInvalidQueries(t *testing.T) {
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
 	assert.Equal(t, 2, result.Data.Total)
 
-	for _, query := range []string{"decision=bogus", "start_timestamp=2&end_timestamp=1", "user_id=abc", "user_id=0", "request_id=" + strings.Repeat("x", 65)} {
-		assert.Contains(t, auditRequest(router, "GET", "/api/content_safety/logs?"+query, pat).Body.String(), `"success":false`, query)
+	for _, query := range []string{"decision=bogus", "start_timestamp=2&end_timestamp=1", "user_id=abc", "user_id=0", "request_id=" + strings.Repeat("x", 65), "model=" + strings.Repeat("m", 256)} {
+		result.MessageKey = ""
+		require.NoError(t, common.Unmarshal(auditRequest(router, "GET", "/api/content_safety/logs?"+query, pat).Body.Bytes(), &result))
+		assert.False(t, result.Success, query)
+		assert.Equal(t, "Invalid content safety log query", result.MessageKey, query)
 	}
+}
+
+func TestGetContentSafetyLogsHidesRootUsersFromNonRootAuditors(t *testing.T) {
+	admin, pat := setupAccessTokenAudit(t)
+	rootToken := "root-safety-token"
+	root := &model.User{Username: "root-safety", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &rootToken, AffCode: "root-safety"}
+	require.NoError(t, model.DB.Create(root).Error)
+	commonUser := &model.User{Username: "common-safety", Role: 1, Status: 1, AuthVersion: 1, AffCode: "common-safety"}
+	require.NoError(t, model.DB.Create(commonUser).Error)
+	require.NoError(t, model.MigrateContentSafetyLogs())
+	model.RecordContentSafetyLog(model.ContentSafetyLog{RequestId: "root-row", UserId: root.Id, Decision: model.ContentSafetyDecisionKeywordBlocked, Snippets: `["root prompt excerpt"]`})
+	model.RecordContentSafetyLog(model.ContentSafetyLog{RequestId: "common-row", UserId: commonUser.Id, Decision: model.ContentSafetyDecisionKeywordBlocked})
+	router := newContentSafetyLogTestRouter()
+	const path = "/api/content_safety/logs"
+
+	assert.Equal(t, http.StatusForbidden, auditRequest(router, "GET", path, pat).Code)
+
+	grantAuditRead(t, admin.Id)
+	for _, query := range []string{"", "?request_id=root-row", "?user_id=" + fmt.Sprint(root.Id)} {
+		response := auditRequest(router, "GET", path+query, pat)
+		require.Equal(t, http.StatusOK, response.Code, query)
+		assert.NotContains(t, response.Body.String(), "root-row", query)
+		assert.NotContains(t, response.Body.String(), "root prompt excerpt", query)
+	}
+	response := auditRequest(router, "GET", path, pat)
+	assert.Contains(t, response.Body.String(), "common-row")
+	assert.Contains(t, response.Body.String(), `"total":1`)
+
+	rootResponse := auditRequest(router, "GET", path, rootToken)
+	require.Equal(t, http.StatusOK, rootResponse.Code)
+	assert.Contains(t, rootResponse.Body.String(), "root-row")
+	assert.Contains(t, rootResponse.Body.String(), "common-row")
+	assert.Contains(t, rootResponse.Body.String(), `"total":2`)
 }

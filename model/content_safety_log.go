@@ -103,10 +103,22 @@ func RecordContentSafetyLog(entry ContentSafetyLog) {
 	}
 }
 
-func GetContentSafetyLogs(filter ContentSafetyLogFilter, start, limit int) ([]*ContentSafetyLog, int64, error) {
+// GetContentSafetyLogs pages matching records. A viewer below root never sees
+// records of root users, like GetAuditLogs.
+func GetContentSafetyLogs(filter ContentSafetyLogFilter, start, limit int, viewerRole int) ([]*ContentSafetyLog, int64, error) {
 	start = max(start, 0)
 	limit = min(max(limit, 1), 100)
 	query := LOG_DB.Model(&ContentSafetyLog{})
+	if viewerRole < common.RoleRootUser {
+		var rootIds []int
+		if err := DB.Model(&User{}).Where("role >= ?", common.RoleRootUser).Pluck("id", &rootIds).Error; err != nil {
+			return nil, 0, err
+		}
+		// An empty slice would render as NOT IN (NULL) and match nothing.
+		if len(rootIds) > 0 {
+			query = query.Where("user_id NOT IN ?", rootIds)
+		}
+	}
 	if filter.RequestId != "" {
 		query = query.Where("request_id = ?", filter.RequestId)
 	}

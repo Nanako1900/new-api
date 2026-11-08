@@ -13,7 +13,7 @@ import (
 func GetContentSafetyLogs(c *gin.Context) {
 	page := common.GetPageQuery(c)
 	filter := model.ContentSafetyLogFilter{Decision: c.Query("decision"), Model: c.Query("model"), RequestId: c.Query("request_id")}
-	valid := page.Page >= 1 && page.PageSize >= 1 && page.Page <= 100000000 && model.ValidContentSafetyDecision(filter.Decision) && len(filter.RequestId) <= 64
+	valid := page.Page >= 1 && page.PageSize >= 1 && page.Page <= 100000000 && model.ValidContentSafetyDecision(filter.Decision) && len(filter.RequestId) <= 64 && len(filter.Model) <= 255
 	if raw := c.Query("user_id"); raw != "" {
 		userId, err := strconv.Atoi(raw)
 		valid = valid && err == nil && userId > 0
@@ -30,7 +30,7 @@ func GetContentSafetyLogs(c *gin.Context) {
 		common.ApiErrorT(c, "Invalid content safety log query")
 		return
 	}
-	logs, total, err := model.GetContentSafetyLogs(filter, page.GetStartIdx(), page.GetPageSize())
+	logs, total, err := model.GetContentSafetyLogs(filter, page.GetStartIdx(), page.GetPageSize(), c.GetInt("role"))
 	if err != nil {
 		common.ApiError(c, err)
 		return

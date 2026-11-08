@@ -138,7 +138,7 @@ func requireContentSafetyDecisions(t *testing.T, userId int, want ...string) []*
 	var logs []*model.ContentSafetyLog
 	require.Eventually(t, func() bool {
 		var err error
-		logs, _, err = model.GetContentSafetyLogs(model.ContentSafetyLogFilter{UserId: userId}, 0, 10)
+		logs, _, err = model.GetContentSafetyLogs(model.ContentSafetyLogFilter{UserId: userId}, 0, 10, common.RoleRootUser)
 		if err != nil {
 			return false
 		}

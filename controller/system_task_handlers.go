@@ -180,9 +180,11 @@ func (contentSafetyLogCleanupHandler) Run(ctx context.Context, task *model.Syste
 	days := operation_setting.GetContentSafetySetting().Bounded().LogRetentionDays
 	cutoff := time.Now().AddDate(0, 0, -days).Unix()
 	deleted, err := model.DeleteContentSafetyLogsBefore(ctx, cutoff)
+	result := map[string]any{"deleted": deleted, "cutoff": cutoff}
 	if err != nil {
-		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		common.SysError(common.LogText("content safety log cleanup failed (cutoff=%d, deleted=%d): %v", cutoff, deleted, err))
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
 		return
 	}
-	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, map[string]any{"deleted": deleted, "cutoff": cutoff}, nil)
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
 }

@@ -951,7 +951,7 @@ func TestResponsesWebSocketContentReviewRejectionRefundsReservation(t *testing.T
 		}
 	}
 	require.Eventually(t, func() bool {
-		logs, _, err := model.GetContentSafetyLogs(model.ContentSafetyLogFilter{UserId: fixture.user.Id, Decision: model.ContentSafetyDecisionReviewRejected}, 0, 10)
+		logs, _, err := model.GetContentSafetyLogs(model.ContentSafetyLogFilter{UserId: fixture.user.Id, Decision: model.ContentSafetyDecisionReviewRejected}, 0, 10, common.RoleRootUser)
 		return err == nil && len(logs) == 1
 	}, 3*time.Second, 20*time.Millisecond)
 	assert.Zero(t, fixture.connections.Load(), "the upstream is never dialed")
