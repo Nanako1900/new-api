@@ -2,8 +2,11 @@ package model
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
@@ -15,6 +18,8 @@ import (
 	"gorm.io/gorm/schema"
 )
 
+// MySQL and PostgreSQL DSNs must point at a dedicated database: index names
+// idx_csl_* are schema-wide on PostgreSQL and the test drops the table.
 func TestContentSafetyLogDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
@@ -68,12 +73,52 @@ func TestContentSafetyLogDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), total)
 
-			deleted, err := DeleteContentSafetyLogsBefore(context.Background(), 150)
-			require.NoError(t, err)
-			assert.Equal(t, int64(1), deleted)
-			_, total, err = GetContentSafetyLogs(ContentSafetyLogFilter{}, 0, 10)
+			_, total, err = GetContentSafetyLogs(ContentSafetyLogFilter{EndTimestamp: 150, Model: "gpt-test"}, 0, 10)
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), total)
+			_, total, err = GetContentSafetyLogs(ContentSafetyLogFilter{EndTimestamp: 150, Model: "other"}, 0, 10)
+			require.NoError(t, err)
+			assert.Equal(t, int64(0), total)
+
+			RecordContentSafetyLog(ContentSafetyLog{EventId: "evt-a", RequestId: "req-find", CreatedAt: 300, UserId: 9})
+			RecordContentSafetyLog(ContentSafetyLog{EventId: "evt-b", CreatedAt: 300, UserId: 9})
+			logs, total, err = GetContentSafetyLogs(ContentSafetyLogFilter{RequestId: "req-find"}, 0, 10)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), total)
+			assert.Equal(t, "evt-a", logs[0].EventId)
+			logs, _, err = GetContentSafetyLogs(ContentSafetyLogFilter{}, 0, 3)
+			require.NoError(t, err)
+			require.Len(t, logs, 3)
+			assert.Equal(t, []string{"evt-b", "evt-a"}, []string{logs[0].EventId, logs[1].EventId})
+			assert.Equal(t, int64(200), logs[2].CreatedAt)
+			logs, _, err = GetContentSafetyLogs(ContentSafetyLogFilter{}, -5, 0)
+			require.NoError(t, err)
+			assert.Len(t, logs, 1, "limit below 1 is clamped to 1 and negative start to 0")
+
+			RecordContentSafetyLog(ContentSafetyLog{
+				EventId: "evt-long", CreatedAt: 400, UserId: 10,
+				Model:       strings.Repeat("模", 300),
+				RequestPath: strings.Repeat("p", 300),
+				TokenName:   strings.Repeat("令", 200),
+			})
+			logs, _, err = GetContentSafetyLogs(ContentSafetyLogFilter{UserId: 10}, 0, 10)
+			require.NoError(t, err)
+			require.Len(t, logs, 1)
+			assert.Equal(t, 255, utf8.RuneCountInString(logs[0].Model))
+			assert.Equal(t, 255, utf8.RuneCountInString(logs[0].RequestPath))
+			assert.Equal(t, 128, utf8.RuneCountInString(logs[0].TokenName))
+
+			old := make([]ContentSafetyLog, 2050)
+			for i := range old {
+				old[i] = ContentSafetyLog{EventId: fmt.Sprintf("old-%05d", i), CreatedAt: 10, UserId: 11}
+			}
+			require.NoError(t, db.CreateInBatches(old, 200).Error)
+			deleted, err := DeleteContentSafetyLogsBefore(context.Background(), 150)
+			require.NoError(t, err)
+			assert.Equal(t, int64(2051), deleted)
+			_, total, err = GetContentSafetyLogs(ContentSafetyLogFilter{}, 0, 10)
+			require.NoError(t, err)
+			assert.Equal(t, int64(4), total)
 		})
 	}
 }

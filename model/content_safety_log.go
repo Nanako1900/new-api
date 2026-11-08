@@ -21,6 +21,8 @@ const (
 	ContentSafetyFailureUpstreamError  = "upstream_error"
 )
 
+const contentSafetyDeleteBatch = 1000
+
 var contentSafetyDecisions = []string{
 	ContentSafetyDecisionKeywordBlocked,
 	ContentSafetyDecisionReviewPassed,
@@ -33,15 +35,15 @@ var contentSafetyDecisions = []string{
 // excerpts around hits, never the whole request.
 type ContentSafetyLog struct {
 	Id              int    `json:"id"`
-	EventId         string `json:"event_id" gorm:"type:varchar(64);uniqueIndex"`
-	CreatedAt       int64  `json:"created_at" gorm:"type:bigint;index;index:idx_csl_user_time,priority:2;index:idx_csl_decision_time,priority:2"`
+	EventId         string `json:"event_id" gorm:"type:varchar(64);uniqueIndex;index:idx_csl_time_event,priority:2;index:idx_csl_user_time,priority:3;index:idx_csl_decision_time,priority:3"`
+	CreatedAt       int64  `json:"created_at" gorm:"type:bigint;index:idx_csl_time_event,priority:1;index:idx_csl_user_time,priority:2;index:idx_csl_decision_time,priority:2"`
 	RequestId       string `json:"request_id" gorm:"type:varchar(64);index"`
 	UserId          int    `json:"user_id" gorm:"index:idx_csl_user_time,priority:1"`
 	Username        string `json:"username" gorm:"type:varchar(64)"`
 	TokenId         int    `json:"token_id"`
 	TokenName       string `json:"token_name" gorm:"type:varchar(128)"`
 	UsingGroup      string `json:"group" gorm:"column:using_group;type:varchar(64)"`
-	Model           string `json:"model" gorm:"type:varchar(128);index"`
+	Model           string `json:"model" gorm:"type:varchar(255);index"`
 	RequestPath     string `json:"request_path" gorm:"type:varchar(255)"`
 	Decision        string `json:"decision" gorm:"type:varchar(32);index:idx_csl_decision_time,priority:1"`
 	FailureReason   string `json:"failure_reason" gorm:"type:varchar(32)"`
@@ -58,6 +60,7 @@ type ContentSafetyLog struct {
 
 type ContentSafetyLogFilter struct {
 	UserId         int
+	RequestId      string
 	Decision       string
 	Model          string
 	StartTimestamp int64
@@ -77,6 +80,19 @@ func RecordContentSafetyLog(entry ContentSafetyLog) {
 	if entry.EventId == "" {
 		entry.EventId = common.NewRequestId()
 	}
+	// MySQL strict mode and PostgreSQL reject over-long values, which would lose the record.
+	for _, field := range []struct {
+		value *string
+		width int
+	}{
+		{&entry.EventId, 64}, {&entry.RequestId, 64}, {&entry.Username, 64}, {&entry.TokenName, 128},
+		{&entry.UsingGroup, 64}, {&entry.Model, 255}, {&entry.RequestPath, 255}, {&entry.Decision, 32},
+		{&entry.FailureReason, 32}, {&entry.AiCategory, 64}, {&entry.ReviewModel, 128},
+	} {
+		if runes := []rune(*field.value); len(runes) > field.width {
+			*field.value = string(runes[:field.width])
+		}
+	}
 	if LOG_DB == nil {
 		common.SysError(common.LogText("content safety log write failed (request_id=%s): log database unavailable", entry.RequestId))
 		return
@@ -87,7 +103,12 @@ func RecordContentSafetyLog(entry ContentSafetyLog) {
 }
 
 func GetContentSafetyLogs(filter ContentSafetyLogFilter, start, limit int) ([]*ContentSafetyLog, int64, error) {
+	start = max(start, 0)
+	limit = min(max(limit, 1), 100)
 	query := LOG_DB.Model(&ContentSafetyLog{})
+	if filter.RequestId != "" {
+		query = query.Where("request_id = ?", filter.RequestId)
+	}
 	if filter.UserId > 0 {
 		query = query.Where("user_id = ?", filter.UserId)
 	}
@@ -118,8 +139,24 @@ func GetContentSafetyLogs(filter ContentSafetyLogFilter, start, limit int) ([]*C
 // deletes in one synchronous mutation, like DeleteOldLogBatch.
 func DeleteContentSafetyLogsBefore(ctx context.Context, cutoff int64) (int64, error) {
 	if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		result := LOG_DB.WithContext(ctx).Where("created_at < ?", cutoff).Delete(&ContentSafetyLog{})
-		return result.RowsAffected, result.Error
+		var deleted int64
+		for {
+			var ids []int
+			if err := LOG_DB.WithContext(ctx).Model(&ContentSafetyLog{}).Where("created_at < ?", cutoff).Order("id").Limit(contentSafetyDeleteBatch).Pluck("id", &ids).Error; err != nil {
+				return deleted, err
+			}
+			if len(ids) == 0 {
+				return deleted, nil
+			}
+			result := LOG_DB.WithContext(ctx).Where("id IN ?", ids).Delete(&ContentSafetyLog{})
+			deleted += result.RowsAffected
+			if result.Error != nil {
+				return deleted, result.Error
+			}
+			if err := ctx.Err(); err != nil {
+				return deleted, err
+			}
+		}
 	}
 	var total int64
 	if err := LOG_DB.WithContext(ctx).Model(&ContentSafetyLog{}).Where("created_at < ?", cutoff).Count(&total).Error; err != nil {
