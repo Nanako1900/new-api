@@ -60,6 +60,7 @@ const defaultAuthSettings: AuthSettings = {
   WeChatServerToken: '',
   WeChatAccountQRCodeImageURL: '',
   GeetestCheckEnabled: false,
+  GeetestCheckMode: 'always',
   GeetestCaptchaId: '',
   GeetestCaptchaKey: '',
   'passkey.enabled': false,

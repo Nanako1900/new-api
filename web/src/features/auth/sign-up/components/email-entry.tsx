@@ -34,14 +34,13 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { useCaptcha } from '@/hooks/use-captcha'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
 import { createServerError } from '@/lib/server-error-message'
 
 import { startRegistrationEmail } from '../../api'
-import { AuthCaptcha } from '../../components/auth-captcha'
 import { registrationEmailSchema } from '../../constants'
-import { useAuthCaptcha } from '../../hooks/use-auth-captcha'
 import type { RegistrationEmailFlow } from '../../types'
 
 type EmailEntryValues = z.infer<typeof registrationEmailSchema>
@@ -55,11 +54,11 @@ type EmailEntryProps = {
   onSent: (flow: RegistrationEmailFlow) => void
 }
 
-/** Sign-up step 1, first half: the address to verify and the human check. */
+/** Sign-up step 1, first half: the address to verify. */
 export function EmailEntry(props: EmailEntryProps) {
   const { t } = useTranslation()
   const [isSending, setIsSending] = useState(false)
-  const captcha = useAuthCaptcha()
+  const captcha = useCaptcha()
   const form = useForm<EmailEntryValues>({
     resolver: zodResolver(registrationEmailSchema),
     defaultValues: { email: props.defaultEmail },
@@ -67,12 +66,12 @@ export function EmailEntry(props: EmailEntryProps) {
   const failedMessage = t('Failed to send verification email')
 
   async function onSubmit(values: EmailEntryValues) {
-    const captchaToken = captcha.takeToken()
-    if (captchaToken === null) return
-
     setIsSending(true)
     try {
-      const res = await startRegistrationEmail(values.email, captchaToken)
+      const res = await captcha.run((captchaToken) =>
+        startRegistrationEmail(values.email, captchaToken)
+      )
+      if (!res) return
       if (res.success && res.data) {
         props.onSent(res.data)
         return
@@ -112,12 +111,10 @@ export function EmailEntry(props: EmailEntryProps) {
             </FormItem>
           )}
         />
-        <AuthCaptcha captcha={captcha} />
         <Button
           type='submit'
           className='w-full justify-center gap-2'
-          disabled={isSending || !captcha.ready}
-          {...captcha.gateProps}
+          disabled={isSending}
         >
           {t('Send code')}
           {isSending ? (

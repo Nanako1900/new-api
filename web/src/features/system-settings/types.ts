@@ -193,6 +193,8 @@ export type AuthSettings = {
   WeChatServerToken: string
   WeChatAccountQRCodeImageURL: string
   GeetestCheckEnabled: boolean
+  /** `always` or `risk`; see the Bot Protection section. */
+  GeetestCheckMode: string
   GeetestCaptchaId: string
   GeetestCaptchaKey: string
   'passkey.enabled': boolean

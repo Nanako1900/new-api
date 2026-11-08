@@ -28,11 +28,7 @@ export function captchaHeaders(token?: string): Record<string, string> {
 }
 
 /**
- * Whether the server rejected a request at the captcha check
- * (`CAPTCHA_REQUIRED`, `CAPTCHA_FAILED` or `CAPTCHA_UNAVAILABLE`).
+ * The reply code with which the server asks for a GeeTest result it did not
+ * get. `CAPTCHA_FAILED` and `CAPTCHA_UNAVAILABLE` reject a result it did get.
  */
-export function isCaptchaRejection(response: { code?: unknown }): boolean {
-  return (
-    typeof response.code === 'string' && response.code.startsWith('CAPTCHA_')
-  )
-}
+export const CAPTCHA_REQUIRED_CODE = 'CAPTCHA_REQUIRED'

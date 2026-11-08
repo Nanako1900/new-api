@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,39 +52,84 @@ type geetestValidateReply struct {
 	Msg    string `json:"msg"`
 }
 
-// CaptchaCheck requires a GeeTest v4 result that GeeTest confirms when the
-// check is enabled. It fails closed: a request is rejected when GeeTest cannot
-// be reached or does not confirm the result.
-func CaptchaCheck() gin.HandlerFunc {
+// CaptchaScope names a protected action. In risk mode each scope has its own
+// risk policy (see captchaRiskPolicies).
+type CaptchaScope string
+
+const (
+	CaptchaScopeLogin   CaptchaScope = "login"
+	CaptchaScopeEmail   CaptchaScope = "email"
+	CaptchaScopeCheckin CaptchaScope = "checkin"
+)
+
+// RequireCaptcha decides whether the request may proceed and writes the
+// rejection when it returns false. A GeeTest result sent with the request is
+// always validated, and the check fails closed when GeeTest cannot be reached
+// or does not confirm it. Without a result, mode always rejects the request
+// and mode risk rejects it only when a risk signal of scope fires for subject
+// or the client network, or when the risk store fails. In risk mode a request
+// that proceeds is recorded as an event of scope at once, so parallel requests
+// count against each other; the handler calls WithdrawCaptchaRisk when the
+// request turns out not to be one.
+func RequireCaptcha(c *gin.Context, scope CaptchaScope, subject string) bool {
+	if !common.GeetestCheckEnabled {
+		return true
+	}
+	allowed := false
+	if rawToken := c.GetHeader(CaptchaTokenHeader); rawToken != "" {
+		if !verifySubmittedCaptcha(c, rawToken) {
+			return false
+		}
+		allowed = true
+		c.Set(captchaVerifiedContextKey, true)
+	}
+	if common.GeetestCheckMode == common.GeetestCheckModeRisk {
+		allowed = takeCaptchaRisk(c, scope, captchaRiskSubject(scope, subject))
+	}
+	if !allowed {
+		abortCaptcha(c, captchaRequiredCode, "Please complete the human verification first")
+	}
+	return allowed
+}
+
+// CaptchaGate runs RequireCaptcha for routes whose subject is known before
+// the handler: none for email requests, the signed-in user for check-in.
+// Password login calls RequireCaptcha itself because its subject is the
+// submitted username.
+func CaptchaGate(scope CaptchaScope) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !common.GeetestCheckEnabled {
-			c.Next()
-			return
+		subject := ""
+		if scope == CaptchaScopeCheckin {
+			subject = strconv.Itoa(c.GetInt("id"))
 		}
-		rawToken := c.GetHeader(CaptchaTokenHeader)
-		if rawToken == "" {
-			abortCaptcha(c, captchaRequiredCode, "Please complete the human verification first")
-			return
-		}
-		var result geetestCaptchaResult
-		if len(rawToken) > maxCaptchaTokenLength ||
-			common.UnmarshalJsonStr(rawToken, &result) != nil ||
-			result.LotNumber == "" || result.CaptchaOutput == "" || result.PassToken == "" || result.GenTime == "" {
-			abortCaptcha(c, captchaFailedCode, "Human verification failed, please try again")
-			return
-		}
-		passed, err := validateGeetestCaptcha(c.Request.Context(), result)
-		if err != nil {
-			common.SysError(common.LogText("GeeTest validation failed: %s", err.Error()))
-			abortCaptcha(c, captchaUnavailableCode, "Human verification is temporarily unavailable, please try again later")
-			return
-		}
-		if !passed {
-			abortCaptcha(c, captchaFailedCode, "Human verification failed, please try again")
+		if !RequireCaptcha(c, scope, subject) {
 			return
 		}
 		c.Next()
 	}
+}
+
+// verifySubmittedCaptcha validates a GeeTest result with GeeTest and writes
+// the rejection when it is unusable or not confirmed.
+func verifySubmittedCaptcha(c *gin.Context, rawToken string) bool {
+	var result geetestCaptchaResult
+	if len(rawToken) > maxCaptchaTokenLength ||
+		common.UnmarshalJsonStr(rawToken, &result) != nil ||
+		result.LotNumber == "" || result.CaptchaOutput == "" || result.PassToken == "" || result.GenTime == "" {
+		abortCaptcha(c, captchaFailedCode, "Human verification failed, please try again")
+		return false
+	}
+	passed, err := validateGeetestCaptcha(c.Request.Context(), result)
+	if err != nil {
+		common.SysError(common.LogText("GeeTest validation failed: %s", err.Error()))
+		abortCaptcha(c, captchaUnavailableCode, "Human verification is temporarily unavailable, please try again later")
+		return false
+	}
+	if !passed {
+		abortCaptcha(c, captchaFailedCode, "Human verification failed, please try again")
+		return false
+	}
+	return true
 }
 
 func abortCaptcha(c *gin.Context, code string, key string) {

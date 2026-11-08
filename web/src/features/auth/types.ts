@@ -62,6 +62,8 @@ export interface BindEmailPayload {
 export interface LoginResponse {
   success: boolean
   message: string
+  /** Stable error code, such as `CAPTCHA_REQUIRED` */
+  code?: string
   data?: LoginResult
 }
 
@@ -133,6 +135,7 @@ export interface SystemStatus {
     WeChatAccountQRCodeImageURL?: string
     geetest_check?: boolean
     geetest_captcha_id?: string
+    geetest_check_mode?: 'always' | 'risk'
     email_verification?: boolean
     email_delivery_configured?: boolean
     self_use_mode_enabled?: boolean
@@ -181,6 +184,8 @@ export interface SystemStatus {
   WeChatAccountQRCodeImageURL?: string
   geetest_check?: boolean
   geetest_captcha_id?: string
+  /** `always`: every guarded request needs a pass; `risk`: only when the server asks. */
+  geetest_check_mode?: 'always' | 'risk'
   email_verification?: boolean
   /** Whether the server can send email (SMTP or Resend); password sign-up needs it. */
   email_delivery_configured?: boolean

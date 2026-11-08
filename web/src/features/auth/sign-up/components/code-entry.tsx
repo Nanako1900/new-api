@@ -39,6 +39,7 @@ import {
   InputOTPGroup,
   InputOTPSlot,
 } from '@/components/ui/input-otp'
+import { useCaptcha } from '@/hooks/use-captcha'
 import { useCountdown } from '@/hooks/use-countdown'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
@@ -46,13 +47,11 @@ import { createServerError } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { startRegistrationEmail, verifyRegistrationEmail } from '../../api'
-import { AuthCaptcha } from '../../components/auth-captcha'
 import {
   OTP_LENGTH,
   REGISTRATION_RESEND_SECONDS,
   registrationCodeSchema,
 } from '../../constants'
-import { useAuthCaptcha } from '../../hooks/use-auth-captcha'
 import type { RegistrationEmailFlow } from '../../types'
 import {
   endsEmailCheck,
@@ -76,7 +75,7 @@ export function CodeEntry(props: CodeEntryProps) {
   const { t } = useTranslation()
   const [isVerifying, setIsVerifying] = useState(false)
   const [isResending, setIsResending] = useState(false)
-  const captcha = useAuthCaptcha()
+  const captcha = useCaptcha()
   const resend = useCountdown()
   const startResendCountdown = resend.start
   const form = useForm<CodeEntryValues>({
@@ -124,13 +123,13 @@ export function CodeEntry(props: CodeEntryProps) {
   }
 
   async function handleResend() {
-    const captchaToken = captcha.takeToken()
-    if (captchaToken === null) return
-
     const failedMessage = t('Failed to send verification email')
     setIsResending(true)
     try {
-      const res = await startRegistrationEmail(props.flow.email, captchaToken)
+      const res = await captcha.run((captchaToken) =>
+        startRegistrationEmail(props.flow.email, captchaToken)
+      )
+      if (!res) return
       if (res.success && res.data) {
         toast.success(sentMessage)
         props.onResent(res.data)
@@ -200,7 +199,6 @@ export function CodeEntry(props: CodeEntryProps) {
           )}
           {t('Continue')}
         </Button>
-        {!resend.isActive && <AuthCaptcha captcha={captcha} />}
         <div className='flex flex-wrap items-center justify-between gap-2'>
           <Button
             type='button'
@@ -212,9 +210,8 @@ export function CodeEntry(props: CodeEntryProps) {
           <Button
             type='button'
             variant='outline'
-            disabled={isResending || resend.isActive || !captcha.ready}
+            disabled={isResending || resend.isActive}
             onClick={() => void handleResend()}
-            {...(resend.isActive ? {} : captcha.gateProps)}
           >
             {isResending && (
               <Loader2 className='animate-spin' aria-hidden='true' />
