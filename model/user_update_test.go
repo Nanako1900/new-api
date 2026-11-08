@@ -43,7 +43,7 @@ func createUserBindTestUser(t *testing.T) User {
 	return user
 }
 
-func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing.T) {
+func TestUserUpdateDoesNotOverwriteConcurrentAccountingTokenOrSettingChanges(t *testing.T) {
 	setupUserUpdateTestState(t)
 
 	user := User{
@@ -58,6 +58,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 		AffCount:        2,
 		AffQuota:        800,
 		AffHistoryQuota: 1200,
+		Setting:         `{"webhook_secret":"old-secret"}`,
 	}
 	user.SetAccessToken("old-token")
 	require.NoError(t, DB.Create(&user).Error)
@@ -74,6 +75,9 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 		"aff_history":   gorm.Expr("aff_history + ?", 500),
 		"access_token":  "rotated-token",
 	}).Error)
+	require.NoError(t, UpdateUserSettingWith(user.Id, func(setting *dto.UserSetting) {
+		setting.WebhookSecret = "rotated-secret"
+	}))
 
 	staleUser.DisplayName = "after"
 	require.NoError(t, staleUser.Update(false))
@@ -88,6 +92,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	assert.Equal(t, 300, got.AffQuota)
 	assert.Equal(t, 1700, got.AffHistoryQuota)
 	assert.Equal(t, "rotated-token", got.GetAccessToken())
+	assert.Equal(t, "rotated-secret", got.GetSetting().WebhookSecret)
 }
 
 func TestUsageAccountingSupportsSignedDirectAndBatchDeltas(t *testing.T) {
@@ -204,7 +209,10 @@ func TestRevokeUserAccessTokenRejectsSoftDeletedUser(t *testing.T) {
 	assert.Equal(t, "old-token", got.GetAccessToken())
 }
 
-func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
+// A setting change starts from the stored setting and writes only the setting
+// column. A stored setting that does not parse is reported and left as it is
+// instead of being replaced by one holding only the new field.
+func TestUpdateUserSettingWithChangesOnlyTheStoredSetting(t *testing.T) {
 	setupUserUpdateTestState(t)
 
 	user := User{
@@ -215,6 +223,7 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 		Quota:        1000,
 		UsedQuota:    20,
 		RequestCount: 3,
+		Setting:      `{"webhook_secret":"kept-secret"}`,
 	}
 	require.NoError(t, DB.Create(&user).Error)
 
@@ -224,7 +233,9 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 		"request_count": gorm.Expr("request_count + ?", 1),
 	}).Error)
 
-	require.NoError(t, UpdateUserSetting(user.Id, dto.UserSetting{Language: "zh"}))
+	require.NoError(t, UpdateUserSettingWith(user.Id, func(setting *dto.UserSetting) {
+		setting.Language = "zh"
+	}))
 
 	var got User
 	require.NoError(t, DB.First(&got, user.Id).Error)
@@ -232,6 +243,17 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 	assert.Equal(t, 270, got.UsedQuota)
 	assert.Equal(t, 4, got.RequestCount)
 	assert.Equal(t, "zh", got.GetSetting().Language)
+	assert.Equal(t, "kept-secret", got.GetSetting().WebhookSecret)
+
+	const corrupt = `{"webhook_secret":"kept-secret",`
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Update("setting", corrupt).Error)
+	require.Error(t, UpdateUserSettingWith(user.Id, func(setting *dto.UserSetting) {
+		setting.Language = "en"
+	}))
+	require.NoError(t, DB.First(&got, user.Id).Error)
+	assert.Equal(t, corrupt, got.Setting)
+
+	assert.ErrorIs(t, UpdateUserSettingWith(user.Id+100, func(*dto.UserSetting) {}), gorm.ErrRecordNotFound)
 }
 
 func TestEnsureEmailAvailableRejectsExistingEmailCaseInsensitive(t *testing.T) {

@@ -183,16 +183,37 @@ func (user *User) SetSetting(setting dto.UserSetting) {
 	user.Setting = string(settingBytes)
 }
 
-func UpdateUserSetting(userId int, setting dto.UserSetting) error {
-	if userId == 0 {
+// UpdateUserSettingWith is how every change to users.setting is written after
+// sign-up. It reads the stored setting, applies change and writes the result in
+// one transaction that keeps the row locked from the read to the write, so two
+// writers that change different fields both keep their change instead of the
+// later one restoring the snapshot it read. A stored setting that does not
+// parse is logged and left as it is, never replaced by an empty one. Call it
+// outside any transaction: it opens its own on DB, so a caller that already
+// holds the user row in another transaction would wait on itself.
+func UpdateUserSettingWith(userId int, change func(setting *dto.UserSetting)) error {
+	if userId <= 0 {
 		return common.NewMessage("ID is empty!")
 	}
-	settingBytes, err := common.Marshal(setting)
-	if err != nil {
-		return err
-	}
-	settingValue := string(settingBytes)
-	if err = DB.Model(&User{}).Where("id = ?", userId).Update("setting", settingValue).Error; err != nil {
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := lockForUpdate(tx).Select("id", "setting").First(&user, userId).Error; err != nil {
+			return err
+		}
+		setting := dto.UserSetting{}
+		if user.Setting != "" {
+			if err := common.UnmarshalJsonStr(user.Setting, &setting); err != nil {
+				common.SysError(common.LogText("stored setting of user %d does not parse and was left unchanged: %s", userId, err.Error()))
+				return common.NewMessage("Update failed")
+			}
+		}
+		change(&setting)
+		stored, err := common.Marshal(setting)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&User{}).Where("id = ?", userId).Update("setting", string(stored)).Error
+	}); err != nil {
 		return err
 	}
 	return PublishUserAuthCache(userId)
@@ -220,6 +241,68 @@ func UpdateUserBindColumn(userId int, column string, value string) error {
 		return fmt.Errorf("invalid user bind column: %s", column)
 	}
 	return DB.Model(&User{}).Where("id = ?", userId).Update(column, value).Error
+}
+
+// EnsureUserAffCode returns the user's invitation code, assigning one first
+// when the user has none. It writes only aff_code and only while it is still
+// empty or NULL, so a ban or role change made since the read is never written
+// back, and two racing requests both return the code that was kept.
+func EnsureUserAffCode(userId int) (string, error) {
+	if userId <= 0 {
+		return "", common.NewMessage("ID is empty!")
+	}
+	var user User
+	if err := DB.Select("id", "aff_code").First(&user, userId).Error; err != nil {
+		return "", err
+	}
+	if user.AffCode != "" {
+		return user.AffCode, nil
+	}
+	code := common.GetRandomString(4)
+	result := DB.Model(&User{}).Where("id = ? AND (aff_code IS NULL OR aff_code = ?)", userId, "").Update("aff_code", code)
+	if result.Error != nil {
+		return "", result.Error
+	}
+	if result.RowsAffected == 1 {
+		return code, nil
+	}
+	// Another request assigned a code after the read; return the one it kept.
+	if err := DB.Select("id", "aff_code").First(&user, userId).Error; err != nil {
+		return "", err
+	}
+	return user.AffCode, nil
+}
+
+// PromoteUserToAdmin makes a common user an administrator and returns the
+// stored role and status. It writes only the role, with the row locked from
+// the role check to the write, so a ban or group change committed after the
+// caller read the user is kept. The auth version advances in the same
+// transaction; after commit the user cache is republished and the user's
+// sessions are revoked.
+func PromoteUserToAdmin(userId int) (*User, error) {
+	var promoted User
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).Select("id", "role", "status").First(&promoted, userId).Error; err != nil {
+			return err
+		}
+		if promoted.Role >= common.RoleAdminUser {
+			return common.NewMessage("This user is already an administrator")
+		}
+		if _, err := IncrementUserAuthVersionWithTx(tx, userId); err != nil {
+			return err
+		}
+		promoted.Role = common.RoleAdminUser
+		return tx.Model(&User{}).Where("id = ?", userId).Update("role", promoted.Role).Error
+	}); err != nil {
+		return nil, err
+	}
+	if err := PublishUserAuthCache(userId); err != nil {
+		return nil, err
+	}
+	if _, err := RevokeAllUserSessions(userId, "user_security_changed"); err != nil {
+		return nil, err
+	}
+	return &promoted, nil
 }
 
 // 根据用户角色生成默认的边栏配置
@@ -707,11 +790,13 @@ func (user *User) finishInsert(inviterId int) {
 		// 生成基于角色的默认边栏配置
 		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
 		if defaultSidebarConfig != "" {
-			currentSetting := createdUser.GetSetting()
-			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(common.LogText("initialized the sidebar config for new user %s (role: %d)", createdUser.Username, createdUser.Role))
+			if err := UpdateUserSettingWith(createdUser.Id, func(setting *dto.UserSetting) {
+				setting.SidebarModules = defaultSidebarConfig
+			}); err != nil {
+				common.SysError(common.LogText("failed to initialize the sidebar config for new user %s: %s", createdUser.Username, err.Error()))
+			} else {
+				common.SysLog(common.LogText("initialized the sidebar config for new user %s (role: %d)", createdUser.Username, createdUser.Role))
+			}
 		}
 	}
 
@@ -764,11 +849,13 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	if err := DB.Where("id = ?", user.Id).First(&createdUser).Error; err == nil {
 		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
 		if defaultSidebarConfig != "" {
-			currentSetting := createdUser.GetSetting()
-			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(common.LogText("initialized the sidebar config for new user %s (role: %d)", createdUser.Username, createdUser.Role))
+			if err := UpdateUserSettingWith(createdUser.Id, func(setting *dto.UserSetting) {
+				setting.SidebarModules = defaultSidebarConfig
+			}); err != nil {
+				common.SysError(common.LogText("failed to initialize the sidebar config for new user %s: %s", createdUser.Username, err.Error()))
+			} else {
+				common.SysLog(common.LogText("initialized the sidebar config for new user %s (role: %d)", createdUser.Username, createdUser.Role))
+			}
 		}
 	}
 
@@ -833,8 +920,11 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 			return err
 		}
 	}
+	// The setting is left out: a full-row update carries the setting of an
+	// earlier read and would undo a newer change. UpdateUserSettingWith owns it.
 	if err = tx.Model(&current).Omit(
 		"access_token",
+		"setting",
 		"quota",
 		"used_quota",
 		"request_count",

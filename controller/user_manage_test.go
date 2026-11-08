@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
 
 	"github.com/gin-gonic/gin"
@@ -843,4 +845,237 @@ func TestResetAvatarGoesBackToTheDefault(t *testing.T) {
 			assert.Equal(t, avatar, savedAvatar(t, db, target))
 		})
 	}
+}
+
+// Two setting writers that overlap both keep their change. An administrator
+// removes a user's avatar while the user saves the notification form with a
+// rotated webhook secret. The removal is held between its read and its write
+// until the form has started reading: on MySQL and PostgreSQL until the form
+// sends its locking read, on SQLite (where BEGIN IMMEDIATE blocks before any
+// query) until the form has read the user. The form must not finish during the
+// hold, and neither the old avatar nor the old secret may come back.
+func TestOverlappingSettingWritersKeepBothChanges(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		// Production SQLite runs WAL with a busy timeout and BEGIN IMMEDIATE
+		// (common.SQLitePath), so a second writer waits instead of failing.
+		_, params, _ := strings.Cut(common.SQLitePath, "?")
+		var err error
+		db, err = gorm.Open(sqlite.Open(t.TempDir()+"/setting.db?"+params), &gorm.Config{})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			if sqlDB, err := db.DB(); err == nil {
+				_ = sqlDB.Close()
+			}
+		})
+		require.NoError(t, db.AutoMigrate(&model.User{}))
+		model.DB = db
+	}
+	user := createAvatarTestUser(t, db, "setting-race", common.RoleCommonUser, dto.UserSetting{
+		NotifyType: dto.NotifyTypeWebhook, WebhookUrl: "https://example.com/hook", WebhookSecret: "old-secret",
+		Avatar: &dto.UserAvatar{Kind: "cat", Cat: map[string]string{"coat": "calico"}},
+	})
+
+	var holding, watching atomic.Bool
+	var readOnce sync.Once
+	held, formRead, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register("test:hold_first_setting_write", func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" && holding.CompareAndSwap(false, true) {
+			close(held)
+			<-release
+		}
+	}))
+	sqliteDB := common.UsingMainDatabase(common.DatabaseTypeSQLite)
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:form_sends_locking_read", func(tx *gorm.DB) {
+		_, locking := tx.Statement.Clauses["FOR"]
+		if !sqliteDB && locking && tx.Statement.Table == "users" && watching.Load() {
+			readOnce.Do(func() { close(formRead) })
+		}
+	}))
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register("test:form_read_user", func(tx *gorm.DB) {
+		if sqliteDB && tx.Statement.Table == "users" && watching.Load() {
+			readOnce.Do(func() { close(formRead) })
+		}
+	}))
+
+	removal := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodDelete, "/api/user/"+strconv.Itoa(user.Id)+"/avatar", nil)
+		c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(user.Id)}}
+		c.Set("id", user.Id+1000)
+		c.Set("role", common.RoleAdminUser)
+		AdminResetUserAvatar(c)
+		removal <- recorder
+	}()
+	select {
+	case <-held:
+	case recorder := <-removal:
+		require.FailNow(t, "the avatar removal finished without writing the setting", recorder.Body.String())
+	}
+
+	watching.Store(true)
+	form := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/user/setting", strings.NewReader(
+			`{"notify_type":"webhook","webhook_url":"https://example.com/hook","webhook_secret":"rotated-secret"}`))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("id", user.Id)
+		UpdateUserSetting(c)
+		form <- recorder
+	}()
+	select {
+	case <-formRead:
+	case recorder := <-form:
+		// Let the removal finish before failing: it must not touch the database
+		// after the cleanup swaps it out.
+		close(release)
+		<-removal
+		require.FailNow(t, "the notification form finished while the avatar removal held the user", recorder.Body.String())
+	}
+	close(release)
+
+	assert.Contains(t, (<-removal).Body.String(), `"success":true`)
+	assert.Contains(t, (<-form).Body.String(), `"success":true`)
+	require.NoError(t, db.First(&user, user.Id).Error)
+	assert.Nil(t, user.GetSetting().Avatar, "the removed avatar came back")
+	assert.Equal(t, "rotated-secret", user.GetSetting().WebhookSecret, "the rotated secret was lost")
+}
+
+// holdNextUserRead parks the next read of the users table, after it returns
+// and before the caller sees the row, until release is closed. A test commits
+// a concurrent change in that window, between a handler's read of the user and
+// its write. The read holds no connection or lock while parked.
+func holdNextUserRead(t *testing.T, db *gorm.DB) (held chan struct{}, release chan struct{}) {
+	t.Helper()
+	var armed atomic.Bool
+	armed.Store(true)
+	held, release = make(chan struct{}), make(chan struct{})
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register("test:hold_next_user_read", func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" && armed.CompareAndSwap(true, false) {
+			close(held)
+			<-release
+		}
+	}))
+	return held, release
+}
+
+// Promote writes only the role. When another administrator bans the user
+// between the promote request's read of the user and its write, the ban is
+// kept: the copy the request read must not re-enable the user. Either way the
+// promote advances the auth version once and revokes the user's sessions.
+func TestManageUserPromoteWritesOnlyTheRole(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		banDuringRequest bool
+		wantStatus       int
+		wantAuthVersion  int64
+	}{
+		{name: "promote", wantStatus: common.UserStatusEnabled, wantAuthVersion: 2},
+		{name: "ban committed during the request", banDuringRequest: true, wantStatus: common.UserStatusDisabled, wantAuthVersion: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupManageUserTestDB(t)
+			now := time.Now().Unix()
+			user := model.User{
+				Username: "managed-promote-user", Password: "password", Role: common.RoleCommonUser,
+				Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "promote-aff",
+			}
+			require.NoError(t, db.Create(&user).Error)
+			require.NoError(t, db.Create(&model.UserSession{
+				SID: "managed-promote-session", UserID: user.Id, Version: 1, UserAuthVersion: 1,
+				Status: model.UserSessionStatusActive, RefreshHash: "refresh-hash", LoginMethod: "password",
+				LastActiveAt: now, ExpiresAt: now + 3600,
+			}).Error)
+			operation := func(action string) service.VerificationOperation {
+				return service.VerificationOperation{Scope: service.VerificationScopeAdminUserManage, Context: []byte(fmt.Sprintf(`{"user_id":%d,"action":%q}`, user.Id, action))}
+			}
+			identity, promoteProof := manageUserProof(t, db, operation("promote"))
+			banBinding, err := service.BindVerificationOperation(operation("disable"))
+			require.NoError(t, err)
+			banProof, _, err := service.IssueSecurityProof(identity, service.VerificationMethodPassword, banBinding)
+			require.NoError(t, err)
+
+			var held, release chan struct{}
+			if tc.banDuringRequest {
+				held, release = holdNextUserRead(t, db)
+			}
+			promote := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				promote <- performVerifiedManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"promote"}`, user.Id), identity, promoteProof)
+			}()
+			if tc.banDuringRequest {
+				select {
+				case <-held:
+				case recorder := <-promote:
+					require.FailNow(t, "the promote finished without reading the user", recorder.Body.String())
+				}
+				ban := performVerifiedManageUserRequest(t, fmt.Sprintf(`{"id":%d,"action":"disable"}`, user.Id), identity, banProof)
+				assert.Contains(t, ban.Body.String(), `"success":true`)
+				close(release)
+			}
+			assert.Contains(t, (<-promote).Body.String(), `"success":true`)
+
+			var stored model.User
+			require.NoError(t, db.First(&stored, user.Id).Error)
+			assert.Equal(t, common.RoleAdminUser, stored.Role)
+			assert.Equal(t, tc.wantStatus, stored.Status, "the promote wrote back the status it read")
+			assert.Equal(t, tc.wantAuthVersion, stored.AuthVersion)
+			var session model.UserSession
+			require.NoError(t, db.First(&session, "sid = ?", "managed-promote-session").Error)
+			assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
+		})
+	}
+}
+
+// The invitation code is written only while the user has none, and nothing
+// else is written with it. A user without a code (NULL in rows from before
+// the column existed) gets one. When a ban and another request's code commit
+// between the request's read of the user and its write, both are kept and the
+// request returns the code that was kept.
+func TestGetAffCodeOnlyFillsAMissingCode(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	user := model.User{
+		Username: "aff-code-user", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	require.NoError(t, db.Model(&user).Update("aff_code", nil).Error)
+	getAffCode := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/user/aff", nil)
+		c.Set("id", user.Id)
+		GetAffCode(c)
+		return recorder
+	}
+
+	recorder := getAffCode()
+	var stored model.User
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	assert.Len(t, stored.AffCode, 4)
+	assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"data":%q`, stored.AffCode))
+
+	require.NoError(t, db.Model(&user).Update("aff_code", "").Error)
+	held, release := holdNextUserRead(t, db)
+	request := make(chan *httptest.ResponseRecorder, 1)
+	go func() { request <- getAffCode() }()
+	select {
+	case <-held:
+	case recorder := <-request:
+		require.FailNow(t, "the request finished without reading the user", recorder.Body.String())
+	}
+	assert.NoError(t, db.Model(&model.User{}).Where("id = ?", user.Id).Updates(map[string]any{
+		"status": common.UserStatusDisabled, "aff_code": "kept",
+	}).Error)
+	close(release)
+
+	assert.Contains(t, (<-request).Body.String(), `"data":"kept"`)
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	assert.Equal(t, "kept", stored.AffCode)
+	assert.Equal(t, common.UserStatusDisabled, stored.Status, "the request wrote back the status it read")
+	assert.Contains(t, getAffCode().Body.String(), `"data":"kept"`, "a stored code must be returned as it is")
 }
