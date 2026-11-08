@@ -21,6 +21,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
+	service.RegisterSystemTaskHandler(contentSafetyLogCleanupHandler{})
 }
 
 // channelTestHandler runs the scheduled "test all channels" job. Enablement and
@@ -159,4 +160,31 @@ func finishSystemTaskHandler(task *model.SystemTask, runnerID string, status mod
 	if err := model.FinishSystemTask(task.TaskID, runnerID, status, result, errorMessage); err != nil {
 		common.SysLog(common.LogText("system task %s failed to persist result: %v", task.TaskID, err))
 	}
+}
+
+// contentSafetyLogCleanupHandler deletes content safety records older than
+// the configured retention, once a day.
+type contentSafetyLogCleanupHandler struct{}
+
+func (contentSafetyLogCleanupHandler) Type() string {
+	return model.SystemTaskTypeContentSafetyLogCleanup
+}
+
+func (contentSafetyLogCleanupHandler) Enabled() bool { return true }
+
+func (contentSafetyLogCleanupHandler) Interval() time.Duration { return 24 * time.Hour }
+
+func (contentSafetyLogCleanupHandler) NewPayload() any { return nil }
+
+func (contentSafetyLogCleanupHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	days := operation_setting.GetContentSafetySetting().Bounded().LogRetentionDays
+	cutoff := time.Now().AddDate(0, 0, -days).Unix()
+	deleted, err := model.DeleteContentSafetyLogsBefore(ctx, cutoff)
+	result := map[string]any{"deleted": deleted, "cutoff": cutoff}
+	if err != nil {
+		common.SysError(common.LogText("content safety log cleanup failed (cutoff=%d, deleted=%d): %v", cutoff, deleted, err))
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, result, nil)
 }

@@ -19,6 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import type { LinkProps } from '@tanstack/react-router'
 import type { TFunction } from 'i18next'
 
+import type {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+} from '@/lib/admin-permissions'
+
 /**
  * Base navigation item type
  */
@@ -34,6 +39,16 @@ type BaseNavItem = {
    * `useSidebarView`). Route-level guards still enforce access independently.
    */
   requiredRole?: number
+  /**
+   * Admin permission required to see this item, checked with `hasPermission`
+   * from `@/lib/admin-permissions` (root always passes). Applies to top-level
+   * items only: sub-items are not filtered, same as `requiredRole`. Route-level
+   * guards still enforce access independently.
+   */
+  requiredPermission?: {
+    resource: (typeof ADMIN_PERMISSION_RESOURCES)[keyof typeof ADMIN_PERMISSION_RESOURCES]
+    action: (typeof ADMIN_PERMISSION_ACTIONS)[keyof typeof ADMIN_PERMISSION_ACTIONS]
+  }
 }
 
 /**

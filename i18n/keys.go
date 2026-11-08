@@ -120,3 +120,11 @@ const (
 	MsgChannelUpstreamUpdateFailedChannels  = "channel.upstream_update_failed_channels"
 	MsgChannelUpstreamUpdateMoreOmitted     = "channel.upstream_update_more_omitted"
 )
+
+// Content safety results returned to AI clients. They never name the matched
+// words or the reviewer's reasoning.
+const (
+	MsgContentSafetyBlocked     = "content_safety.blocked"
+	MsgContentSafetyRejected    = "content_safety.rejected"
+	MsgContentSafetyUnavailable = "content_safety.unavailable"
+)

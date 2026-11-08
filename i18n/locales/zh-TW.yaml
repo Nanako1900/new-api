@@ -96,3 +96,6 @@ channel.upstream_update_added_models: "新增模型範例（顯示 {{.Shown}}/{{
 channel.upstream_update_removed_models: "刪除模型範例（顯示 {{.Shown}}/{{.Total}}）：{{.Models}}"
 channel.upstream_update_failed_channels: "失敗管道 ID（顯示 {{.Shown}}/{{.Total}}）：{{.Ids}}"
 channel.upstream_update_more_omitted: "（其餘 {{.Count}} 個已省略）"
+content_safety.blocked: "請求內容包含不允許的內容"
+content_safety.rejected: "請求內容未通過安全審核"
+content_safety.unavailable: "內容安全審核暫時無法使用，請稍後重試"

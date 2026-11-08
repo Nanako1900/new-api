@@ -85,4 +85,19 @@ const (
 	ContextKeyTokenAuditParams ContextKey = "token_audit_params"
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
+
+	// ContextKeyContentSafetyWindows holds review-word windows found before
+	// pre-consume, for EnforceContentSafety to review after it.
+	ContextKeyContentSafetyWindows ContextKey = "content_safety_windows"
+	// ContextKeyContentSafetyChecked marks a request whose content review
+	// passed or found nothing to review, so retries do not review it again.
+	ContextKeyContentSafetyChecked ContextKey = "content_safety_checked"
+	// ContextKeyContentSafetyRejection holds the *types.NewAPIError of a
+	// rejected content check, so a retry of the same request returns that
+	// rejection again instead of reviewing or forwarding the content.
+	ContextKeyContentSafetyRejection ContextKey = "content_safety_rejection"
+	// ContextKeyBindUpstreamToRequestContext cancels upstream requests with the
+	// request context. Only the content reviewer sets it; ordinary relays must
+	// keep upstream requests running after a client disconnect for billing.
+	ContextKeyBindUpstreamToRequestContext ContextKey = "bind_upstream_to_request_context"
 )

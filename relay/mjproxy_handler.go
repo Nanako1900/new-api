@@ -549,6 +549,21 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			Description: "quota_not_enough",
 		}
 	}
+	// The proxy receives the client's own body, not midjRequest: modal and
+	// video actions copy the origin task's prompt only into the task record.
+	// With mode clear on it receives the prompt without the speed flags.
+	if setting.ShouldCheckPromptSensitive() {
+		text, err := taskRequestText(c)
+		if err != nil {
+			return service.MidjourneyErrorWrapper(constant.MjRequestError, "read_request_body_failed")
+		}
+		if setting.MjModeClearEnabled {
+			text = service.ClearMidjourneyMode(text)
+		}
+		if apiErr := EnforceContentSafetyText(c, relayInfo, text); apiErr != nil {
+			return service.MidjourneyErrorWrapper(constant.MjRequestError, apiErr.Error())
+		}
+	}
 
 	service.RequestPolicy(c).BeginAttempt(&model.Channel{Id: c.GetInt("channel_id")}, relayInfo.UsingGroup)
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)

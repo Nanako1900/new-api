@@ -99,7 +99,8 @@ func classifyFailure(local bool, code, errorType string, status int) Outcome {
 			return OutcomeIgnored
 		}
 		switch types.ErrorCode(code) {
-		case types.ErrorCodeInvalidRequest, types.ErrorCodeSensitiveWordsDetected, types.ErrorCodeReadRequestBodyFailed,
+		case types.ErrorCodeInvalidRequest, types.ErrorCodeSensitiveWordsDetected, types.ErrorCodeContentReviewRejected, types.ErrorCodeContentReviewUnavailable,
+			types.ErrorCodeReadRequestBodyFailed,
 			types.ErrorCodeConvertRequestFailed, types.ErrorCodeAccessDenied, types.ErrorCodeBadRequestBody,
 			types.ErrorCodeInsufficientUserQuota, types.ErrorCodePreConsumeTokenQuotaFailed, types.ErrorCodePromptBlocked:
 			return OutcomeIgnored

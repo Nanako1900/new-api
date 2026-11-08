@@ -737,8 +737,8 @@ export const STATIC_I18N_KEYS = [
   'API token batch key access',
 
   // Channel status audit events
-  "View other accounts' audit logs",
-  'View audit records from user and admin roles. Root records are always excluded.',
+  "View other accounts' audit and content safety logs",
+  "View audit records and content safety records (including excerpts of users' prompts) from user and admin roles. Root records are always excluded.",
   'Updated channel status (ID: {{id}})',
   'Batch updated channel status ({{count}}/{{total}} changed)',
 
@@ -936,4 +936,19 @@ export const STATIC_I18N_KEYS = [
   'The monitor console is not enabled on this site.',
   'This monitor console address is not allowed to sign in.',
   'Could not sign in to the monitor console. Please try again.',
+  // Content safety log decisions and failure reasons (constants), the cleanup
+  // task label, and the backend message for a rejected log query.
+  'Blocked by keyword',
+  'Review passed',
+  'Review rejected',
+  'Review failed',
+  'Review timed out',
+  'No review channel available',
+  'Unreadable review answer',
+  'Too many review windows',
+  'Review rate limit reached',
+  'Review upstream error',
+  'Client canceled',
+  'Content safety log cleanup',
+  'Invalid content safety log query',
 ] as const

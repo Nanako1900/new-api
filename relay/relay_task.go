@@ -23,6 +23,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -339,6 +340,22 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
 			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
+	}
+
+	// 7.5 内容安全审核：预扣之后、构建上游请求之前。重试时已审核过的请求直接跳过；
+	//     拒绝时由 executeTaskSubmissionWith 现有的 Billing.Refund 退还预扣。
+	if setting.ShouldCheckPromptSensitive() && !common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked) {
+		text, err := taskRequestText(c)
+		if err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "read_request_body_failed", http.StatusBadRequest)
+		}
+		if apiErr := EnforceContentSafetyText(c, info, text); apiErr != nil {
+			// A content decision is local and final: never retried on another
+			// channel and never counted against the task channel.
+			taskErr := service.TaskErrorWrapperLocal(apiErr.Err, string(apiErr.GetErrorCode()), apiErr.StatusCode)
+			taskErr.NoRetry = true
+			return nil, taskErr
 		}
 	}
 

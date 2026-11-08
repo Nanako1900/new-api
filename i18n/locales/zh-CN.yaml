@@ -96,3 +96,6 @@ channel.upstream_update_added_models: "新增模型示例（展示 {{.Shown}}/{{
 channel.upstream_update_removed_models: "删除模型示例（展示 {{.Shown}}/{{.Total}}）：{{.Models}}"
 channel.upstream_update_failed_channels: "失败渠道 ID（展示 {{.Shown}}/{{.Total}}）：{{.Ids}}"
 channel.upstream_update_more_omitted: "（其余 {{.Count}} 个已省略）"
+content_safety.blocked: "请求内容包含不允许的内容"
+content_safety.rejected: "请求内容未通过安全审核"
+content_safety.unavailable: "内容安全审核暂不可用，请稍后重试"
