@@ -59,7 +59,7 @@ const MORPH_REST_MS = 150
 const CAT_OVER_LOGO = 'translate(0.17%, -6.1%) scale(1.174)'
 
 const PREVIEW_PARAM = 'meow-splash'
-const PREVIEW_DEFAULT_MS = 5000
+const PREVIEW_DEFAULT_MS = 3000
 /** Stays under the 10s failsafe in index.html. */
 const PREVIEW_MAX_MS = 8000
 

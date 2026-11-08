@@ -196,10 +196,10 @@ test('the local preview holds the app only when ?meow-splash is in the URL', () 
   expect(readMeowSplashPreviewDelay('?meow-preview=1')).toBe(0)
 })
 
-test('the local preview holds the app for the given time, 5s by default', () => {
-  expect(readMeowSplashPreviewDelay('?meow-splash=3000')).toBe(3000)
-  expect(readMeowSplashPreviewDelay('?meow-splash')).toBe(5000)
-  expect(readMeowSplashPreviewDelay('?meow-splash=soon')).toBe(5000)
+test('the local preview holds the app for the given time, 3s by default', () => {
+  expect(readMeowSplashPreviewDelay('?meow-splash=5000')).toBe(5000)
+  expect(readMeowSplashPreviewDelay('?meow-splash')).toBe(3000)
+  expect(readMeowSplashPreviewDelay('?meow-splash=soon')).toBe(3000)
 })
 
 test('the local preview hold stays under the 10s failsafe', () => {
