@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { type ReactNode, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Main } from '@/components/layout'
+import { RollingNumber } from '@/components/rolling-number'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useProviderHealth } from '@/features/home/hooks/use-provider-health'
 import { HOME_PROVIDERS } from '@/features/home/lib/provider-models'
@@ -34,21 +35,16 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { useAnnouncements, useFAQ } from '../../hooks/use-status-data'
-import { greetingFor, healthBadge, splitAroundName } from '../../lib/meow-setup'
+import { healthBadge } from '../../lib/meow-setup'
 import { AnnouncementsPanel } from '../overview/announcements-panel'
 import { FAQPanel } from '../overview/faq-panel'
 import { MeowBalanceCard } from './meow-balance-card'
 import { MeowCheckinCard } from './meow-checkin-card'
 import { MeowInviteCard } from './meow-invite-card'
+import { MeowOverviewGreeting } from './meow-overview-greeting'
 import { MeowQuickSetup } from './meow-quick-setup'
 import { MeowRecentCalls } from './meow-recent-calls'
 import { MeowUsageTrend } from './meow-usage-trend'
-
-const GREETING_KEY = {
-  morning: 'Good morning, {{name}}',
-  afternoon: 'Good afternoon, {{name}}',
-  evening: 'Good evening, {{name}}',
-} as const
 
 const PROVIDER_LABEL = { claude: 'Claude', gpt: 'GPT' } as const
 
@@ -96,7 +92,11 @@ function ProviderStatusPills() {
   )
 }
 
-function StatCard(props: { label: string; value: string; accent?: boolean }) {
+function StatCard(props: {
+  label: string
+  value: ReactNode
+  accent?: boolean
+}) {
   return (
     <div className='bg-card border-border flex h-full flex-col justify-between gap-4 rounded-[22px] border p-6'>
       <span className='text-muted-foreground text-sm font-bold'>
@@ -156,16 +156,6 @@ export function MeowOverview() {
   const { usage, isLoading } = useUsage24h()
 
   const checkinEnabled = status?.checkin_enabled === true
-  const now = new Date()
-  const name = user?.display_name || user?.username || ''
-  const greeting = splitAroundName((placeholder) =>
-    t(GREETING_KEY[greetingFor(now.getHours())], { name: placeholder })
-  )
-  const dateLine = new Intl.DateTimeFormat(locale, {
-    month: 'long',
-    day: 'numeric',
-    weekday: 'long',
-  }).format(now)
   const hasAnnouncements = announcements.items.length > 0
   const hasFaq = faq.items.length > 0
 
@@ -174,14 +164,7 @@ export function MeowOverview() {
       <div className='min-h-0 flex-1 overflow-auto px-4 pt-6 pb-8 sm:px-8 sm:pt-8'>
         <div className='mx-auto flex w-full max-w-[1440px] flex-col gap-5'>
           <header className='flex flex-wrap items-center justify-between gap-4'>
-            <div className='flex min-w-0 flex-col gap-1'>
-              <h1 className='truncate text-2xl font-extrabold tracking-[-0.03em] sm:text-[1.75rem]'>
-                {greeting.before}
-                <span className='text-meow-heading'>{name}</span>
-                {greeting.after}
-              </h1>
-              <span className='text-muted-foreground text-sm'>{dateLine}</span>
-            </div>
+            <MeowOverviewGreeting />
             <ProviderStatusPills />
           </header>
 
@@ -195,14 +178,29 @@ export function MeowOverview() {
             <div className='lg:col-span-3'>
               <StatCard
                 label={t('Spend (24h)')}
-                value={isLoading ? '—' : formatQuota(usage.quota)}
+                value={
+                  isLoading ? (
+                    '—'
+                  ) : (
+                    <RollingNumber value={usage.quota} format={formatQuota} />
+                  )
+                }
                 accent
               />
             </div>
             <div className='lg:col-span-3'>
               <StatCard
                 label={t('Requests (24h)')}
-                value={isLoading ? '—' : formatNumber(usage.count, locale)}
+                value={
+                  isLoading ? (
+                    '—'
+                  ) : (
+                    <RollingNumber
+                      value={usage.count}
+                      format={(count) => formatNumber(count, locale)}
+                    />
+                  )
+                }
               />
             </div>
           </div>
