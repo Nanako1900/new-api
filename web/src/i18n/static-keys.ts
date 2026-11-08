@@ -923,4 +923,12 @@ export const STATIC_I18N_KEYS = [
   'Good morning, {{name}}',
   'Good afternoon, {{name}}',
   'Good evening, {{name}}',
+  // Console alerts: level/status labels from constants and Zod form messages.
+  'Info',
+  'Live',
+  'Scheduled',
+  'Content is required',
+  'Content must be at most 500 characters',
+  'Title must be at most 100 characters',
+  'End time must be after start time',
 ] as const
