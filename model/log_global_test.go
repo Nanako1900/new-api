@@ -104,9 +104,12 @@ func TestGlobalLogUsageDatabaseMatrix(t *testing.T) {
 				{UserId: 1, Username: "alice", Type: LogTypeConsume, CreatedAt: 1950, ModelName: "gpt-b", ChannelId: 3, Quota: 50, PromptTokens: 20, CompletionTokens: 10},
 				{UserId: 2, Username: "bob", Type: LogTypeConsume, CreatedAt: 1200, ModelName: "gpt-a", ChannelId: 4, Quota: 300, PromptTokens: 100, CompletionTokens: 50},
 				{UserId: 3, Username: "carol", Type: LogTypeConsume, CreatedAt: 999, ModelName: "gpt-a", ChannelId: 3, Quota: 20},
-				{UserId: 1, Username: "alice", Type: LogTypeError, CreatedAt: 1600, ModelName: "gpt-a", ChannelId: 4},
-				{UserId: 2, Username: "bob", Type: LogTypeError, CreatedAt: 1700, ModelName: "gpt-a", ChannelId: 4},
-				{UserId: 3, Username: "carol", Type: LogTypeError, CreatedAt: 1800, ModelName: "gpt-a"},
+				{UserId: 1, Username: "alice", Type: LogTypeError, CreatedAt: 1600, ModelName: "gpt-a", ChannelId: 4,
+					Content: "upstream exploded", Other: `{"status_code":500,"error_code":"unknown_error"}`},
+				{UserId: 2, Username: "bob", Type: LogTypeError, CreatedAt: 1700, ModelName: "gpt-a", ChannelId: 4,
+					Content: "upstream exploded again", Other: `{"status_code":500,"error_code":"unknown_error"}`},
+				{UserId: 3, Username: "carol", Type: LogTypeError, CreatedAt: 1800, ModelName: "gpt-a",
+					Content: "no channel available", Other: `{"status_code":503,"error_code":"model_not_found"}`},
 				{UserId: 2, Username: "bob", Type: LogTypeError, CreatedAt: 2001, ModelName: "gpt-a", ChannelId: 4},
 				{UserId: 1, Username: "alice", Type: LogTypeTopup, CreatedAt: 1650, Quota: 9999},
 			}
@@ -174,6 +177,31 @@ func TestGlobalLogUsageDatabaseMatrix(t *testing.T) {
 			_, topUps, err := GetGlobalLogs(LogFilter{Type: LogTypeTopup}, 0, 100, GlobalLogCountLimit)
 			require.NoError(t, err)
 			assert.Zero(t, topUps, "asking for another type still returns no row of it")
+
+			// Window [1000, 2000] is 1000 s; the last 100 s from 1900 are recent. Alice spent 50 of her 150
+			// there: 50 × 1000 ≥ 3 × 100 × 150, a spike. Bob spent nothing recently.
+			spikes, err := GetGlobalSpendSpikes(context.Background(), 1900, 1000, 2000, 10, 3, 10)
+			require.NoError(t, err)
+			assert.Equal(t, []GlobalUserSpend{{UserId: 1, Username: "alice", RecentQuota: 50, RecentRequests: 1, WindowQuota: 150}}, spikes)
+			for _, tc := range []struct {
+				name               string
+				floor, ratio, from int64
+			}{
+				{"below the floor", 60, 3, 1900},
+				{"below the ratio", 10, 4, 1900},
+				{"steady spend over a long recent span", 10, 3, 1100},
+			} {
+				none, err := GetGlobalSpendSpikes(context.Background(), tc.from, 1000, 2000, tc.floor, tc.ratio, 10)
+				require.NoError(t, err, tc.name)
+				assert.Empty(t, none, tc.name)
+			}
+
+			samples, err := GetGlobalErrorSamples(context.Background(), 1000, 2000, 2)
+			require.NoError(t, err)
+			require.Len(t, samples, 2, "the newest rows up to the limit; the one after the window is left out")
+			assert.Equal(t, "no channel available", samples[0].Content)
+			assert.Equal(t, "upstream exploded again", samples[1].Content)
+			assert.JSONEq(t, `{"status_code":500,"error_code":"unknown_error"}`, samples[1].Other)
 		})
 	}
 }

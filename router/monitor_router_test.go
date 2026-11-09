@@ -572,7 +572,8 @@ func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
 	require.NoError(t, model.LOG_DB.Create(&[]model.Log{
 		{UserId: 900, Username: "busy-user", Type: model.LogTypeConsume, CreatedAt: now - 60, ModelName: "gpt-x", ChannelId: 8,
 			Quota: 700, PromptTokens: 40, CompletionTokens: 2, Ip: "203.0.113.7", Other: other, RequestId: "req-global-1"},
-		{UserId: 901, Username: "quiet-user", Type: model.LogTypeError, CreatedAt: now - 30, ModelName: "gpt-x", ChannelId: 8, RequestId: "req-global-2"},
+		{UserId: 901, Username: "quiet-user", Type: model.LogTypeError, CreatedAt: now - 30, ModelName: "gpt-x", ChannelId: 8, RequestId: "req-global-2",
+			Content: "bad gateway from upstream", Other: `{"status_code":502,"error_code":"bad_response_status_code","error_type":"upstream_error"}`},
 		{UserId: 900, Username: "busy-user", Type: model.LogTypeTopup, CreatedAt: now - 20, Quota: 5000, RequestId: "req-global-3"},
 	}).Error)
 
@@ -587,6 +588,10 @@ func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
 	assert.Equal(t, map[string]any{"quota": 700.0, "requests": 1.0, "tokens": 42.0, "errors": 1.0, "active_users": 1.0}, data["totals"])
 	assert.Equal(t, []any{map[string]any{"user_id": 900.0, "username": "busy-user", "quota": 700.0, "requests": 1.0, "tokens": 42.0}}, data["top_users"])
 	assert.Equal(t, []any{map[string]any{"channel_id": 8.0, "channel_name": "upstream-8", "requests": 1.0, "errors": 1.0}}, data["channels"])
+	assert.Equal(t, []any{}, data["spikes"], "700 quota points is below the $0.10 floor")
+	assert.Equal(t, []any{map[string]any{"status_code": 502.0, "error_code": "bad_response_status_code", "error_type": "upstream_error",
+		"count": 1.0, "example": "bad gateway from upstream"}}, data["error_reasons"])
+	assert.EqualValues(t, 1, data["error_rows_read"])
 	assert.Equal(t, http.StatusBadRequest, get("/api/monitor/global/overview?window=7d").Code)
 
 	logs := get("/api/monitor/global/logs?p=1&page_size=10")
