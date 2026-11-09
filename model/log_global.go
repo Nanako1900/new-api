@@ -158,3 +158,54 @@ func GetGlobalLogUsage(ctx context.Context, start, end, rateSince int64, limit i
 	}
 	return usage, nil
 }
+
+// GlobalUserSpend is what a user spent in a recent span and in the whole
+// window around it.
+type GlobalUserSpend struct {
+	UserId         int    `gorm:"column:user_id"`
+	Username       string `gorm:"column:user_name"`
+	RecentQuota    int64  `gorm:"column:recent_quota"`
+	RecentRequests int64  `gorm:"column:recent_requests"`
+	WindowQuota    int64  `gorm:"column:window_quota"`
+}
+
+// GetGlobalSpendSpikes returns up to limit users, biggest recent spend first,
+// whose spend between recentSince and end is at least floor and at least ratio
+// times their share of the window [start, end] for that span:
+// recent × window ≥ ratio × span × windowTotal, in whole seconds. It is one
+// pass over the window's consume rows, so every user is checked; HAVING
+// repeats the sums because PostgreSQL does not accept aliases there.
+func GetGlobalSpendSpikes(ctx context.Context, recentSince, start, end, floor, ratio int64, limit int) ([]GlobalUserSpend, error) {
+	const recent = "SUM(CASE WHEN created_at >= ? THEN quota ELSE 0 END)"
+	window, span := end-start, end-recentSince
+	spends := []GlobalUserSpend{}
+	err := LOG_DB.WithContext(ctx).Table("logs").
+		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, start, end).
+		Select("user_id, MAX(username) AS user_name, "+recent+" AS recent_quota, "+
+			"SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS recent_requests, COALESCE(SUM(quota), 0) AS window_quota",
+			recentSince, recentSince).
+		Group("user_id").
+		Having(recent+" >= ? AND "+recent+" * ? >= ? * COALESCE(SUM(quota), 0)", recentSince, floor, recentSince, window, ratio*span).
+		Order("recent_quota DESC, user_id ASC").Limit(limit).Scan(&spends).Error
+	return spends, err
+}
+
+// GlobalErrorSample is the error text and details of one error row.
+type GlobalErrorSample struct {
+	Content string `gorm:"column:content"`
+	Other   string `gorm:"column:other"`
+}
+
+// GetGlobalErrorSamples returns the newest limit error rows between start and
+// end (unix seconds, inclusive), newest first.
+func GetGlobalErrorSamples(ctx context.Context, start, end int64, limit int) ([]GlobalErrorSample, error) {
+	order := "created_at desc, id desc"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = clickHouseLogOrder("")
+	}
+	samples := []GlobalErrorSample{}
+	err := LOG_DB.WithContext(ctx).Table("logs").Select("content, other").
+		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeError, start, end).
+		Order(order).Limit(limit).Scan(&samples).Error
+	return samples, err
+}

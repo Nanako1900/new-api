@@ -569,6 +569,8 @@
   "failed to query log stat: %s": "查询日志统计失败: %s",
   "failed to query rpm/tpm stat: %s": "查询 rpm/tpm 统计失败: %s",
   "failed to read TTS response body: %v": "读取 TTS 响应体失败: %v",
+  "failed to read monitor error reasons: %s": "读取监控台错误原因失败: %s",
+  "failed to read monitor spending spikes: %s": "读取监控台消耗突增失败: %s",
   "failed to read monitor stream advertisements: %s": "读取监控连接在线信息失败: %s",
   "failed to record log: %s": "记录日志失败: %s",
   "failed to record task billing log: %s": "记录任务计费日志失败: %s",
