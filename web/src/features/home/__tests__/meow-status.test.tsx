@@ -31,6 +31,14 @@ const HEALTHY: PerfModel[] = [
   { model_name: 'gpt-6.1-sol', success_rate: 98 },
 ]
 
+// A rarely used GPT model failing every request sits below the busy ones.
+const QUIET_MODEL_FAILING: PerfModel[] = [
+  { model_name: 'claude-opus-5-5', success_rate: 99.93 },
+  { model_name: 'gpt-6.1-sol', success_rate: 96.36 },
+  { model_name: 'gpt-6-sol', success_rate: 100 },
+  { model_name: 'gpt-5.6-luna', success_rate: 0 },
+]
+
 const GPT_DIPPED: PerfModel[] = [
   { model_name: 'claude-opus-5-5', success_rate: 99 },
   { model_name: 'gpt-6.1-sol', success_rate: 74.96 },
@@ -74,6 +82,16 @@ test('healthy providers show the live success rates', async () => {
 
   const bar = await screen.findByRole('region', { name: 'Live status' })
   expect(await screen.findAllByText('Success rate')).toHaveLength(2)
+  expect(bar).not.toHaveTextContent('No charge for failed requests')
+})
+
+test('a failing quiet model does not hide healthy live numbers', async () => {
+  mockApi(QUIET_MODEL_FAILING)
+  renderStatus()
+
+  const bar = await screen.findByRole('region', { name: 'Live status' })
+  expect(await screen.findAllByText('Success rate')).toHaveLength(2)
+  expect(bar).toHaveTextContent('96.36%')
   expect(bar).not.toHaveTextContent('No charge for failed requests')
 })
 

@@ -32,26 +32,16 @@ test('a provider with no measured models reports null', () => {
   expect(health.gpt).toEqual({ successRate: 80, avgLatencyMs: 3000 })
 })
 
-test('models are averaged per provider, weighted by request count', () => {
+test('the busiest model, listed first, decides a provider', () => {
   const health = summarizeProviderHealth(
     [
-      {
-        model_name: 'gpt-a',
-        success_rate: 100,
-        avg_latency_ms: 1000,
-        request_count: 3,
-      },
-      {
-        model_name: 'gpt-b',
-        success_rate: 60,
-        avg_latency_ms: 5000,
-        request_count: 1,
-      },
+      { model_name: 'gpt-a', success_rate: 96.36, avg_latency_ms: 54000 },
+      { model_name: 'gpt-b', success_rate: 100, avg_latency_ms: 4000 },
+      { model_name: 'gpt-c', success_rate: 0, avg_latency_ms: 0 },
     ],
     []
   )
-  expect(health.gpt?.successRate).toBe(90)
-  expect(health.gpt?.avgLatencyMs).toBe(2000)
+  expect(health.gpt).toEqual({ successRate: 96.36, avgLatencyMs: 54000 })
 })
 
 test('the pricing vendor decides the provider when the name is ambiguous', () => {
@@ -63,7 +53,21 @@ test('the pricing vendor decides the provider when the name is ambiguous', () =>
   expect(health.gpt).toBeNull()
 })
 
-test('missing latency does not drag the latency average to zero', () => {
+test('a busier image model does not stand for chat health', () => {
+  const health = summarizeProviderHealth(
+    [
+      { model_name: 'gpt-image-2', success_rate: 40, avg_latency_ms: 9000 },
+      { model_name: 'gpt-6', success_rate: 99, avg_latency_ms: 2000 },
+      { model_name: 'claude-embedding', success_rate: 97, avg_latency_ms: 300 },
+    ],
+    []
+  )
+  expect(health.gpt).toEqual({ successRate: 99, avgLatencyMs: 2000 })
+  // With no chat traffic, the busiest secondary model still counts.
+  expect(health.claude).toEqual({ successRate: 97, avgLatencyMs: 300 })
+})
+
+test('a busiest model without latency reports latency as unknown', () => {
   const health = summarizeProviderHealth(
     [
       { model_name: 'claude-a', success_rate: 100, avg_latency_ms: 0 },
@@ -71,7 +75,8 @@ test('missing latency does not drag the latency average to zero', () => {
     ],
     []
   )
-  expect(health.claude?.avgLatencyMs).toBe(1200)
+  expect(health.claude?.successRate).toBe(100)
+  expect(health.claude?.avgLatencyMs).toBeNaN()
 })
 
 test('live status shows when every provider is at or above 95%', () => {
