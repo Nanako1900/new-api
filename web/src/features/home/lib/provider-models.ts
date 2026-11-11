@@ -33,6 +33,11 @@ const VENDOR_PATTERNS: Record<HomeProvider, RegExp> = {
 // Non-chat models (images, audio, embeddings) sort after chat models.
 const SECONDARY_MODEL_PATTERN = /image|dall-e|tts|whisper|audio|embedding/i
 
+/** Whether a model serves images, audio or embeddings rather than chat. */
+export function isSecondaryModel(modelName: string): boolean {
+  return SECONDARY_MODEL_PATTERN.test(modelName)
+}
+
 /** How many model names each provider card lists. */
 export const PROVIDER_MODEL_LIMIT = 4
 
@@ -65,7 +70,7 @@ export function pickProviderModels(
     const name = model.model_name?.trim()
     if (!name || primary.includes(name) || secondary.includes(name)) continue
     if (providerOf(name, model.vendor_name) !== provider) continue
-    if (SECONDARY_MODEL_PATTERN.test(name)) secondary.push(name)
+    if (isSecondaryModel(name)) secondary.push(name)
     else primary.push(name)
   }
   return [...primary, ...secondary].slice(0, PROVIDER_MODEL_LIMIT)

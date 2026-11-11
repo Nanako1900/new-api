@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   HOME_PROVIDERS,
   type HomeProvider,
+  isSecondaryModel,
   providerOf,
 } from './provider-models'
 
@@ -26,7 +27,6 @@ type PerfModel = {
   model_name: string
   success_rate: number
   avg_latency_ms: number
-  request_count?: number
 }
 
 type VendorModel = {
@@ -58,9 +58,13 @@ export function canShowLiveStatus(
 }
 
 /**
- * Per-provider success rate and latency from the per-model performance
- * summary, weighted by request count when the server reports it. A
- * provider with no measured models maps to null.
+ * Per-provider success rate and latency, read from each provider's busiest
+ * chat model, or its busiest image / audio / embedding model when it has no
+ * chat traffic. The summary lists models busiest first
+ * (pkg/perf_metrics QuerySummaryAll) but does not publish their request
+ * counts, so averaging across models would let a rarely used model at 0%
+ * sink a provider whose traffic is healthy. A provider with no measured
+ * models maps to null.
  */
 export function summarizeProviderHealth(
   perfModels: PerfModel[],
@@ -73,44 +77,31 @@ export function summarizeProviderHealth(
     }
   }
 
-  const totals: Record<
-    HomeProvider,
-    { weight: number; success: number; latencyWeight: number; latency: number }
-  > = {
-    claude: { weight: 0, success: 0, latencyWeight: 0, latency: 0 },
-    gpt: { weight: 0, success: 0, latencyWeight: 0, latency: 0 },
-  }
-
+  const chat: Partial<Record<HomeProvider, PerfModel>> = {}
+  const secondary: Partial<Record<HomeProvider, PerfModel>> = {}
   for (const model of perfModels) {
     const provider = providerOf(
       model.model_name,
       vendorByModel.get(model.model_name)
     )
     if (!provider || !Number.isFinite(model.success_rate)) continue
-    const weight =
-      model.request_count && model.request_count > 0 ? model.request_count : 1
-    const bucket = totals[provider]
-    bucket.weight += weight
-    bucket.success += model.success_rate * weight
-    if (Number.isFinite(model.avg_latency_ms) && model.avg_latency_ms > 0) {
-      bucket.latencyWeight += weight
-      bucket.latency += model.avg_latency_ms * weight
-    }
+    const busiest = isSecondaryModel(model.model_name) ? secondary : chat
+    busiest[provider] ??= model
   }
 
   const result = {} as Record<HomeProvider, ProviderHealth | null>
-  for (const provider of Object.keys(totals) as HomeProvider[]) {
-    const bucket = totals[provider]
-    result[provider] =
-      bucket.weight === 0
-        ? null
-        : {
-            successRate: bucket.success / bucket.weight,
-            avgLatencyMs:
-              bucket.latencyWeight === 0
-                ? Number.NaN
-                : bucket.latency / bucket.latencyWeight,
-          }
+  for (const provider of HOME_PROVIDERS) {
+    const model = chat[provider] ?? secondary[provider]
+    if (!model) {
+      result[provider] = null
+      continue
+    }
+    const hasLatency =
+      Number.isFinite(model.avg_latency_ms) && model.avg_latency_ms > 0
+    result[provider] = {
+      successRate: model.success_rate,
+      avgLatencyMs: hasLatency ? model.avg_latency_ms : Number.NaN,
+    }
   }
   return result
 }
