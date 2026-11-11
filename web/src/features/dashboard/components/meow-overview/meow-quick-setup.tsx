@@ -24,10 +24,10 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { resolveApiRoot } from '@/features/home/lib/base-url'
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useStatus } from '@/hooks/use-status'
+import { resolveApiRoot } from '@/lib/api-root'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
@@ -60,7 +60,7 @@ export function MeowQuickSetup() {
 
   const keys = keysQuery.data ?? []
   const preferredKey = keys.find((item) => item.status === 1) ?? keys[0]
-  const apiRoot = resolveApiRoot(status?.server_address, window.location.origin)
+  const apiRoot = resolveApiRoot(status, window.location.origin)
   const snippet = buildSetupSnippet(
     client,
     apiRoot,

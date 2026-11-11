@@ -21,6 +21,7 @@ import { useState } from 'react'
 import { CopyButton } from '@/components/copy-button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useStatus } from '@/hooks/use-status'
+import { resolveApiRoot } from '@/lib/api-root'
 import { cn } from '@/lib/utils'
 
 import {
@@ -32,7 +33,6 @@ import {
   renderDemoRequest,
   tokenizeCodeLine,
 } from '../../lib/api-demos'
-import { resolveApiRoot } from '../../lib/base-url'
 import { HERO_GLASS, HeroStage } from './hero-visuals/hero-stage'
 
 const TOKEN_CLASS: Record<CodeTokenKind, string> = {
@@ -106,7 +106,7 @@ type MeowCodeCardProps = {
 export function MeowCodeCard(props: MeowCodeCardProps) {
   const { status } = useStatus()
   const [demoId, setDemoId] = useState<ApiDemoId>('claude')
-  const apiRoot = resolveApiRoot(status?.server_address, window.location.origin)
+  const apiRoot = resolveApiRoot(status, window.location.origin)
   const demo = API_DEMOS.find((item) => item.id === demoId) ?? API_DEMOS[0]
   const request = renderDemoRequest(demo, apiRoot)
 

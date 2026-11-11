@@ -24,9 +24,9 @@ import { useTranslation } from 'react-i18next'
 
 import { formatLatency } from '@/features/performance-metrics/lib/format'
 import { useStatus } from '@/hooks/use-status'
+import { resolveApiRoot } from '@/lib/api-root'
 import { cn } from '@/lib/utils'
 
-import { resolveApiRoot } from '../../../lib/base-url'
 import { HERO_GLASS, HeroStage } from './hero-stage'
 
 /** Delay before the first replaced URL starts typing. */
@@ -121,7 +121,7 @@ export function BaseUrlVisual(props: { className?: string }) {
   const [index, setIndex] = useState(0)
   const [streamed, setStreamed] = useState(0)
 
-  const root = resolveApiRoot(status?.server_address, window.location.origin)
+  const root = resolveApiRoot(status, window.location.origin)
   const envLines: EnvLine[] = [
     {
       kind: 'removed',
