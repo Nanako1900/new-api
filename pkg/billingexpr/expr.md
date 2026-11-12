@@ -240,15 +240,24 @@ the actual values to `other`. An explicit zero price is present in these fields.
 Older snapshots and logs need no migration. The expression remains the sole
 pricing configuration.
 
-### Request Rules (appended after `|||`)
+### Request Rules (multiplier factors)
 
-Request-conditional multipliers are appended to the expression after a `|||` separator:
+Request-conditional multipliers are stored as ordinary multiplication factors
+after the parenthesized base expression. There is no separate rule syntax or
+separator; the backend compiles and runs the whole string as one billing
+program:
 
 ```
-tier("base", p * 5 + c * 25)|||when(header("anthropic-beta") has "fast-mode") * 6
+(tier("base", p * 5 + c * 25)) * (has(header("anthropic-beta"), "fast-mode") ? 6 : 1)
 ```
 
-These factors are stored as ordinary multiplication in the final expression (for example, `(tier(...)) * (condition ? 6 : 1)`) and run in the same billing program.
+Each factor has the shape `(<condition> ? <multiplier> : 1)`; conditions inside
+one rule group are joined with `&&`, and multiple groups are multiplied together.
+The editor's `combineBillingExpr` builds `(base) * rules`, and
+`splitBillingExprAndRequestRules` separates top-level factors back into the base
+expression and the rule list. An `image_count` factor stays with the base. The
+`|||` separator described by earlier versions of this document is no longer
+generated or parsed by either the backend or the editor.
 
 ### Request Rule Tracing
 
@@ -405,8 +414,9 @@ Credit, second, and count fields keep the bare `u("<field>") * <unit price>`
 shape. Tier conditions are equality checks
 between declared enum fields and values, optionally joined by `&&`, with
 chained ternaries following the same ordering rules as token tiers. Numeric
-range tiers are not part of the current canonical shape. Request rules after
-`|||` remain orthogonal and use the same syntax as token expressions.
+range tiers are not part of the current canonical shape. Request rule factors
+multiplied onto the base remain orthogonal and use the same syntax as token
+expressions.
 
 Before saving, the host compiles every expression, rejects literal `u()` keys
 that the selected task plugin did not declare, and smoke-tests usage vectors.
@@ -436,23 +446,28 @@ Frontend Editor → Storage → Pre-consume → Settlement → Log Display
 
 ### 1. Frontend Editor
 
-**File**: `web/src/pages/Setting/Ratio/components/TieredPricingEditor.jsx`
+**Files**: `web/src/features/system-settings/models/tiered-pricing-editor.tsx` (`TieredPricingEditor`), opened from `model-pricing-sheet.tsx` under `/system-settings/billing/model-pricing`
 
 Two editing modes:
-- **Visual mode**: Fill in prices per variable, conditions per tier. Generates expression via `generateExprFromVisualConfig()`.
+- **Visual mode**: `VisualBillingDocumentEditor` and `visual-condition-tree.tsx` edit prices per variable and conditions per tier, serialized by `serializeVisualBillingDocument()` in `web/src/features/pricing/lib/billing-expression/visual.ts`. New drafts start from `generateExprFromVisualConfig()` (`web/src/features/pricing/lib/tier-expr.ts`).
 - **Raw mode**: Edit the expression string directly. Includes preset templates for common models.
 
-The editor outputs a billing expression string and an optional request rule expression string. These are combined via `combineBillingExpr(billingExpr, requestRuleExpr)` before storage.
+Request rule groups are edited separately and turned into factors by `buildRequestRuleExpr()`; `combineBillingExpr(billingExpr, requestRuleExpr)` multiplies them onto the base before storage (see Request Rules above). `RequestSimulation` evaluates the draft in the browser with the shared parser in `web/src/features/pricing/lib/billing-expression/`.
+
+Saving goes through `PATCH /api/option/model_pricing` with each model's `expected_version`, so concurrent edits fail with a conflict instead of overwriting each other.
 
 ### 2. Storage
 
 **File**: `setting/billing_setting/tiered_billing.go`
 
-Two option maps stored in the `options` DB table:
-- `ModelBillingMode`: `{ "model-name": "tiered_expr" }` — activates tiered billing for a model
-- `ModelBillingExpr`: `{ "model-name": "tier(\"base\", p * 2.5 + c * 15)" }` — the expression
+Option maps stored in the `options` DB table (registered as `billing_setting`):
+- `billing_setting.billing_mode`: `{ "model-name": "tiered_expr" }` — activates tiered billing for a model
+- `billing_setting.billing_expr`: `{ "model-name": "tier(\"base\", p * 2.5 + c * 15)" }` — the expression
+- `billing_setting.plugin_billing_expr`: `{ "<pluginKey>::<model>": "..." }` — task plugin overrides (see Task Usage Expressions)
 
-On save, the expression is validated:
+Built-in expressions in `setting/billing_setting/builtin_billing.go` apply when a model has no explicit mode and no administrator-configured legacy ratio or price.
+
+On save (`model.UpdateModelPricing`), the expression is validated:
 1. Compiled via `billingexpr.CompileFromCache()` — syntax check
 2. Smoke-tested with sample token vectors — ensures non-negative results
 
@@ -488,11 +503,11 @@ After the upstream response returns with actual token usage:
 
 ### 5. Log Display
 
-**Files**: `service/log_info_generate.go`, `web/src/helpers/render.jsx`
+**Files**: `service/log_info_generate.go`, `web/src/features/usage-logs/lib/format.ts`, `web/src/features/usage-logs/components/dialogs/details-dialog.tsx`
 
 Backend: `InjectTieredBillingInfo()` adds `billing_mode`, `expr_b64` (base64 expression), `matched_tier`, and the structured `request_rules` trace list to the log's `other` JSON.
 
-Frontend: Detects `billing_mode === "tiered_expr"`, decodes `expr_b64`, parses tiers via shared `parseTiersFromExpr()`, and renders request multipliers from `request_rules` when present. Without log traces, it falls back to parsing the stored expression.
+Frontend: `getTieredBillingSummary()` detects `billing_mode === "tiered_expr"` and decodes `expr_b64` with `decodeBillingExprB64()`. The details dialog renders the shared `DynamicPricingBreakdown` (`web/src/features/pricing/components/dynamic-pricing-breakdown.tsx`) with the decoded expression, the matched tier, and request multipliers from `request_rules` when present. Without log traces, it falls back to parsing the stored expression.
 
 ---
 
@@ -548,11 +563,13 @@ This enables future evolution without breaking existing expressions.
 | Layer | Files |
 |-------|-------|
 | Expression engine | `pkg/billingexpr/compile.go`, `run.go`, `settle.go`, `round.go`, `types.go` |
-| Storage | `setting/billing_setting/tiered_billing.go` |
+| Storage | `setting/billing_setting/tiered_billing.go`, `setting/billing_setting/builtin_billing.go` |
+| Admin pricing API | `model/model_pricing_config.go`, `model/model_pricing_conversion.go`, `controller/model_pricing_config.go` |
 | Pre-consume | `relay/helper/price.go`, `relay/helper/billing_expr_request.go` |
 | Settlement | `service/tiered_settle.go`, `service/quota.go` |
 | Log injection | `service/log_info_generate.go` |
-| Frontend editor | `web/src/pages/Setting/Ratio/components/TieredPricingEditor.jsx` |
-| Frontend display | `web/src/helpers/render.jsx`, `web/src/helpers/utils.jsx` |
-| Model detail | `web/src/components/table/model-pricing/modal/components/DynamicPricingBreakdown.jsx` |
-| Log display | `web/src/hooks/usage-logs/useUsageLogsData.jsx`, `web/src/components/table/usage-logs/UsageLogsColumnDefs.jsx` |
+| Frontend editor | `web/src/features/system-settings/models/tiered-pricing-editor.tsx`, `visual-billing-document-editor.tsx`, `model-pricing-sheet.tsx` |
+| Frontend expression parser | `web/src/features/pricing/lib/billing-expression/` (`parser.ts`, `runtime.ts`, `visual.ts`, `display.ts`) |
+| Frontend legacy helpers | `web/src/features/pricing/lib/billing-expr.ts` (`parseTiersFromExpr`, request rule split/combine), `web/src/features/pricing/lib/tier-expr.ts` |
+| Model detail | `web/src/features/pricing/components/dynamic-pricing-breakdown.tsx` |
+| Log display | `web/src/features/usage-logs/lib/format.ts`, `web/src/features/usage-logs/components/dialogs/details-dialog.tsx` |
