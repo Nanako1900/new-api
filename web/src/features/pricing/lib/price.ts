@@ -210,6 +210,43 @@ export function formatGroupPrice(
 }
 
 /**
+ * Official token price: the base price before group ratios and recharge rates.
+ */
+export function formatOfficialTokenPrice(
+  model: PricingModel,
+  type: PriceType,
+  tokenUnit: TokenUnit
+): string {
+  if (model.quota_type === QUOTA_TYPE_VALUES.REQUEST) {
+    return '-'
+  }
+
+  const price =
+    calculateTokenPrice(model, type, 1) / TOKEN_UNIT_DIVISORS[tokenUnit]
+  return formatBillingCurrencyFromUSD(price, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
+}
+
+/**
+ * Official per-request price: the base price before group ratios and
+ * recharge rates.
+ */
+export function formatOfficialRequestPrice(model: PricingModel): string {
+  if (model.quota_type !== QUOTA_TYPE_VALUES.REQUEST) {
+    return '-'
+  }
+
+  return formatBillingCurrencyFromUSD(model.model_price || 0, {
+    digitsLarge: 4,
+    digitsSmall: 4,
+    abbreviate: false,
+  })
+}
+
+/**
  * Format fixed price for pay-per-request models (with specific group)
  */
 export function formatFixedPrice(

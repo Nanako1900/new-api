@@ -26,11 +26,13 @@ import { translateServerText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import type { MeowChannel, MeowChannelPerf } from '../../lib/meow-catalog'
+import { officialPriceFactor } from '../../lib/official-price'
 import {
   MEOW_ROW_GRID,
   MeowModelRow,
   type MeowPriceOptions,
 } from './meow-model-row'
+import { MeowOfficialPriceBadge } from './meow-official-price-badge'
 
 /** The channel's translated description, or its group name without one. */
 function channelLabel(t: TFunction, channel: MeowChannel): string {
@@ -40,11 +42,15 @@ function channelLabel(t: TFunction, channel: MeowChannel): string {
 
 export interface MeowChannelBadgeProps {
   channel: MeowChannel
+  prices: MeowPriceOptions
   asHeading: boolean
   className?: string
 }
 
-/** Channel name, its price multiplier and the token group to pick. */
+/**
+ * Channel name, its price multiplier, how its prices compare with the official
+ * price, and the token group to pick.
+ */
 export function MeowChannelBadge(props: MeowChannelBadgeProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -62,6 +68,9 @@ export function MeowChannelBadge(props: MeowChannelBadgeProps) {
         <span className='sr-only'>{t('Group Ratio')} </span>×
         {formatNumber(props.channel.ratio, locale)}
       </span>
+      <MeowOfficialPriceBadge
+        factor={officialPriceFactor(props.channel.ratio, props.prices)}
+      />
       <span className='text-muted-foreground flex items-center gap-1 text-xs'>
         {t('Token group')}
         <code className='font-mono'>{props.channel.group}</code>
@@ -93,6 +102,7 @@ export function MeowChannelTable(props: MeowChannelTableProps) {
       {props.showBadge && (
         <MeowChannelBadge
           channel={props.channel}
+          prices={props.prices}
           asHeading
           className='px-4 pt-3 pb-1'
         />
