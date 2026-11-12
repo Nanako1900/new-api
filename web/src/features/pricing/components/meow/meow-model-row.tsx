@@ -34,9 +34,20 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 import { QUOTA_TYPE_VALUES } from '../../constants'
 import { isDynamicPricingModel } from '../../lib/dynamic-price'
 import { toStatusSlots } from '../../lib/meow-catalog'
-import { formatFixedPrice, formatGroupPrice } from '../../lib/price'
+import { getConfiguredGroupRatio } from '../../lib/model-helpers'
+import {
+  compareWithOfficialPrice,
+  officialPriceFactor,
+} from '../../lib/official-price'
+import {
+  formatFixedPrice,
+  formatGroupPrice,
+  formatOfficialRequestPrice,
+  formatOfficialTokenPrice,
+} from '../../lib/price'
 import type { PriceType, PricingModel } from '../../types'
 import { ModelPriceCell } from '../model-price-cell'
+import { MeowPriceValue } from './meow-price-value'
 import { MeowStatusBar } from './meow-status-bar'
 
 /** Desktop column widths shared by the header row and the model rows. */
@@ -60,45 +71,74 @@ const TOKEN_PRICE_COLUMNS: {
 ]
 
 type ChannelPrices =
-  | { kind: 'token'; values: string[] }
-  | { kind: 'request'; price: string }
+  | { kind: 'token'; values: string[]; officials: (string | null)[] }
+  | { kind: 'request'; price: string; official: string | null }
   | { kind: 'dynamic' }
 
-/** A model's prices in one channel, from the page's group ratios. */
+/**
+ * A model's prices in one channel, from the page's group ratios, with the
+ * official prices to strike through when the channel is cheaper.
+ */
 function getChannelPrices(
   model: PricingModel,
   group: string,
   prices: MeowPriceOptions
 ): ChannelPrices {
   if (isDynamicPricingModel(model)) return { kind: 'dynamic' }
+  const comparison = compareWithOfficialPrice(
+    officialPriceFactor(
+      getConfiguredGroupRatio(prices.groupRatio, group),
+      prices
+    )
+  )
+  // A struck official price marks a saving, so a markup shows none.
+  const showOfficial =
+    comparison.kind === 'discount' || comparison.kind === 'free'
+  // A zero or rounded-away base price can format the same as the channel
+  // price; striking it through would claim a saving that is not shown.
+  const officialUnlessEqual = (official: string, price: string) =>
+    showOfficial && official !== price ? official : null
   if (model.quota_type === QUOTA_TYPE_VALUES.REQUEST) {
+    const price = formatFixedPrice(
+      model,
+      group,
+      prices.showRechargePrice,
+      prices.priceRate,
+      prices.usdExchangeRate,
+      prices.groupRatio
+    )
     return {
       kind: 'request',
-      price: formatFixedPrice(
-        model,
-        group,
-        prices.showRechargePrice,
-        prices.priceRate,
-        prices.usdExchangeRate,
-        prices.groupRatio
-      ),
+      price,
+      official: officialUnlessEqual(formatOfficialRequestPrice(model), price),
     }
   }
+  const columns = TOKEN_PRICE_COLUMNS.map((column) => {
+    if (column.type === 'cache' && model.cache_ratio == null) {
+      return { value: '—', official: null }
+    }
+    const value = formatGroupPrice(
+      model,
+      group,
+      column.type,
+      'M',
+      prices.showRechargePrice,
+      prices.priceRate,
+      prices.usdExchangeRate,
+      prices.groupRatio
+    )
+    return {
+      value,
+      official: officialUnlessEqual(
+        formatOfficialTokenPrice(model, column.type, 'M'),
+        value
+      ),
+    }
+  })
   return {
     kind: 'token',
-    values: TOKEN_PRICE_COLUMNS.map((column) => {
-      if (column.type === 'cache' && model.cache_ratio == null) return '—'
-      return formatGroupPrice(
-        model,
-        group,
-        column.type,
-        'M',
-        prices.showRechargePrice,
-        prices.priceRate,
-        prices.usdExchangeRate,
-        prices.groupRatio
-      )
-    }),
+    values: columns.map((column) => column.value),
+    officials: columns.map((column) => column.official),
   }
 }
 
@@ -148,9 +188,10 @@ export function MeowModelRow(props: MeowModelRowProps) {
         <span className='text-muted-foreground block text-[11px] md:hidden'>
           {t(column.labelKey)}
         </span>
-        <span className='font-mono tabular-nums'>
-          {channelPrices.values[index]}
-        </span>
+        <MeowPriceValue
+          price={channelPrices.values[index]}
+          officialPrice={channelPrices.officials[index]}
+        />
       </div>
     ))
   } else {
@@ -161,9 +202,10 @@ export function MeowModelRow(props: MeowModelRowProps) {
         className='order-3 col-span-3 min-w-0 md:order-none'
       >
         {channelPrices.kind === 'request' ? (
-          <span className='font-mono tabular-nums'>
-            {`${channelPrices.price} / ${t('request')}`}
-          </span>
+          <MeowPriceValue
+            price={`${channelPrices.price} / ${t('request')}`}
+            officialPrice={channelPrices.official}
+          />
         ) : (
           <ModelPriceCell
             model={channelModel}

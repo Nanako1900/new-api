@@ -152,6 +152,39 @@ describe('meow pricing catalog', () => {
     expect(await sonnetRow('Claude · Official')).toHaveTextContent('$2.25')
   })
 
+  it('explains channel prices as the official price times the channel multiplier', async () => {
+    mockApi()
+    renderCatalog()
+
+    await sonnetRow('Claude · Official')
+
+    expect(
+      screen.getByText('Channel multiplier').closest('p')
+    ).toHaveTextContent('Official price × Channel multiplier = Our price')
+  })
+
+  it('compares recharge prices with the official price when recharge is shown', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    renderCatalog({ price: 4, usd_exchange_rate: 8 })
+    await sonnetRow('Claude · Official')
+    expect(screen.getByText('1.5× official price')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Recharge' }))
+
+    expect(
+      await screen.findByText('25% off official price')
+    ).toBeInTheDocument()
+    expect(
+      within(await sonnetRow('Claude · Official')).getAllByRole('deletion')[0]
+    ).toHaveTextContent('Official price $3')
+    expect(
+      screen.getByText('Channel multiplier').closest('p')
+    ).toHaveTextContent(
+      'Official price × Channel multiplier × Recharge discount = Our price'
+    )
+  })
+
   it('opens the details drawer when a model name is clicked', async () => {
     // The drawer loads lazily; warm its chunk so a cold module cache cannot
     // outlast the lookup below.

@@ -28,8 +28,10 @@ import type {
   MeowFamily,
   MeowFamilyId,
 } from '../../lib/meow-catalog'
+import { officialPriceFactor } from '../../lib/official-price'
 import { MeowChannelBadge, MeowChannelTable } from './meow-channel-table'
 import type { MeowPriceOptions } from './meow-model-row'
+import { MeowOfficialPriceBadge } from './meow-official-price-badge'
 
 type FamilyMeta = {
   name?: string
@@ -69,6 +71,14 @@ export function MeowFamilyCard(props: MeowFamilyCardProps) {
   const Icon = meta.icon
   const singleChannel =
     props.family.channels.length === 1 ? props.family.channels[0] : null
+  // A single channel carries its own badge; the family repeats only the best.
+  const bestFactor = singleChannel
+    ? null
+    : Math.min(
+        ...props.family.channels.map((channel) =>
+          officialPriceFactor(channel.ratio, props.prices)
+        )
+      )
 
   return (
     <section
@@ -91,9 +101,17 @@ export function MeowFamilyCard(props: MeowFamilyCardProps) {
             <p className='text-muted-foreground text-xs'>{meta.vendor}</p>
           )}
         </div>
+        {bestFactor !== null && (
+          <MeowOfficialPriceBadge
+            factor={bestFactor}
+            best
+            className='ml-auto h-6 px-2.5 text-sm'
+          />
+        )}
         {singleChannel && (
           <MeowChannelBadge
             channel={singleChannel}
+            prices={props.prices}
             asHeading={false}
             className='ml-auto'
           />

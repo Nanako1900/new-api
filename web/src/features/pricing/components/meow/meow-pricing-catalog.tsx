@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
+import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
@@ -120,6 +121,19 @@ export function MeowPricingCatalog() {
           <h1 className='text-3xl font-bold tracking-tight sm:text-4xl'>
             {t('Models and prices')}
           </h1>
+          <p className='text-muted-foreground mt-3 flex flex-wrap items-center gap-1.5 text-sm'>
+            <Badge variant='outline'>{t('Official price')}</Badge>
+            {' × '}
+            <Badge variant='outline'>{t('Channel multiplier')}</Badge>
+            {prices.showRechargePrice && (
+              <>
+                {' × '}
+                <Badge variant='outline'>{t('Recharge discount')}</Badge>
+              </>
+            )}
+            {' = '}
+            <Badge>{t('Our price')}</Badge>
+          </p>
           <p className='text-muted-foreground mt-2 text-sm'>
             {t(
               "Prices include each channel's multiplier and are shown per 1M tokens. Status covers the last 24 hours."
