@@ -25,6 +25,10 @@ type ChannelFormErrorMap = Partial<
 >
 
 const ADVANCED_SETTINGS_FIELDS = new Set<FieldPath<ChannelFormValues>>([
+  'user_agent_restriction_enabled',
+  'user_agent_profile',
+  'user_agent_exact',
+  'user_agent_prefixes',
   'priority',
   'weight',
   'test_model',

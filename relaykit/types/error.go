@@ -39,6 +39,8 @@ type ErrorCode string
 
 const (
 	ErrorCodeInvalidRequest           ErrorCode = "invalid_request"
+	ErrorCodeUserAgentNotAllowed      ErrorCode = "user_agent_not_allowed"
+	ErrorCodeUserAgentPolicyInvalid   ErrorCode = "user_agent_policy_invalid"
 	ErrorCodeSensitiveWordsDetected   ErrorCode = "sensitive_words_detected"
 	ErrorCodeContentReviewRejected    ErrorCode = "content_review_rejected"
 	ErrorCodeContentReviewUnavailable ErrorCode = "content_review_unavailable"
@@ -221,6 +223,12 @@ func (e *NewAPIError) ToOpenAIError(upstreamURLs ...string) OpenAIError {
 
 // ToClaudeError masks the upstream addresses like ToOpenAIError.
 func (e *NewAPIError) ToClaudeError(upstreamURLs ...string) ClaudeError {
+	if e.errorCode == ErrorCodeUserAgentNotAllowed {
+		return ClaudeError{Type: "permission_error", Message: e.MaskSensitiveError(upstreamURLs...)}
+	}
+	if e.errorCode == ErrorCodeUserAgentPolicyInvalid {
+		return ClaudeError{Type: "api_error", Message: e.MaskSensitiveError(upstreamURLs...)}
+	}
 	var result ClaudeError
 	switch e.errorType {
 	case ErrorTypeOpenAIError:

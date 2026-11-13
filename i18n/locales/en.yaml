@@ -1,6 +1,8 @@
 # English translations
 
 # Errors returned to AI clients
+channel.user_agent_not_allowed: "This channel does not allow this client User-Agent"
+channel.user_agent_policy_invalid: "The channel User-Agent restriction is invalid; contact the administrator"
 common.database_error: "Database error, please contact the administrator"
 auth.user_banned: "User has been banned"
 token.get_info_failed: "Failed to get token info, please try again later"

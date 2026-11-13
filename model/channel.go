@@ -968,8 +968,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 }
 
 // channelPluginHasHook reports a task plugin channel whose plugin exports
-// hook. It reads the setting without GetSetting, which clears an invalid
-// stored setting.
+// hook. It reads the setting directly and ignores malformed configurations.
 func channelPluginHasHook(ch *Channel, hook string) bool {
 	var setting dto.ChannelSettings
 	if ch.Type != constant.ChannelTypeTaskPlugin || ch.Setting == nil || common.UnmarshalJsonStr(*ch.Setting, &setting) != nil {
@@ -1171,6 +1170,9 @@ func (channel *Channel) ValidateSettings() error {
 	if err := channelParams.ValidateHTTPTransport(); err != nil {
 		return err
 	}
+	if err := channelParams.UserAgentPolicy.Validate(); err != nil {
+		return err
+	}
 	channelOtherSettings := &dto.ChannelOtherSettings{}
 	if channel.OtherSettings != "" {
 		err := common.UnmarshalJsonStr(channel.OtherSettings, channelOtherSettings)
@@ -1208,10 +1210,8 @@ func (channel *Channel) GetSetting() dto.ChannelSettings {
 		err := common.Unmarshal([]byte(*channel.Setting), &setting)
 		if err != nil {
 			common.SysLog(common.LogText("failed to unmarshal setting: channel_id=%d, error=%v", channel.Id, err))
-			channel.Setting = nil // 清空设置以避免后续错误
-			// Only the cleared column is written: the rest of this copy, its key
-			// included, may be older than the stored channel.
-			_ = DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("setting", nil).Error
+			// Preserve invalid settings so access policies can fail closed.
+			// A read must not silently remove a channel's restrictions.
 		}
 	}
 	return setting
@@ -1233,7 +1233,7 @@ func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 		if err != nil {
 			common.SysLog(common.LogText("failed to unmarshal setting: channel_id=%d, error=%v", channel.Id, err))
 			channel.OtherSettings = "{}" // 清空设置以避免后续错误
-			// Only the cleared column is written, as in GetSetting.
+			// Only the cleared column is written; this copy may contain stale credentials.
 			_ = DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("settings", channel.OtherSettings).Error
 		}
 	}

@@ -33,6 +33,7 @@ type ModelRequest struct {
 
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		service.CaptureChannelUserAgent(c)
 		var channel *model.Channel
 		defer func() {
 			if c.Writer.Status() >= 400 {
@@ -131,7 +132,24 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if channel != nil {
+			if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
+				if strings.HasPrefix(c.Request.URL.Path, "/v1/messages") {
+					errorType := "api_error"
+					if setupErr.StatusCode == http.StatusForbidden {
+						errorType = "permission_error"
+					}
+					c.AbortWithStatusJSON(setupErr.StatusCode, dto.ClaudeResponse{Type: "error", Error: &types.ClaudeError{
+						Type: errorType, Message: common.MessageWithRequestId(setupErr.Error(), c.GetString(common.RequestIdKey)),
+					}})
+				} else {
+					abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+				}
+				return
+			}
+		} else {
+			c.Set("original_model", modelRequest.Model)
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -615,6 +633,19 @@ func getTaskOriginModelName(c *gin.Context) string {
 }
 
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	if apiErr := service.EnforceChannelUserAgent(c, channel, modelName); apiErr != nil {
+		return apiErr
+	}
+	return setupContextForChannel(c, channel, modelName)
+}
+
+// SetupContextForInternalChannel is for server-created health checks and
+// content review calls. Public relay routes must use SetupContextForSelectedChannel.
+func SetupContextForInternalChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	return setupContextForChannel(c, channel, modelName)
+}
+
+func setupContextForChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	expectedPlugin := c.GetString("expected_task_plugin_key")
 	if channel == nil {

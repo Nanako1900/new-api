@@ -2,6 +2,8 @@
 # 中文（繁體）翻譯檔案
 
 # Errors returned to AI clients
+channel.user_agent_not_allowed: "目前渠道不允許此用戶端 User-Agent"
+channel.user_agent_policy_invalid: "渠道的 User-Agent 限制設定無效，請聯繫管理員"
 common.database_error: "資料庫出錯，請聯繫管理員"
 auth.user_banned: "使用者已被封禁"
 token.get_info_failed: "獲取令牌資訊失敗，請稍後重試"

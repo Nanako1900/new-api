@@ -213,6 +213,7 @@ import type { Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
 import { ChannelQuickOptions } from '../channel-quick-options'
 import { ChannelTypeLogo } from '../channel-type-badge'
+import { ChannelUserAgentSetting } from '../channel-user-agent-setting'
 import { useChannels } from '../channels-provider'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
 import { ConfigureModelsDialog } from '../dialogs/configure-models-dialog'
@@ -5033,6 +5034,9 @@ export function ChannelMutateDrawer({
                 <ResponsesWebSocketSetting
                   channelType={currentType}
                   supported={responsesWebsocketSupported}
+                  disabled={sensitiveLocked || isSubmitting}
+                />
+                <ChannelUserAgentSetting
                   disabled={sensitiveLocked || isSubmitting}
                 />
                 {formatFields}

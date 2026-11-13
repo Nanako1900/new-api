@@ -64,6 +64,10 @@ const CONFIGURATION_BLOCKS = {
   requestProcessing: {
     section: 'request',
     fields: [
+      'user_agent_restriction_enabled',
+      'user_agent_profile',
+      'user_agent_exact',
+      'user_agent_prefixes',
       'force_format',
       'thinking_to_content',
       'pass_through_body_enabled',
@@ -170,6 +174,7 @@ export function getChannelConfigurationState(
       Boolean(values.request_plugins?.length) ||
       hasConfiguredJson(values.header_override),
     requestProcessing: Boolean(
+      values.user_agent_restriction_enabled ||
       (values.type === 1 && values.force_format) ||
       values.thinking_to_content ||
       (values.type !== CHANNEL_TYPE_ADVANCED_CUSTOM &&

@@ -110,6 +110,11 @@ export type Channel = z.infer<typeof channelSchema>
 // ============================================================================
 
 export interface ChannelSettings {
+  user_agent_policy?: {
+    enabled: boolean
+    profile: 'claude_code' | 'custom'
+    rules?: { match: 'exact' | 'prefix'; value: string }[]
+  }
   task_plugin_key?: string
   task_extend_plugin_keys?: string[]
   /** Request processing instance ids, in the order they run. */

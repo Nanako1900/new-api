@@ -22,6 +22,8 @@ const (
 	MsgRateLimitReached      = "rate_limit.reached"
 	MsgRateLimitTotalReached = "rate_limit.total_reached"
 
+	MsgChannelUserAgentNotAllowed              = "channel.user_agent_not_allowed"
+	MsgChannelUserAgentPolicyInvalid           = "channel.user_agent_policy_invalid"
 	MsgDistributorInvalidRequest               = "distributor.invalid_request"
 	MsgDistributorInvalidChannelId             = "distributor.invalid_channel_id"
 	MsgDistributorChannelDisabled              = "distributor.channel_disabled"

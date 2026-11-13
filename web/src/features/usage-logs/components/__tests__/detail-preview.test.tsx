@@ -328,6 +328,39 @@ test('quota saturation remains first and only billing adds to the counter', () =
 })
 
 test.each([true, false])(
+  'User-Agent rejection details are visible only to admins (%s)',
+  async (isAdmin) => {
+    const preview = renderPreview(
+      {
+        model_price: 0.25,
+        admin_info: {
+          user_agent_policy: {
+            user_agent: '"curl/8.0"',
+            profile: 'claude_code',
+            reason: 'not_allowed',
+          },
+        },
+      },
+      isAdmin
+    )
+    fireEvent.click(preview)
+    const dialog = within(await screen.findByRole('dialog'))
+    if (isAdmin) {
+      expect(dialog.getByText('Client User-Agent restriction')).toBeVisible()
+      expect(dialog.getByText('"curl/8.0"')).toBeVisible()
+      expect(
+        dialog.getByText('User-Agent does not match the allowlist')
+      ).toBeVisible()
+    } else {
+      expect(dialog.queryByText('"curl/8.0"')).not.toBeInTheDocument()
+      expect(
+        dialog.queryByText('Client User-Agent restriction')
+      ).not.toBeInTheDocument()
+    }
+  }
+)
+
+test.each([true, false])(
   'plugin information in the opened dialog respects admin=%s',
   async (isAdmin) => {
     const preview = renderPreview(

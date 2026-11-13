@@ -19,6 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  'The Claude Code User-Agent preset cannot include custom rules',
+  'User-Agent allowlist must contain between 1 and 20 rules',
+  'User-Agent rules must use exact or prefix matching',
+  'User-Agent rule values must contain 1 to 1024 bytes without control characters',
+  'Select a valid User-Agent restriction profile',
+  'This channel does not allow this client User-Agent',
+  'The channel User-Agent restriction is invalid; contact the administrator',
   'The adjusted price is outside the supported range.',
   'This expression cannot be adjusted automatically. Keep the source price or edit it manually.',
   'Task usage metadata is unavailable. Pricing details cannot be displayed.',
