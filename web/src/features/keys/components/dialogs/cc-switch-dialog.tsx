@@ -31,11 +31,21 @@ import { getUserModels } from '@/lib/api'
 import { resolveApiRoot } from '@/lib/api-root'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { readCachedStatus } from '@/lib/status-query'
+import { useAuthStore } from '@/stores/auth-store'
+import { useOnboardingStore } from '@/stores/onboarding-store'
 
+import {
+  ccSwitchModelChoices,
+  defaultCCSwitchModels,
+  type CCSwitchApp,
+  type CCSwitchModels,
+} from '../../lib/cc-switch-defaults'
+
+// MeowAPI serves Claude and GPT models only, so Gemini is not offered.
 const APP_CONFIGS = {
   claude: {
     label: 'Claude',
-    defaultName: 'My Claude',
+    defaultName: 'MeowAPI Claude',
     modelFields: [
       { key: 'model', labelKey: 'Primary Model', required: true },
       { key: 'haikuModel', labelKey: 'Haiku Model', required: false },
@@ -45,17 +55,12 @@ const APP_CONFIGS = {
   },
   codex: {
     label: 'Codex',
-    defaultName: 'My Codex',
+    defaultName: 'MeowAPI Codex',
     modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
   },
-  gemini: {
-    label: 'Gemini',
-    defaultName: 'My Gemini',
-    modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
-  },
-} as const
+} as const satisfies Record<CCSwitchApp, unknown>
 
-type AppType = keyof typeof APP_CONFIGS
+type AppType = CCSwitchApp
 
 function buildCCSwitchURL(
   app: string,
@@ -89,7 +94,10 @@ export function CCSwitchDialog(props: Props) {
   const { t } = useTranslation()
   const [app, setApp] = useState<AppType>('claude')
   const [name, setName] = useState<string>(APP_CONFIGS.claude.defaultName)
-  const [models, setModels] = useState<Record<string, string>>({})
+  // Fields the user changed; the rest follow the defaults for the app.
+  const [modelEdits, setModelEdits] = useState<CCSwitchModels>({})
+  const userId = useAuthStore((state) => state.auth.user?.id)
+  const recordImport = useOnboardingStore((state) => state.recordImport)
 
   const { data: modelsData } = useQuery({
     queryKey: ['user-models-ccswitch'],
@@ -98,15 +106,27 @@ export function CCSwitchDialog(props: Props) {
     staleTime: 5 * 60 * 1000,
   })
 
-  const modelOptions = useMemo(() => {
-    const items = modelsData?.data ?? []
-    return items.map((m) => ({ value: m, label: m }))
-  }, [modelsData?.data])
+  // Only models of the chosen client's family, so Codex cannot be pointed
+  // at a Claude model or the other way round.
+  const choices = useMemo(
+    () => ccSwitchModelChoices(app, modelsData?.data ?? []),
+    [app, modelsData?.data]
+  )
+
+  const modelOptions = useMemo(
+    () => choices.map((m) => ({ value: m, label: m })),
+    [choices]
+  )
+
+  const models = useMemo(
+    () => ({ ...defaultCCSwitchModels(app, choices), ...modelEdits }),
+    [app, choices, modelEdits]
+  )
 
   useEffect(() => {
     if (props.open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setModels({})
+      setModelEdits({})
 
       setApp('claude')
 
@@ -120,7 +140,7 @@ export function CCSwitchDialog(props: Props) {
     const appVal = val as AppType
     setApp(appVal)
     setName(APP_CONFIGS[appVal].defaultName)
-    setModels({})
+    setModelEdits({})
   }
 
   const handleSubmit = () => {
@@ -133,6 +153,7 @@ export function CCSwitchDialog(props: Props) {
       : `sk-${props.tokenKey}`
     const url = buildCCSwitchURL(app, name, models, key)
     window.open(url, '_blank')
+    if (userId !== undefined) recordImport(userId)
     props.onOpenChange(false)
   }
 
@@ -149,11 +170,13 @@ export function CCSwitchDialog(props: Props) {
           <Button variant='outline' onClick={() => props.onOpenChange(false)}>
             {t('Cancel')}
           </Button>
-          <Button onClick={handleSubmit}>{t('Open CC Switch')}</Button>
+          <Button data-tour='cc-switch-open' onClick={handleSubmit}>
+            {t('Open CC Switch')}
+          </Button>
         </>
       }
     >
-      <div className='space-y-4'>
+      <div data-tour='cc-switch-form' className='space-y-4'>
         <div className='space-y-2'>
           <Label>{t('Application')}</Label>
           <RadioGroup
@@ -198,7 +221,7 @@ export function CCSwitchDialog(props: Props) {
               options={modelOptions}
               value={models[field.key] || ''}
               onValueChange={(v) =>
-                setModels((prev) => ({ ...prev, [field.key]: v ?? '' }))
+                setModelEdits((prev) => ({ ...prev, [field.key]: v ?? '' }))
               }
               placeholder={t('Select or enter model name')}
               emptyText={t('No models found')}

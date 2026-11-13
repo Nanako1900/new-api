@@ -16,58 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export type SetupClient = 'claude-code' | 'codex' | 'sdk'
-
-export const SETUP_CLIENTS: { id: SetupClient; label: string }[] = [
-  { id: 'claude-code', label: 'Claude Code' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'sdk', label: 'SDK' },
-]
-
-/**
- * Ready-to-paste client configuration for this site. `apiRoot` has no
- * trailing slash and no `/v1`; `apiKey` is the full key or a masked one.
- */
-export function buildSetupSnippet(
-  client: SetupClient,
-  apiRoot: string,
-  apiKey: string
-): string {
-  if (client === 'claude-code') {
-    return [
-      `export ANTHROPIC_BASE_URL=${apiRoot}`,
-      `export ANTHROPIC_AUTH_TOKEN=${apiKey}`,
-      'claude',
-    ].join('\n')
-  }
-  if (client === 'codex') {
-    return [
-      '# ~/.codex/config.toml',
-      'model_provider = "meow"',
-      '',
-      '[model_providers.meow]',
-      `base_url = "${apiRoot}/v1"`,
-      'env_key = "MEOW_API_KEY"',
-    ].join('\n')
-  }
-  return [
-    'from openai import OpenAI',
-    '',
-    'client = OpenAI(',
-    `    base_url="${apiRoot}/v1",`,
-    `    api_key="${apiKey}",`,
-    ')',
-  ].join('\n')
-}
-
-/** `sk-` key shortened for display, e.g. `sk-abcd…wxyz`. */
-export function maskApiKey(key: string | undefined): string {
-  if (!key) return 'sk-…'
-  const full = key.startsWith('sk-') ? key : `sk-${key}`
-  if (full.length <= 14) return full
-  return `${full.slice(0, 7)}…${full.slice(-4)}`
-}
-
 /** Greeting bucket for the local hour (0-23). */
 export function greetingFor(hour: number): 'morning' | 'afternoon' | 'evening' {
   if (hour >= 5 && hour < 12) return 'morning'

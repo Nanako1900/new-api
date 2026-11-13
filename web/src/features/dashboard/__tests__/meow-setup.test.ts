@@ -18,37 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { expect, test } from 'vitest'
 
-import {
-  buildSetupSnippet,
-  greetingFor,
-  healthBadge,
-  maskApiKey,
-  splitAroundName,
-} from '../lib/meow-setup'
-
-const ROOT = 'https://meowapi.dev'
-
-test('Claude Code snippet uses the site root without /v1 and the given key', () => {
-  const snippet = buildSetupSnippet('claude-code', ROOT, 'sk-real')
-  expect(snippet).toContain('export ANTHROPIC_BASE_URL=https://meowapi.dev\n')
-  expect(snippet).toContain('export ANTHROPIC_AUTH_TOKEN=sk-real')
-  expect(snippet).not.toContain('/v1')
-})
-
-test.each(['codex', 'sdk'] as const)(
-  '%s snippet points at the OpenAI-compatible /v1 base URL',
-  (client) => {
-    expect(buildSetupSnippet(client, ROOT, 'sk-real')).toContain(
-      'https://meowapi.dev/v1"'
-    )
-  }
-)
-
-test('masked keys keep the prefix and last four characters only', () => {
-  expect(maskApiKey('abcdefghijklmnopqrstuvwxyz')).toBe('sk-abcd…wxyz')
-  expect(maskApiKey('sk-abcdefghijklmnopqrstuvwxyz')).toBe('sk-abcd…wxyz')
-  expect(maskApiKey(undefined)).toBe('sk-…')
-})
+import { greetingFor, healthBadge, splitAroundName } from '../lib/meow-setup'
 
 test.each([
   [4, 'evening'],

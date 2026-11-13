@@ -116,7 +116,12 @@ function KeyList() {
         </div>
       </header>
 
-      <div className='bg-card border-border overflow-hidden rounded-[22px] border'>
+      {/* The onboarding tour reads the key count once the list has loaded. */}
+      <div
+        data-tour='key-list'
+        data-key-count={query.isLoading ? undefined : total}
+        className='bg-card border-border overflow-hidden rounded-[22px] border'
+      >
         <div
           className={cn(
             'text-muted-foreground border-border hidden border-b px-6 py-3.5 text-[13px] font-bold',
