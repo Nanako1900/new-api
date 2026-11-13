@@ -91,12 +91,12 @@ function catalogRank(model: PricingModel): [number, number] {
   return [0, model.model_ratio]
 }
 
-/** Families (Claude, GPT, other) → channels (usable groups) → models. */
-export function buildMeowCatalog(
+/** Public token groups with their complete model catalog, across providers. */
+export function buildMeowChannels(
   models: PricingModel[],
   usableGroup: MeowUsableGroups,
   groupRatio: Record<string, number>
-): MeowFamily[] {
+): MeowChannel[] {
   const channels = Object.entries(usableGroup)
     .filter(([group]) => !EXCLUDED_GROUPS.includes(group))
     .map(([group, info]) => {
@@ -119,23 +119,46 @@ export function buildMeowCatalog(
     )
   })
 
+  return channels
+    .map((channel) => ({
+      ...channel,
+      models: sortedModels.filter((model) =>
+        (model.enable_groups ?? []).some(
+          (group) => group === channel.group || group === ALL_GROUPS
+        )
+      ),
+    }))
+    .filter((channel) => channel.models.length > 0)
+}
+
+/** Families (Claude, GPT, other) → channels (usable groups) → models. */
+export function buildMeowCatalog(
+  models: PricingModel[],
+  usableGroup: MeowUsableGroups,
+  groupRatio: Record<string, number>
+): MeowFamily[] {
+  const channels = buildMeowChannels(models, usableGroup, groupRatio)
   return FAMILY_ORDER.flatMap((id): MeowFamily[] => {
-    const familyModels = sortedModels.filter(
-      (model) =>
-        (providerOf(model.model_name, model.vendor_name) ?? 'other') === id
-    )
     const familyChannels = channels
       .map((channel) => ({
         ...channel,
-        models: familyModels.filter((model) =>
-          (model.enable_groups ?? []).some(
-            (group) => group === channel.group || group === ALL_GROUPS
-          )
+        models: channel.models.filter(
+          (model) =>
+            (providerOf(model.model_name, model.vendor_name) ?? 'other') === id
         ),
       }))
       .filter((channel) => channel.models.length > 0)
     return familyChannels.length > 0 ? [{ id, channels: familyChannels }] : []
   })
+}
+
+/** Keep the channel's usage notes beside a separately formatted multiplier. */
+export function channelUsageDescription(channel: MeowChannel): string {
+  const prefix = channel.description.match(/^(\d+(?:\.\d+)?)\s*[x×]\s*/i)
+  if (prefix && Number(prefix[1]) === channel.ratio) {
+    return channel.description.slice(prefix[0].length).trim()
+  }
+  return channel.description
 }
 
 /**

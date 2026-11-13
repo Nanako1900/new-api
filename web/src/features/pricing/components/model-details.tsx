@@ -38,6 +38,12 @@ import { StaticDataTable } from '@/components/data-table'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
 import { GroupBadge } from '@/components/group-badge'
 import { PublicLayout } from '@/components/layout'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -78,7 +84,11 @@ import {
   type DynamicPriceEntry,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
+import {
+  getAvailableGroups,
+  getConfiguredGroupRatio,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
 import {
   withBasePricing,
   withOrdinaryPricing,
@@ -269,7 +279,10 @@ function OverviewMetric(props: {
   )
 }
 
-function OverviewSummaryGrid(props: { model: PricingModel }) {
+function OverviewSummaryGrid(props: {
+  model: PricingModel
+  selectedGroup?: string
+}) {
   const { t } = useTranslation()
   const metricsQuery = useQuery({
     queryKey: ['perf-metrics', props.model.model_name],
@@ -278,7 +291,11 @@ function OverviewSummaryGrid(props: { model: PricingModel }) {
     staleTime: 60 * 1000,
   })
 
-  const summary = metricsQuery.data?.data.summary
+  const summary = props.selectedGroup
+    ? metricsQuery.data?.data.groups?.find(
+        (group) => group.group === props.selectedGroup
+      )
+    : metricsQuery.data?.data.summary
   const successRate = summary?.success_rate ?? Number.NaN
   const avgTps = summary?.avg_tps ?? 0
   const avgLatency = summary?.avg_latency_ms ?? 0
@@ -999,6 +1016,7 @@ type GroupPricingSectionProps = {
   usdExchangeRate: number
   tokenUnit: TokenUnit
   showRechargePrice?: boolean
+  selectedGroup?: string
 }
 
 // Plugin keys cannot start with an underscore, so this tab value is free.
@@ -1083,8 +1101,11 @@ function ProviderGroupPricingSection(
   const showRechargePrice = props.showRechargePrice ?? false
 
   const availableGroups = useMemo(
-    () => getAvailableGroups(props.model, props.usableGroup || {}),
-    [props.model, props.usableGroup]
+    () =>
+      getAvailableGroups(props.model, props.usableGroup || {}).filter(
+        (group) => !props.selectedGroup || group === props.selectedGroup
+      ),
+    [props.model, props.usableGroup, props.selectedGroup]
   )
 
   const isTokenBased = isTokenBasedModel(props.model)
@@ -1192,7 +1213,7 @@ function ProviderGroupPricingSection(
     })
     const formattedPricesByGroup = new Map(
       availableGroups.map((group) => {
-        const ratio = props.groupRatio[group] || 1
+        const ratio = getConfiguredGroupRatio(props.groupRatio, group)
         return [
           group,
           getDynamicFormattedPricesByTier(dynamicTiers, {
@@ -1215,7 +1236,7 @@ function ProviderGroupPricingSection(
         <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
         <div className='space-y-3'>
           {availableGroups.map((group) => {
-            const ratio = props.groupRatio[group] || 1
+            const ratio = getConfiguredGroupRatio(props.groupRatio, group)
             const formattedPricesByTier =
               formattedPricesByGroup.get(group) ??
               new Map<DynamicPricingTier, Map<string, string>>()
@@ -1421,7 +1442,8 @@ function ProviderGroupPricingSection(
             header: t('Ratio'),
             className: thClass,
             cellClassName: 'text-muted-foreground py-2.5 font-mono',
-            cell: (group) => `${props.groupRatio[group] || 1}x`,
+            cell: (group) =>
+              `${getConfiguredGroupRatio(props.groupRatio, group)}x`,
           },
           ...(isTokenBased
             ? [
@@ -1491,6 +1513,7 @@ export interface ModelDetailsContentProps {
   usdExchangeRate: number
   tokenUnit: TokenUnit
   showRechargePrice?: boolean
+  selectedGroup?: string
 }
 
 export function ModelDetailsContent(props: ModelDetailsContentProps) {
@@ -1512,6 +1535,31 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
     !baseModel.billing_usage_schema ||
     simpleTaskPricing ||
     taskTiers.length === 0
+
+  const basePricing = (
+    <div className='space-y-5'>
+      {showBasePrices && (
+        <PriceSection
+          model={baseModel}
+          priceRate={props.priceRate}
+          usdExchangeRate={props.usdExchangeRate}
+          tokenUnit={props.tokenUnit}
+          showRechargePrice={showRechargePrice}
+        />
+      )}
+      {isDynamic && !simpleTaskPricing && (
+        <DynamicPricingBreakdown
+          billingExpr={baseModel.billing_expr}
+          usageSchema={baseModel.billing_usage_schema}
+          taskPriceOptions={{
+            showRechargePrice,
+            priceRate: props.priceRate,
+            usdExchangeRate: props.usdExchangeRate,
+          }}
+        />
+      )}
+    </div>
+  )
 
   return (
     <div className='@container/details space-y-4'>
@@ -1535,47 +1583,50 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
         </TabsList>
 
         <TabsContent value='overview' className='space-y-6 outline-none'>
-          <OverviewSummaryGrid model={props.model} />
+          <OverviewSummaryGrid
+            model={props.model}
+            selectedGroup={props.selectedGroup}
+          />
 
-          <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
-            <SectionTitle>{t('Pricing')}</SectionTitle>
-            {showBasePrices && (
-              <PriceSection
-                model={baseModel}
-                priceRate={props.priceRate}
-                usdExchangeRate={props.usdExchangeRate}
-                tokenUnit={props.tokenUnit}
-                showRechargePrice={showRechargePrice}
-              />
-            )}
-            {isDynamic && !simpleTaskPricing && (
-              <DynamicPricingBreakdown
-                billingExpr={baseModel.billing_expr}
-                usageSchema={baseModel.billing_usage_schema}
-                taskPriceOptions={{
-                  showRechargePrice,
-                  priceRate: props.priceRate,
-                  usdExchangeRate: props.usdExchangeRate,
-                }}
-              />
-            )}
+          <section
+            aria-label={
+              props.selectedGroup ? t('Channel pricing') : t('Pricing')
+            }
+            className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'
+          >
+            <SectionTitle>
+              {props.selectedGroup ? t('Channel pricing') : t('Pricing')}
+            </SectionTitle>
+            {!props.selectedGroup && basePricing}
             <GroupPricingSection
               model={props.model}
               groupRatio={props.groupRatio}
               usableGroup={props.usableGroup}
-              autoGroups={props.autoGroups}
               priceRate={props.priceRate}
               usdExchangeRate={props.usdExchangeRate}
               tokenUnit={props.tokenUnit}
               showRechargePrice={showRechargePrice}
+              selectedGroup={props.selectedGroup}
+              autoGroups={props.selectedGroup ? [] : props.autoGroups}
             />
+            {props.selectedGroup && (
+              <Accordion>
+                <AccordionItem value='base-pricing'>
+                  <AccordionTrigger>{t('Base pricing')}</AccordionTrigger>
+                  <AccordionContent>{basePricing}</AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            )}
           </section>
 
           <ModelBackendDetailsSection model={props.model} />
         </TabsContent>
 
         <TabsContent value='performance' className='outline-none'>
-          <ModelDetailsPerformance model={props.model} />
+          <ModelDetailsPerformance
+            model={props.model}
+            selectedGroup={props.selectedGroup}
+          />
         </TabsContent>
 
         <TabsContent value='api' className='outline-none'>

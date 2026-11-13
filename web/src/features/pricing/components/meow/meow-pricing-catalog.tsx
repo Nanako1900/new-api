@@ -24,11 +24,12 @@ import { ErrorState } from '@/components/error-state'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { usePricingPreferencesStore } from '@/stores/pricing-preferences-store'
 
-import { useMeowChannelPerf } from '../../hooks/use-meow-channel-perf'
 import { usePricingData } from '../../hooks/use-pricing-data'
-import { buildMeowCatalog } from '../../lib/meow-catalog'
-import { MeowFamilyCard } from './meow-family-card'
+import { buildMeowChannels } from '../../lib/meow-catalog'
+import { MeowChannelModels } from './meow-channel-models'
+import { MeowChannelPicker } from './meow-channel-picker'
 import type { MeowPriceOptions } from './meow-model-row'
 
 // The drawer pulls in the charts and only mounts once a model is picked.
@@ -40,33 +41,35 @@ const ModelDetailsDrawer = lazy(() =>
 
 const SKELETON_KEYS = ['claude', 'gpt'] as const
 
-/** The price list: family cards, the recharge switch and the details drawer. */
-export function MeowPricingCatalog() {
+type MeowPricingCatalogProps = {
+  group?: string
+  onGroupChange?: (group: string) => void
+}
+
+/** Browse a single public channel while retaining its price context. */
+export function MeowPricingCatalog(props: MeowPricingCatalogProps) {
   const { t } = useTranslation()
   const pricing = usePricingData()
+  const rememberedGroup = usePricingPreferencesStore((state) => state.group)
+  const setGroup = usePricingPreferencesStore((state) => state.setGroup)
   const [showRechargePrice, setShowRechargePrice] = useState(false)
   const [selectedModelName, setSelectedModelName] = useState<string | null>(
     null
   )
 
-  const families = useMemo(
+  const channels = useMemo(
     () =>
-      buildMeowCatalog(pricing.models, pricing.usableGroup, pricing.groupRatio),
+      buildMeowChannels(
+        pricing.models,
+        pricing.usableGroup,
+        pricing.groupRatio
+      ),
     [pricing.models, pricing.usableGroup, pricing.groupRatio]
   )
-  const modelNames = useMemo(
-    () => [
-      ...new Set(
-        families.flatMap((family) =>
-          family.channels.flatMap((channel) =>
-            channel.models.map((model) => model.model_name)
-          )
-        )
-      ),
-    ],
-    [families]
-  )
-  const perf = useMeowChannelPerf(modelNames)
+  const activeChannel =
+    channels.find((channel) => channel.group === props.group) ??
+    channels.find((channel) => channel.group === rememberedGroup) ??
+    channels[0]
 
   // Recharge and standard prices only differ when top-ups are discounted.
   const offerRechargePrice = pricing.priceRate !== pricing.usdExchangeRate
@@ -77,8 +80,9 @@ export function MeowPricingCatalog() {
     groupRatio: pricing.groupRatio,
   }
   const selectedModel =
-    pricing.models.find((model) => model.model_name === selectedModelName) ??
-    null
+    activeChannel?.models.find(
+      (model) => model.model_name === selectedModelName
+    ) ?? null
 
   let body: ReactNode
   if (pricing.isLoading) {
@@ -96,21 +100,27 @@ export function MeowPricingCatalog() {
         onRetry={() => void pricing.refetch()}
       />
     )
-  } else if (families.length === 0) {
+  } else if (!activeChannel) {
     body = <EmptyState title={t('No models available')} bordered />
   } else {
     body = (
-      <div className='space-y-5'>
-        {families.map((family) => (
-          <MeowFamilyCard
-            key={family.id}
-            family={family}
-            prices={prices}
-            perf={perf}
-            onSelect={setSelectedModelName}
-          />
-        ))}
-      </div>
+      <>
+        <MeowChannelPicker
+          channels={channels}
+          value={activeChannel.group}
+          onChange={(group) => {
+            setSelectedModelName(null)
+            setGroup(group)
+            props.onGroupChange?.(group)
+          }}
+        />
+        <MeowChannelModels
+          key={activeChannel.group}
+          channel={activeChannel}
+          prices={prices}
+          onSelect={setSelectedModelName}
+        />
+      </>
     )
   }
 
@@ -135,9 +145,7 @@ export function MeowPricingCatalog() {
             <Badge>{t('Our price')}</Badge>
           </p>
           <p className='text-muted-foreground mt-2 text-sm'>
-            {t(
-              "Prices include each channel's multiplier and are shown per 1M tokens. Status covers the last 24 hours."
-            )}
+            {t('Choose a channel to explore its models and prices.')}
           </p>
         </div>
         {offerRechargePrice && (
@@ -168,6 +176,7 @@ export function MeowPricingCatalog() {
               if (!open) setSelectedModelName(null)
             }}
             model={selectedModel}
+            selectedGroup={activeChannel?.group}
             groupRatio={pricing.groupRatio}
             usableGroup={pricing.usableGroup}
             endpointMap={

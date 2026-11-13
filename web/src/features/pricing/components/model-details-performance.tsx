@@ -121,7 +121,10 @@ function toGroupUptimeSeries(group: PerformanceGroup): UptimeDayPoint[] {
   })
 }
 
-export function ModelDetailsPerformance(props: { model: PricingModel }) {
+export function ModelDetailsPerformance(props: {
+  model: PricingModel
+  selectedGroup?: string
+}) {
   const { t } = useTranslation()
   const metricsQuery = useQuery({
     queryKey: ['perf-metrics', props.model.model_name],
@@ -130,13 +133,21 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
     staleTime: 60 * 1000,
   })
   const groups = useMemo(
-    () => metricsQuery.data?.data.groups ?? [],
-    [metricsQuery.data]
+    () =>
+      (metricsQuery.data?.data.groups ?? []).filter(
+        (group) => !props.selectedGroup || group.group === props.selectedGroup
+      ),
+    [metricsQuery.data, props.selectedGroup]
   )
-  const summary = metricsQuery.data?.data.summary
+  const summary = props.selectedGroup
+    ? groups[0]
+    : metricsQuery.data?.data.summary
   const series = useMemo(
-    () => metricsQuery.data?.data.series ?? [],
-    [metricsQuery.data]
+    () =>
+      (props.selectedGroup
+        ? groups[0]?.series
+        : metricsQuery.data?.data.series) ?? [],
+    [metricsQuery.data, props.selectedGroup, groups]
   )
   const performances = useMemo<PerformanceRow[]>(
     () =>

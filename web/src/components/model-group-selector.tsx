@@ -97,6 +97,9 @@ interface GroupSelectorProps {
   onGroupChange: (value: string) => void
   className?: string
   disabled?: boolean
+  compact?: boolean
+  renderOption?: (group: GroupOption, selected: boolean) => React.ReactNode
+  optionClassName?: string
 }
 
 const ModelTriggerButton = React.forwardRef<
@@ -141,33 +144,51 @@ const GroupTriggerButton = React.forwardRef<
     currentLabel: string
     triggerClassName?: string
     isDisabled?: boolean
+    compact?: boolean
   }
->(({ currentLabel, triggerClassName, isDisabled, ...props }, ref) => (
-  <Button
-    ref={ref}
-    variant='outline'
-    role='combobox'
-    size='sm'
-    disabled={isDisabled}
-    className={cn(
-      'flex h-8 items-center gap-2 border px-3 font-medium',
-      'justify-center p-0 sm:w-auto sm:justify-start sm:px-3',
-      'w-8',
-      'bg-background text-foreground',
-      'hover:bg-accent transition-colors',
-      'focus:!ring-0 focus:!outline-none',
-      'shadow-none',
-      triggerClassName
-    )}
-    {...props}
-  >
-    <LayersIcon className='text-muted-foreground block size-4 sm:hidden' />
-    <span className='text-muted-foreground sm:text-foreground hidden truncate text-xs sm:block'>
-      {currentLabel}
-    </span>
-    <ChevronsUpDown className='text-muted-foreground hidden h-4 w-4 opacity-50 sm:block' />
-  </Button>
-))
+>(
+  (
+    { currentLabel, triggerClassName, isDisabled, compact = true, ...props },
+    ref
+  ) => (
+    <Button
+      ref={ref}
+      variant='outline'
+      role='combobox'
+      aria-label={currentLabel}
+      size='sm'
+      disabled={isDisabled}
+      className={cn(
+        'flex h-8 items-center gap-2 border px-3 font-medium',
+        'justify-center p-0 sm:w-auto sm:justify-start sm:px-3',
+        'w-8',
+        !compact && 'h-10 w-full justify-start px-3',
+        'bg-background text-foreground',
+        'hover:bg-accent transition-colors',
+        'focus:!ring-0 focus:!outline-none',
+        'shadow-none',
+        triggerClassName
+      )}
+      {...props}
+    >
+      <LayersIcon className='text-muted-foreground block size-4 sm:hidden' />
+      <span
+        className={cn(
+          'text-muted-foreground sm:text-foreground min-w-0 truncate text-xs sm:block',
+          compact ? 'hidden' : 'block flex-1 text-left'
+        )}
+      >
+        {currentLabel}
+      </span>
+      <ChevronsUpDown
+        className={cn(
+          'text-muted-foreground h-4 w-4 opacity-50 sm:block',
+          compact ? 'hidden' : 'block'
+        )}
+      />
+    </Button>
+  )
+)
 
 GroupTriggerButton.displayName = 'GroupTriggerButton'
 
@@ -371,7 +392,16 @@ ModelSelector.displayName = 'ModelSelector'
  * Styled following Scira's form-component design patterns
  */
 export const GroupSelector: React.FC<GroupSelectorProps> = React.memo(
-  ({ selectedGroup, groups, onGroupChange, className, disabled = false }) => {
+  ({
+    selectedGroup,
+    groups,
+    onGroupChange,
+    className,
+    disabled = false,
+    compact = true,
+    renderOption,
+    optionClassName,
+  }) => {
     const { t } = useTranslation()
     const [open, setOpen] = useState(false)
     const isMobile = useIsMobile()
@@ -427,31 +457,41 @@ export const GroupSelector: React.FC<GroupSelectorProps> = React.memo(
                 key={group.value}
                 value={group.value}
                 onSelect={handleGroupChange}
+                data-checked={selectedGroup === group.value}
                 className={cn(
                   'mb-0.5 flex items-center justify-between rounded-lg px-2 py-2 text-xs',
                   'transition-all duration-200',
                   'hover:bg-accent',
-                  'data-[selected=true]:bg-accent'
+                  'data-[selected=true]:bg-accent',
+                  optionClassName
                 )}
               >
-                <div className='flex min-w-0 flex-1 items-center gap-2 pr-4'>
-                  <div className='flex min-w-0 flex-1 flex-col'>
-                    <span className='text-foreground truncate text-[11px] font-medium'>
-                      {group.label}
-                    </span>
-                    {(group.desc || group.description) && (
-                      <div className='text-muted-foreground truncate text-[9px] leading-tight'>
-                        {formatGroupDetail(group, t)}
+                {renderOption ? (
+                  renderOption(group, selectedGroup === group.value)
+                ) : (
+                  <>
+                    <div className='flex min-w-0 flex-1 items-center gap-2 pr-4'>
+                      <div className='flex min-w-0 flex-1 flex-col'>
+                        <span className='text-foreground truncate text-[11px] font-medium'>
+                          {group.label}
+                        </span>
+                        {(group.desc || group.description) && (
+                          <div className='text-muted-foreground truncate text-[9px] leading-tight'>
+                            {formatGroupDetail(group, t)}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </div>
-                <Check
-                  className={cn(
-                    'ml-auto h-4 w-4',
-                    selectedGroup === group.value ? 'opacity-100' : 'opacity-0'
-                  )}
-                />
+                    </div>
+                    <Check
+                      className={cn(
+                        'ml-auto h-4 w-4',
+                        selectedGroup === group.value
+                          ? 'opacity-100'
+                          : 'opacity-0'
+                      )}
+                    />
+                  </>
+                )}
               </CommandItem>
             ))}
           </CommandGroup>
@@ -466,6 +506,7 @@ export const GroupSelector: React.FC<GroupSelectorProps> = React.memo(
             currentLabel={currentGroup?.label || t('Group')}
             triggerClassName={className}
             isDisabled={disabled}
+            compact={compact}
             aria-expanded={open}
           />
         </DrawerTrigger>
@@ -480,34 +521,43 @@ export const GroupSelector: React.FC<GroupSelectorProps> = React.memo(
                   key={group.value}
                   variant='outline'
                   onClick={() => handleGroupChange(group.value)}
+                  aria-pressed={selectedGroup === group.value}
+                  data-checked={selectedGroup === group.value}
                   className={cn(
                     'flex h-auto w-full items-center justify-between rounded-lg p-4 text-left whitespace-normal',
                     'border-border hover:bg-accent',
                     selectedGroup === group.value
                       ? 'bg-accent border-primary/20'
-                      : 'bg-background'
+                      : 'bg-background',
+                    optionClassName
                   )}
                 >
-                  <div className='flex min-w-0 flex-1 items-center gap-3'>
-                    <div className='flex min-w-0 flex-1 flex-col'>
-                      <span className='text-foreground text-sm font-medium'>
-                        {group.label}
-                      </span>
-                      {(group.desc || group.description) && (
-                        <div className='text-muted-foreground mt-0.5 text-xs'>
-                          {formatGroupDetail(group, t)}
+                  {renderOption ? (
+                    renderOption(group, selectedGroup === group.value)
+                  ) : (
+                    <>
+                      <div className='flex min-w-0 flex-1 items-center gap-3'>
+                        <div className='flex min-w-0 flex-1 flex-col'>
+                          <span className='text-foreground text-sm font-medium'>
+                            {group.label}
+                          </span>
+                          {(group.desc || group.description) && (
+                            <div className='text-muted-foreground mt-0.5 text-xs'>
+                              {formatGroupDetail(group, t)}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                  <Check
-                    className={cn(
-                      'ml-3 h-5 w-5 shrink-0',
-                      selectedGroup === group.value
-                        ? 'opacity-100'
-                        : 'opacity-0'
-                    )}
-                  />
+                      </div>
+                      <Check
+                        className={cn(
+                          'ml-3 h-5 w-5 shrink-0',
+                          selectedGroup === group.value
+                            ? 'opacity-100'
+                            : 'opacity-0'
+                        )}
+                      />
+                    </>
+                  )}
                 </Button>
               ))}
             </div>
@@ -522,6 +572,7 @@ export const GroupSelector: React.FC<GroupSelectorProps> = React.memo(
               currentLabel={currentGroup?.label || t('Group')}
               triggerClassName={className}
               isDisabled={disabled}
+              compact={compact}
               aria-expanded={open}
             />
           }
