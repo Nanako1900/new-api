@@ -96,6 +96,10 @@ async function renderPolicies(path: string) {
     }),
     createRoute({
       getParentRoute: () => authenticated,
+      path: '/request-processing',
+    }),
+    createRoute({
+      getParentRoute: () => authenticated,
       path: '/system-settings/operations/$section',
       beforeLoad: OperationsRoute.options.beforeLoad as PolicyBeforeLoad,
     }),
@@ -195,7 +199,12 @@ afterEach(() => {
 })
 
 describe('request policy settings', () => {
-  it.each(['retry', 'health', 'filtering', 'affinity'])(
+  it.each([
+    ['retry', 'Save Changes'],
+    ['health', 'Save Changes'],
+    ['filtering', 'Save Changes'],
+    ['affinity', 'Save Changes'],
+  ])(
     'opening %s and saving unchanged values does not write options',
     async (section) => {
       await renderPolicies(`/system-settings/request-policies/${section}`)
@@ -663,9 +672,23 @@ describe('request policy settings', () => {
   })
 
   it.each([
+    '/system-settings/security/sensitive-words',
+    '/system-settings/request-policies/filtering',
+  ])('%s opens the existing two-tier request checks', async (path) => {
+    const router = await renderPolicies(path)
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        '/system-settings/request-policies/filtering'
+      )
+    )
+    expect(
+      await screen.findByRole('switch', { name: 'Enable filtering' })
+    ).toBeChecked()
+  })
+
+  it.each([
     ['/system-settings/models/channel-affinity', 'routing'],
     ['/system-settings/models/routing-reliability', 'routing'],
-    ['/system-settings/security/sensitive-words', 'filtering'],
     ['/system-settings/operations/monitoring', 'health'],
     ['/system-settings/request-policies/', 'routing'],
     ['/system-settings/request-policies/unknown', 'routing'],

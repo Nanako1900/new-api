@@ -157,6 +157,38 @@ afterEach(() => {
   localStorage.clear()
 })
 
+describe('sign-up password feedback', () => {
+  it('after email verification, password feedback updates and a mismatch is shown only once', async () => {
+    const user = userEvent.setup()
+    await renderSignUp()
+    await user.type(await verifyCode(user), 'alice')
+
+    const password = screen.getByLabelText('Password')
+    const confirmation = screen.getByLabelText('Confirm password')
+    expect(
+      screen.getByRole('meter', { name: 'Password strength' })
+    ).toHaveAttribute('aria-valuenow', '0')
+    await user.type(password, 'Correct-Horse-9')
+    expect(password).toHaveAccessibleDescription(
+      expect.stringContaining('Password requirements met')
+    )
+    await user.type(confirmation, 'different-password')
+    expect(screen.getByText('Passwords do not match')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+    expect(await screen.findByText("Passwords don't match.")).toBeVisible()
+    expect(
+      screen.getAllByText(/Passwords (?:do not|don't) match\.?/)
+    ).toHaveLength(1)
+    expect(sentBody(REGISTER_URL)).toBeUndefined()
+
+    await user.clear(confirmation)
+    await user.type(confirmation, 'Correct-Horse-9')
+    expect(confirmation).toHaveAccessibleDescription(
+      expect.stringContaining('Passwords match')
+    )
+  })
+})
+
 describe('sign-up step 1: verify email', () => {
   it('sending the code shows a labelled code entry and neutral copy', async () => {
     const user = userEvent.setup()
