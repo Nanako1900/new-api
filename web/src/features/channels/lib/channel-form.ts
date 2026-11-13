@@ -224,6 +224,10 @@ export const channelFormSchema = z
     weight: z.number().optional(),
     test_model: z.string().optional(),
     auto_ban: z.number().optional(),
+    user_agent_restriction_enabled: z.boolean().optional(),
+    user_agent_profile: z.enum(['claude_code', 'custom']).optional(),
+    user_agent_exact: z.string().optional(),
+    user_agent_prefixes: z.string().optional(),
     status: z.number(),
     status_code_mapping: z
       .string()
@@ -298,6 +302,34 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (
+      data.user_agent_restriction_enabled &&
+      data.user_agent_profile === 'custom'
+    ) {
+      const rules = getUserAgentAllowlist(data)
+      if (rules.length === 0 || rules.length > 20) {
+        addRequiredIssue(
+          ctx,
+          'user_agent_exact',
+          'User-Agent allowlist must contain between 1 and 20 rules'
+        )
+      }
+      for (const rule of rules) {
+        if (
+          new TextEncoder().encode(rule.value).length > 1024 ||
+          // Reject control characters before sending rules to the gateway.
+          // eslint-disable-next-line no-control-regex
+          /[\x00-\x1f\x7f]/.test(rule.value)
+        ) {
+          addRequiredIssue(
+            ctx,
+            rule.match === 'exact' ? 'user_agent_exact' : 'user_agent_prefixes',
+            'User-Agent rule values must contain 1 to 1024 bytes without control characters'
+          )
+          break
+        }
+      }
+    }
     if (
       [
         3,
@@ -445,6 +477,10 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   weight: 0,
   test_model: '',
   auto_ban: 1,
+  user_agent_restriction_enabled: false,
+  user_agent_profile: 'claude_code',
+  user_agent_exact: '',
+  user_agent_prefixes: '',
   status: CHANNEL_STATUS.ENABLED,
   status_code_mapping: '',
   tag: '',
@@ -505,6 +541,10 @@ export function transformChannelToFormDefaults(
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
   let extraSettings = {
+    user_agent_restriction_enabled: false,
+    user_agent_profile: 'claude_code' as 'claude_code' | 'custom',
+    user_agent_exact: '',
+    user_agent_prefixes: '',
     task_plugin_key: '',
     task_extend_plugin_keys: [] as string[],
     force_format: false,
@@ -527,6 +567,30 @@ export function transformChannelToFormDefaults(
         parsed.http2_connection_shards
       )
       extraSettings = {
+        user_agent_restriction_enabled:
+          parsed.user_agent_policy?.enabled === true,
+        user_agent_profile:
+          parsed.user_agent_policy?.profile === 'custom'
+            ? 'custom'
+            : 'claude_code',
+        user_agent_exact: Array.isArray(parsed.user_agent_policy?.rules)
+          ? parsed.user_agent_policy.rules
+              .filter(
+                (rule: { match?: string; value?: unknown }) =>
+                  rule?.match === 'exact' && typeof rule.value === 'string'
+              )
+              .map((rule: { value: string }) => rule.value)
+              .join('\n')
+          : '',
+        user_agent_prefixes: Array.isArray(parsed.user_agent_policy?.rules)
+          ? parsed.user_agent_policy.rules
+              .filter(
+                (rule: { match?: string; value?: unknown }) =>
+                  rule?.match === 'prefix' && typeof rule.value === 'string'
+              )
+              .map((rule: { value: string }) => rule.value)
+              .join('\n')
+          : '',
         task_plugin_key: parsed.task_plugin_key || '',
         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
         force_format: parsed.force_format || false,
@@ -700,7 +764,37 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     settingObj.tls_insecure_skip_verify = true
   }
 
+  if (
+    formData.user_agent_restriction_enabled ||
+    formData.user_agent_profile === 'custom'
+  ) {
+    const profile = formData.user_agent_profile ?? 'claude_code'
+    settingObj.user_agent_policy = {
+      enabled: formData.user_agent_restriction_enabled === true,
+      profile,
+      rules: profile === 'custom' ? getUserAgentAllowlist(formData) : undefined,
+    }
+  }
+
   return JSON.stringify(settingObj)
+}
+
+function getUserAgentAllowlist(values: {
+  user_agent_exact?: string
+  user_agent_prefixes?: string
+}): { match: 'exact' | 'prefix'; value: string }[] {
+  const exact = (values.user_agent_exact ?? '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const prefixes = (values.user_agent_prefixes ?? '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+  return [
+    ...exact.map((value) => ({ match: 'exact' as const, value })),
+    ...prefixes.map((value) => ({ match: 'prefix' as const, value })),
+  ]
 }
 
 /**

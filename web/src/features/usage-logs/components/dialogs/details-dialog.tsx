@@ -546,6 +546,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const userAgentReasons: Record<string, string> = {
+    not_allowed: t('User-Agent does not match the allowlist'),
+    missing_or_invalid_user_agent: t('Missing or invalid User-Agent'),
+    invalid_policy: t('Invalid User-Agent restriction configuration'),
+  }
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -837,6 +842,31 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 </div>
               </div>
             </div>
+          </DetailSection>
+        )}
+
+        {props.isAdmin && adminInfo?.user_agent_policy && (
+          <DetailSection label={t('Client User-Agent restriction')}>
+            <DetailRow
+              label={t('User-Agent')}
+              value={adminInfo.user_agent_policy.user_agent}
+              mono
+            />
+            <DetailRow
+              label={t('Allowed client')}
+              value={
+                adminInfo.user_agent_policy.profile === 'claude_code'
+                  ? 'Claude Code'
+                  : t('Custom User-Agent allowlist')
+              }
+            />
+            <DetailRow
+              label={t('Reason')}
+              value={
+                userAgentReasons[adminInfo.user_agent_policy.reason] ??
+                t('The request was rejected by the channel User-Agent policy')
+              }
+            />
           </DetailSection>
         )}
 

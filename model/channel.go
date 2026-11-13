@@ -1019,6 +1019,9 @@ func (channel *Channel) ValidateSettings() error {
 	if err := channelParams.ValidateHTTPTransport(); err != nil {
 		return err
 	}
+	if err := channelParams.UserAgentPolicy.Validate(); err != nil {
+		return err
+	}
 	channelOtherSettings := &dto.ChannelOtherSettings{}
 	if channel.OtherSettings != "" {
 		err := common.UnmarshalJsonStr(channel.OtherSettings, channelOtherSettings)
@@ -1056,8 +1059,8 @@ func (channel *Channel) GetSetting() dto.ChannelSettings {
 		err := common.Unmarshal([]byte(*channel.Setting), &setting)
 		if err != nil {
 			common.SysLog(common.LogText("failed to unmarshal setting: channel_id=%d, error=%v", channel.Id, err))
-			channel.Setting = nil // 清空设置以避免后续错误
-			_ = channel.Save()    // 保存修改
+			// Preserve invalid settings so access policies can fail closed.
+			// A read must not silently remove a channel's restrictions.
 		}
 	}
 	return setting

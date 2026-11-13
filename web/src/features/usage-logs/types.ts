@@ -116,6 +116,11 @@ export interface ToolSurchargeItem {
 
 export interface LogOtherData {
   admin_info?: {
+    user_agent_policy?: {
+      user_agent: string
+      profile: string
+      reason: string
+    }
     request_policy?: PolicyEvent[]
     is_multi_key?: boolean
     multi_key_index?: number

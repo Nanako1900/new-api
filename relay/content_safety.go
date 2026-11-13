@@ -394,7 +394,7 @@ func askContentReviewer(ctx context.Context, requestId string, channel *model.Ch
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(common.RequestIdKey, requestId)
 	common.SetContextKey(c, constant.ContextKeyBindUpstreamToRequestContext, true)
-	if apiErr := middleware.SetupContextForSelectedChannel(c, channel, modelName); apiErr != nil {
+	if apiErr := middleware.SetupContextForInternalChannel(c, channel, modelName); apiErr != nil {
 		return "", 0, apiErr
 	}
 	stream, temperature := false, 0.0
