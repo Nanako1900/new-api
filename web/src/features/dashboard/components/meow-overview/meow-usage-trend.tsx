@@ -17,8 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
-import { ArrowRight } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -31,6 +29,7 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { lastSevenDays, toDateKey } from '../../lib/meow-checkin'
 import { PROVIDER_SERIES } from '../../lib/meow-model-colors'
 import { dailyProviderSpend } from '../../lib/meow-usage'
+import { MeowDashboardLink } from './meow-analytics-card'
 import { SpendBars, SpendLegend } from './meow-spend-bars'
 
 /** Daily spend for the last seven days, stacked by Claude, GPT and other. */
@@ -68,7 +67,7 @@ export function MeowUsageTrend() {
   return (
     <figure className='bg-card border-border m-0 flex flex-1 flex-col gap-4 rounded-[22px] border p-5'>
       <figcaption className='flex flex-wrap items-center justify-between gap-3'>
-        <div className='flex items-baseline gap-3'>
+        <div className='flex flex-wrap items-baseline gap-x-3 gap-y-1'>
           <h2 className='text-base font-extrabold'>
             {t('Spend, last 7 days')}
           </h2>
@@ -78,16 +77,9 @@ export function MeowUsageTrend() {
             </span>
           )}
         </div>
-        <div className='flex items-center gap-4'>
+        <div className='flex flex-wrap items-center gap-x-4 gap-y-2'>
           <SpendLegend buckets={spend} series={PROVIDER_SERIES} />
-          <Link
-            to='/dashboard/$section'
-            params={{ section: 'models' }}
-            className='text-primary inline-flex items-center gap-1 text-[13px] font-bold'
-          >
-            {t('Dashboard')}
-            <ArrowRight className='size-3.5' aria-hidden='true' />
-          </Link>
+          <MeowDashboardLink compact />
         </div>
       </figcaption>
 

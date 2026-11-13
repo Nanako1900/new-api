@@ -17,18 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { type ReactNode, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Main } from '@/components/layout'
-import { RollingNumber } from '@/components/rolling-number'
+import { Badge } from '@/components/ui/badge'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { useProviderHealth } from '@/features/home/hooks/use-provider-health'
 import { HOME_PROVIDERS } from '@/features/home/lib/provider-models'
 import { getSuccessRateLevel } from '@/features/performance-metrics/lib/format'
 import { useStatus } from '@/hooks/use-status'
-import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber, formatQuota } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -38,12 +36,12 @@ import { useAnnouncements, useFAQ } from '../../hooks/use-status-data'
 import { healthBadge } from '../../lib/meow-setup'
 import { AnnouncementsPanel } from '../overview/announcements-panel'
 import { FAQPanel } from '../overview/faq-panel'
+import { MeowAnalyticsCard } from './meow-analytics-card'
 import { MeowBalanceCard } from './meow-balance-card'
 import { MeowCheckinCard } from './meow-checkin-card'
 import { MeowGettingStarted } from './meow-getting-started'
 import { MeowInviteCard } from './meow-invite-card'
 import { MeowOverviewGreeting } from './meow-overview-greeting'
-import { MeowRecentCalls } from './meow-recent-calls'
 import { MeowUsageTrend } from './meow-usage-trend'
 
 const PROVIDER_LABEL = { claude: 'Claude', gpt: 'GPT' } as const
@@ -75,41 +73,20 @@ function ProviderStatusPills() {
           getSuccessRateLevel(item?.successRate ?? Number.NaN)
         )
         return (
-          <span
+          <Badge
             key={provider}
+            variant='outline'
             title={item ? `${item.successRate.toFixed(1)}%` : undefined}
-            className='bg-card border-border inline-flex items-center gap-2 rounded-[10px] border px-3 py-2 text-[13px] font-bold'
+            className='h-auto gap-2 px-3 py-1.5'
           >
             <span
               aria-hidden='true'
               className={cn('size-[7px] rounded-full', HEALTH_DOT[badge])}
             />
             {PROVIDER_LABEL[provider]} {t(HEALTH_LABEL[badge])}
-          </span>
+          </Badge>
         )
       })}
-    </div>
-  )
-}
-
-function StatCard(props: {
-  label: string
-  value: ReactNode
-  accent?: boolean
-}) {
-  return (
-    <div className='bg-card border-border flex h-full flex-col justify-between gap-4 rounded-[22px] border p-6'>
-      <span className='text-muted-foreground text-sm font-bold'>
-        {props.label}
-      </span>
-      <span
-        className={cn(
-          'text-[2rem] leading-none font-extrabold tracking-[-0.03em] tabular-nums',
-          props.accent && 'text-meow-heading'
-        )}
-      >
-        {props.value}
-      </span>
     </div>
   )
 }
@@ -143,13 +120,12 @@ function useUsage24h() {
 
 /**
  * MeowAPI console overview: greeting, balance, last-24-hour usage, the
- * getting-started checklist (popular models once done), daily check-in
- * and recent calls, plus announcements and FAQ when the admin has added
- * any.
+ * getting-started checklist (popular models once done), daily check-in,
+ * announcements and FAQ. Detailed analytics and live logs have a dedicated
+ * dashboard; this page only loads aggregate usage.
  */
 export function MeowOverview() {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const { status } = useStatus()
   const announcements = useAnnouncements()
@@ -163,62 +139,38 @@ export function MeowOverview() {
   return (
     <Main>
       <div className='min-h-0 flex-1 overflow-auto px-4 pt-6 pb-8 sm:px-8 sm:pt-8'>
-        <div className='mx-auto flex w-full max-w-[1440px] flex-col gap-5'>
+        <div className='mx-auto flex w-full max-w-[1440px] flex-col gap-6'>
           <header className='flex flex-wrap items-center justify-between gap-4'>
             <MeowOverviewGreeting />
             <ProviderStatusPills />
           </header>
 
-          <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-12'>
-            <div className='sm:col-span-2 lg:col-span-6'>
-              <MeowBalanceCard
-                remainQuota={Number(user?.quota ?? 0)}
-                usedQuota={Number(user?.used_quota ?? 0)}
-              />
-            </div>
-            <div className='lg:col-span-3'>
-              <StatCard
-                label={t('Spend (24h)')}
-                value={
-                  isLoading ? (
-                    '—'
-                  ) : (
-                    <RollingNumber value={usage.quota} format={formatQuota} />
-                  )
-                }
-                accent
-              />
-            </div>
-            <div className='lg:col-span-3'>
-              <StatCard
-                label={t('Requests (24h)')}
-                value={
-                  isLoading ? (
-                    '—'
-                  ) : (
-                    <RollingNumber
-                      value={usage.count}
-                      format={(count) => formatNumber(count, locale)}
-                    />
-                  )
-                }
-              />
-            </div>
-          </div>
+          <section
+            aria-label={t('Overview')}
+            className='grid grid-cols-1 gap-4 lg:grid-cols-2'
+          >
+            <MeowBalanceCard
+              remainQuota={Number(user?.quota ?? 0)}
+              usedQuota={Number(user?.used_quota ?? 0)}
+            />
+            <MeowAnalyticsCard
+              quota={usage.quota}
+              requestCount={usage.count}
+              isLoading={isLoading}
+            />
+          </section>
 
-          {/* Left: setup and spend. Right: check-in and invites. */}
-          <div className='grid grid-cols-1 gap-4 lg:grid-cols-12'>
-            <div className='flex flex-col gap-4 lg:col-span-8'>
-              <MeowGettingStarted />
+          {/* Usage is the primary content; account actions sit alongside it. */}
+          <div className='grid grid-cols-1 items-start gap-4 lg:grid-cols-12'>
+            <div className='flex min-w-0 flex-col gap-4 lg:col-span-8'>
               <MeowUsageTrend />
+              <MeowGettingStarted />
             </div>
-            <div className='flex flex-col gap-4 lg:col-span-4'>
+            <div className='flex min-w-0 flex-col gap-4 lg:col-span-4'>
               {checkinEnabled && <MeowCheckinCard />}
               <MeowInviteCard />
             </div>
           </div>
-
-          <MeowRecentCalls />
 
           {(hasAnnouncements || hasFaq) && (
             <div
