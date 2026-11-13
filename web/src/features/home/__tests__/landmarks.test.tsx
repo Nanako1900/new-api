@@ -24,7 +24,8 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
 
 import { ThemeProvider } from '@/context/theme-provider'
@@ -38,11 +39,24 @@ afterEach(() => {
 })
 
 function renderHome() {
-  // No custom home page content, so the built-in landing page renders; every
-  // other endpoint fails, which the landing sections treat as "no data".
+  // Render the built-in landing page and configured navigation; the remaining
+  // endpoints fail, which the landing sections treat as "no data".
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/home_page_content') {
       return { data: { success: true, data: '' } }
+    }
+    if (url === '/api/status') {
+      return {
+        data: {
+          success: true,
+          data: {
+            docs_link: 'https://docs.example.com/start',
+            HeaderNavModules: {
+              rankings: { enabled: true, requireAuth: false },
+            },
+          },
+        },
+      }
     }
     return { data: { success: false, message: 'unavailable' } }
   })
@@ -76,4 +90,30 @@ test('the built-in landing page keeps its sections in the main landmark and the 
   const main = screen.getByRole('main')
   expect(main).toContainElement(heading)
   expect(within(main).queryByRole('contentinfo')).not.toBeInTheDocument()
+})
+
+test('home navigation links to model prices and the beginner guide and omits rankings even when configured', async () => {
+  const user = userEvent.setup()
+  renderHome()
+  await screen.findByRole('heading', { level: 1 })
+
+  expect(screen.queryAllByRole('link', { name: 'Rankings' })).toHaveLength(0)
+  await user.click(
+    screen.getByRole('button', { name: 'Toggle navigation menu' })
+  )
+
+  await waitFor(() => {
+    const pricingLinks = screen.getAllByRole('link', { name: 'Model prices' })
+    const guideLinks = screen.getAllByRole('link', { name: 'Beginner guide' })
+    // Both the desktop header and the expanded mobile menu use these links.
+    expect(pricingLinks).toHaveLength(2)
+    expect(guideLinks).toHaveLength(2)
+    for (const link of pricingLinks) {
+      expect(link).toHaveAttribute('href', '/pricing')
+    }
+    for (const link of guideLinks) {
+      expect(link).toHaveAttribute('href', 'https://docs.example.com/start')
+      expect(link).toHaveAttribute('target', '_blank')
+    }
+  })
 })
