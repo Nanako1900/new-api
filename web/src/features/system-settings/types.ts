@@ -388,6 +388,7 @@ export type OperationsSettings = {
   LogConsumeEnabled: boolean
   'log_setting.user_export_enabled': boolean
   'log_setting.max_range_days': number
+  'system_task_setting.retention_days': number
   'performance_setting.disk_cache_enabled': boolean
   'performance_setting.disk_cache_threshold_mb': number
   'performance_setting.disk_cache_max_size_mb': number
@@ -403,14 +404,14 @@ export type OperationsSettings = {
 }
 
 export type SecuritySettings = {
+  CheckSensitiveEnabled: boolean
+  CheckSensitiveOnPromptEnabled: boolean
+  SensitiveWords: string
   ModelRequestRateLimitEnabled: boolean
   ModelRequestRateLimitCount: number
   ModelRequestRateLimitSuccessCount: number
   ModelRequestRateLimitDurationMinutes: number
   ModelRequestRateLimitGroup: string
-  CheckSensitiveEnabled: boolean
-  CheckSensitiveOnPromptEnabled: boolean
-  SensitiveWords: string
   'fetch_setting.enable_ssrf_protection': boolean
   'fetch_setting.allow_private_ip': boolean
   'fetch_setting.domain_filter_mode': boolean

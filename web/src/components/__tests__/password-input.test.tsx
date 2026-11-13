@@ -44,6 +44,14 @@ describe('PasswordInput visibility toggle', () => {
 
     expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'text')
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(toggle).toHaveAccessibleName('Hide password')
+    await user.click(toggle)
+    expect(screen.getByLabelText('Password')).toHaveAttribute(
+      'type',
+      'password'
+    )
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).toHaveAccessibleName('Show password')
   })
 
   it('a disabled input also disables the toggle', () => {

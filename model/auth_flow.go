@@ -32,6 +32,7 @@ const (
 	AuthFlowPurposeEmailBinding      = "email_binding"
 	AuthFlowPurposeEmailRegistration = "email_registration"
 	AuthFlowPurposePasswordReset     = "password_reset"
+	AuthFlowPurposePluginLogin       = "plugin_login"
 	// AuthFlowPurposeMonitorCode is the one-time authorization code a
 	// dashboard session issues to the monitor console (SSO with PKCE).
 	AuthFlowPurposeMonitorCode      = "monitor_code"
@@ -318,6 +319,23 @@ func ConsumeAuthFlowWithAction(token string, match AuthFlowMatch, action func(tx
 		return nil, err
 	}
 	return &consumed, nil
+}
+
+// UpdateAuthFlowPayload replaces the payload of an unconsumed, unexpired flow
+// only while it still holds expected, so of two concurrent submits of one
+// step exactly one proceeds. It reports whether this call made the change;
+// payload must differ from expected.
+func UpdateAuthFlowPayload(token string, match AuthFlowMatch, expected, payload string) (bool, error) {
+	if token == "" || match.Purpose == "" {
+		return false, ErrAuthFlowInvalid
+	}
+	result := applyAuthFlowMatch(DB.Model(&AuthFlow{}), token, match).
+		Where("consumed_at IS NULL AND expires_at > ? AND payload = ?", time.Now(), expected).
+		Update("payload", payload)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 func DeleteExpiredAuthFlows(now time.Time) error {

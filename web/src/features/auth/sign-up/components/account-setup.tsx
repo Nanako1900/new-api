@@ -18,13 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Loader2, MailCheck, UserPlus } from 'lucide-react'
-import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useId, useState } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 
 import { PasswordInput } from '@/components/password-input'
+import {
+  PasswordConfirmationStatus,
+  PasswordStrength,
+} from '@/components/password-strength'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -73,6 +77,11 @@ export function AccountSetup(props: AccountSetupProps) {
   const form = useForm<AccountSetupValues>({
     resolver: zodResolver(accountSetupSchema),
     defaultValues: { username: '', password: '', confirmPassword: '' },
+  })
+  const feedbackId = useId()
+  const [password, confirmation] = useWatch({
+    control: form.control,
+    name: ['password', 'confirmPassword'],
   })
   const failedMessage = t('Failed to create account')
 
@@ -166,10 +175,13 @@ export function AccountSetup(props: AccountSetupProps) {
           render={({ field }) => (
             <FormItem>
               <FormLabel>{t('Password')}</FormLabel>
-              <FormControl>
+              <FormControl describedBy={`${feedbackId}-strength`}>
                 <PasswordInput autoComplete='new-password' {...field} />
               </FormControl>
-              <FormDescription>{t('Use 8–128 characters.')}</FormDescription>
+              <PasswordStrength
+                id={`${feedbackId}-strength`}
+                value={password}
+              />
               <FormMessage />
             </FormItem>
           )}
@@ -177,12 +189,18 @@ export function AccountSetup(props: AccountSetupProps) {
         <FormField
           control={form.control}
           name='confirmPassword'
-          render={({ field }) => (
+          render={({ field, fieldState }) => (
             <FormItem>
               <FormLabel>{t('Confirm password')}</FormLabel>
-              <FormControl>
+              <FormControl describedBy={`${feedbackId}-confirmation`}>
                 <PasswordInput autoComplete='new-password' {...field} />
               </FormControl>
+              <PasswordConfirmationStatus
+                id={`${feedbackId}-confirmation`}
+                password={password}
+                confirmation={confirmation}
+                hasFieldError={!!fieldState.error}
+              />
               <FormMessage />
             </FormItem>
           )}
