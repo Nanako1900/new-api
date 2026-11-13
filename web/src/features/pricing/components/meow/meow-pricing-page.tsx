@@ -17,6 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { useNavigate, useSearch } from '@tanstack/react-router'
+
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 
@@ -30,8 +32,10 @@ const GLOW_BACKGROUND = [
 ].join(', ')
 const GLOW_MASK = 'linear-gradient(to bottom, black 40%, transparent 100%)'
 
-/** `/pricing`: the Claude and GPT price list inside the public layout. */
+/** `/pricing`: channel-scoped models and prices inside the public layout. */
 export function MeowPricing() {
+  const search = useSearch({ from: '/pricing/' })
+  const navigate = useNavigate({ from: '/pricing/' })
   return (
     <PublicLayout showMainContainer={false}>
       <main className='relative'>
@@ -45,7 +49,15 @@ export function MeowPricing() {
           }}
         />
         <PageTransition className='relative mx-auto w-full px-3 pt-16 pb-8 sm:px-6 sm:pt-20 sm:pb-10 xl:px-8'>
-          <MeowPricingCatalog />
+          <MeowPricingCatalog
+            group={search.group}
+            onGroupChange={(group) => {
+              void navigate({
+                search: (previous) => ({ ...previous, group }),
+                resetScroll: false,
+              })
+            }}
+          />
         </PageTransition>
       </main>
     </PublicLayout>

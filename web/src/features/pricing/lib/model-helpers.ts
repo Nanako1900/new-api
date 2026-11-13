@@ -36,7 +36,9 @@ export function getAvailableGroups(
 
   return Object.keys(usableGroup)
     .filter((g) => !EXCLUDED_GROUPS.includes(g))
-    .filter((g) => modelEnableGroups.includes(g))
+    .filter(
+      (g) => modelEnableGroups.includes(g) || modelEnableGroups.includes('all')
+    )
 }
 
 /**
