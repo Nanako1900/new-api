@@ -35,7 +35,7 @@ import { DataTableRowActions } from '../data-table-row-actions'
 
 /** Shared column template for the header and each row. */
 export const KEY_ROW_GRID =
-  'lg:grid lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)_6.5rem_7.5rem] lg:items-center lg:gap-4'
+  'lg:grid lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)_6.5rem_12.75rem] lg:items-center lg:gap-4'
 
 const SCOPE_VIEW: Record<KeyModelScope, { label: string; dot: string }> = {
   claude: { label: 'Claude', dot: 'bg-meow-orange' },

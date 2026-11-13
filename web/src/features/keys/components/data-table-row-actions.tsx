@@ -159,8 +159,37 @@ export function DataTableRowActions<TData>({
     statusIcon = <PowerOff className='size-4' />
   }
 
+  const handleOpenCCSwitch = async () => {
+    const realKey = await resolveRealKey(apiKey.id)
+    if (!realKey) return
+    setResolvedKey(realKey)
+    setCurrentRow(apiKey)
+    setOpen('cc-switch')
+  }
+
   return (
     <div className='-ml-1.5 flex items-center gap-1'>
+      {/* The quickest way to use a key, so it sits outside the menu. */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant='outline'
+              size='sm'
+              data-tour='key-cc-switch'
+              onClick={handleOpenCCSwitch}
+              disabled={isRealKeyLoading}
+              aria-label={t('Import to CC Switch')}
+              className='text-primary hover:text-primary h-8 rounded-[9px] px-2.5 font-bold'
+            />
+          }
+        >
+          <ArrowRightLeft aria-hidden='true' />
+          {t('CC Switch')}
+        </TooltipTrigger>
+        <TooltipContent>{t('Import to CC Switch')}</TooltipContent>
+      </Tooltip>
+
       <Tooltip>
         <TooltipTrigger
           render={
@@ -236,21 +265,7 @@ export function DataTableRowActions<TData>({
             <Link size={16} />
           </DropdownMenuShortcut>
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={async () => {
-            const realKey = await resolveRealKey(apiKey.id)
-            if (!realKey) return
-            setResolvedKey(realKey)
-            setCurrentRow(apiKey)
-            setOpen('cc-switch')
-          }}
-        >
-          {t('CC Switch')}
-          <DropdownMenuShortcut>
-            <ArrowRightLeft size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
+        {hasChatPresets && <DropdownMenuSeparator />}
         {hasChatPresets && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>{t('Chat')}</DropdownMenuSubTrigger>

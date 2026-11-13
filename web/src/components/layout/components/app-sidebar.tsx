@@ -20,6 +20,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 
 import { Sidebar, SidebarContent, SidebarRail } from '@/components/ui/sidebar'
 import { useLayout } from '@/context/layout-provider'
+import { OnboardingSidebarEntry } from '@/features/onboarding/components/onboarding-sidebar-entry'
 import { useSidebarView } from '@/hooks/use-sidebar-view'
 import { MOTION_TRANSITION, MOTION_VARIANTS } from '@/lib/motion'
 
@@ -70,6 +71,8 @@ export function AppSidebar() {
           </motion.div>
         </AnimatePresence>
       </SidebarContent>
+
+      <OnboardingSidebarEntry />
 
       <SidebarRail />
     </Sidebar>
