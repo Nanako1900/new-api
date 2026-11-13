@@ -45,6 +45,9 @@ const (
 	ErrorCodeContentReviewRejected    ErrorCode = "content_review_rejected"
 	ErrorCodeContentReviewUnavailable ErrorCode = "content_review_unavailable"
 	ErrorCodeViolationFeeGrokCSAM     ErrorCode = "violation_fee.grok.csam"
+	ErrorCodeRequestRejected          ErrorCode = "request_rejected"
+	ErrorCodeRequestPluginFailed      ErrorCode = "request_plugin_failed"
+	ErrorCodeResponseRejected         ErrorCode = "response_rejected"
 
 	// new api error
 	ErrorCodeCountTokenFailed   ErrorCode = "count_token_failed"
