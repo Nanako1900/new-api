@@ -24,6 +24,7 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar'
 import { LayoutProvider } from '@/context/layout-provider'
 import { SearchProvider } from '@/context/search-provider'
 import { ConsoleAlerts } from '@/features/console-alerts/components/console-alerts'
+import { OnboardingTour } from '@/features/onboarding/components/onboarding-tour'
 import { useLiveBalance } from '@/hooks/use-live-balance'
 import { getCookie } from '@/lib/cookies'
 import { cn } from '@/lib/utils'
@@ -68,6 +69,7 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
           </div>
         </SidebarProvider>
         <CommandMenu />
+        <OnboardingTour />
       </SearchProvider>
     </LayoutProvider>
   )

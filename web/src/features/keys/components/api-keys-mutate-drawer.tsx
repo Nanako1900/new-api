@@ -72,6 +72,7 @@ import {
   translateServerText,
 } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useOnboardingStore } from '@/stores/onboarding-store'
 
 import {
   createApiKey,
@@ -239,9 +240,13 @@ export function ApiKeysMutateDrawer({
         setInitializedTarget(target)
       }
     } else {
-      form.reset(
-        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
+      const defaults = getApiKeyFormDefaultValues(
+        defaultUseAutoGroup && backendHasAuto
       )
+      // The onboarding tour only asks the user to click Save, so it names
+      // the key for them.
+      if (useOnboardingStore.getState().run) defaults.name = t('My key')
+      form.reset(defaults)
       setInitializedTarget(target)
     }
   }, [
@@ -262,6 +267,7 @@ export function ApiKeysMutateDrawer({
     availableAutoGroupNames,
     maxAutoGroups,
     initializedTarget,
+    t,
   ])
 
   const formTarget =
@@ -786,6 +792,7 @@ export function ApiKeysMutateDrawer({
           </SheetClose>
           <Button
             type='button'
+            data-tour='save-key'
             onClick={form.handleSubmit(onSubmit, onInvalid)}
             disabled={!isFormInitialized || isSubmitting}
             className='w-full sm:w-auto'

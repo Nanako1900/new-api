@@ -94,12 +94,18 @@ function RootComponent() {
     [navigate, queryClient]
   )
 
+  // The local MeowAPI preview (`?meow-preview=1`) should look like the live
+  // site, where the devtools toggles would cover the sidebar foot.
+  const showDevtools =
+    import.meta.env.MODE === 'development' &&
+    globalThis.localStorage?.getItem('meow-preview') !== '1'
+
   return (
     <ThemeCustomizationProvider>
       <NavigationProgress />
       <Outlet />
       <Toaster closeButton duration={5000} position='top-center' richColors />
-      {import.meta.env.MODE === 'development' && (
+      {showDevtools && (
         <>
           <ReactQueryDevtools buttonPosition='bottom-left' />
           <TanStackRouterDevtools position='bottom-right' />

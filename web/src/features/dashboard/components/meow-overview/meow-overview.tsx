@@ -40,9 +40,9 @@ import { AnnouncementsPanel } from '../overview/announcements-panel'
 import { FAQPanel } from '../overview/faq-panel'
 import { MeowBalanceCard } from './meow-balance-card'
 import { MeowCheckinCard } from './meow-checkin-card'
+import { MeowGettingStarted } from './meow-getting-started'
 import { MeowInviteCard } from './meow-invite-card'
 import { MeowOverviewGreeting } from './meow-overview-greeting'
-import { MeowQuickSetup } from './meow-quick-setup'
 import { MeowRecentCalls } from './meow-recent-calls'
 import { MeowUsageTrend } from './meow-usage-trend'
 
@@ -142,9 +142,10 @@ function useUsage24h() {
 }
 
 /**
- * MeowAPI console overview: greeting, balance, last-24-hour usage, quick
- * setup, daily check-in and recent calls, plus announcements and FAQ when
- * the admin has added any.
+ * MeowAPI console overview: greeting, balance, last-24-hour usage, the
+ * getting-started checklist (popular models once done), daily check-in
+ * and recent calls, plus announcements and FAQ when the admin has added
+ * any.
  */
 export function MeowOverview() {
   const { t, i18n } = useTranslation()
@@ -208,7 +209,7 @@ export function MeowOverview() {
           {/* Left: setup and spend. Right: check-in and invites. */}
           <div className='grid grid-cols-1 gap-4 lg:grid-cols-12'>
             <div className='flex flex-col gap-4 lg:col-span-8'>
-              <MeowQuickSetup />
+              <MeowGettingStarted />
               <MeowUsageTrend />
             </div>
             <div className='flex flex-col gap-4 lg:col-span-4'>
