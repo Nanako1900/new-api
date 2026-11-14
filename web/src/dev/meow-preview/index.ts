@@ -103,7 +103,14 @@ function mockResponse(
   if (path === '/api/user/self') return ok(previewUser())
   if (path === '/api/user/models') return ok(PREVIEW_MODELS)
   if (path === '/api/user/self/groups') {
-    return ok({ default: { desc: '默认分组', ratio: 1 } })
+    // The live site's groups (2026-11-14); none of them is the user's own.
+    return ok({
+      'CC Max': { desc: '1.3x  仅限ClaudeCode', ratio: 1.3 },
+      'Claude 0注入': { desc: '1.6x 官方API', ratio: 1.6 },
+      'GPT Pro号池': { desc: '0.22x 官方Pro号池', ratio: 0.22 },
+      'Kiro 企业': { desc: '0.4x 企业Kiro', ratio: 0.4 },
+      其他: { desc: '全部第三方模型', ratio: 0.5 },
+    })
   }
   if (path === '/api/token/' || path === '/api/token/search') {
     const keyword = (params.get('keyword') ?? '').toLowerCase()

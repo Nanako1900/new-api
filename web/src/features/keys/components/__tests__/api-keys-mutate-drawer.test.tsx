@@ -28,6 +28,7 @@ const { QueryClient, QueryClientProvider } =
 const { api } = await import('@/lib/api')
 const { ApiKeysProvider } = await import('../api-keys-provider')
 const { ApiKeysMutateDrawer } = await import('../api-keys-mutate-drawer')
+const { useOnboardingStore } = await import('@/stores/onboarding-store')
 
 const i18n = createInstance()
 await i18n.use(initReactI18next).init({
@@ -402,6 +403,28 @@ describe('API key expiry across editing sessions', () => {
       expect(payloads[0]?.expired_time).toBe(-1)
     }
   )
+})
+
+describe('API keys mutate drawer during the onboarding tour', () => {
+  afterEach(() => {
+    useOnboardingStore.setState({ run: null })
+  })
+
+  test('leaves the name of a new key empty for the user to fill in', async () => {
+    useOnboardingStore.setState({
+      run: {
+        userId: 1,
+        welcomed: true,
+        installed: true,
+        pickedApp: false,
+        imported: false,
+      },
+    })
+    installApiFixtures([])
+    await renderCreateDrawer()
+
+    expect(getControlByLabel('Name').value).toBe('')
+  })
 })
 
 describe('API keys mutate drawer user quota query switch', () => {

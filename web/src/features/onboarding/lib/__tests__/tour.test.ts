@@ -36,8 +36,13 @@ const ON_KEYS_PAGE: TourPage = {
   onKeysPage: true,
   keyCount: 0,
   keyFormOpen: false,
+  keyNamed: false,
+  keyGroupPicked: false,
+  groupListOpen: false,
   ccSwitchOpen: false,
 }
+
+const DRAWER_OPEN: TourPage = { ...ON_KEYS_PAGE, keyFormOpen: true }
 
 describe('currentTourStep', () => {
   it('starts with the welcome card and then the install card', () => {
@@ -71,18 +76,37 @@ describe('currentTourStep', () => {
     ).toBe('open-cc-switch')
   })
 
-  it('points at Save while the key drawer is open', () => {
+  it('asks for a name first when the key drawer opens', () => {
+    expect(currentTourStep(PASSED_CARDS, DRAWER_OPEN)).toBe('name-key')
+  })
+
+  it('asks for a group once the key is named and none is picked', () => {
     expect(
-      currentTourStep(PASSED_CARDS, { ...ON_KEYS_PAGE, keyFormOpen: true })
-    ).toBe('save-key')
+      currentTourStep(PASSED_CARDS, { ...DRAWER_OPEN, keyNamed: true })
+    ).toBe('pick-group')
+  })
+
+  it('points at Save only when the key has a name and a group', () => {
+    const named = { ...DRAWER_OPEN, keyNamed: true, keyGroupPicked: true }
+    expect(currentTourStep(PASSED_CARDS, named)).toBe('save-key')
+    expect(currentTourStep(PASSED_CARDS, { ...named, keyNamed: false })).toBe(
+      'name-key'
+    )
+  })
+
+  it('steps aside while the group list is open and comes back when it closes', () => {
+    const naming = { ...DRAWER_OPEN, keyNamed: true }
+    expect(
+      currentTourStep(PASSED_CARDS, { ...naming, groupListOpen: true })
+    ).toBeNull()
+    expect(currentTourStep(PASSED_CARDS, naming)).toBe('pick-group')
   })
 
   it('goes back to Create when the drawer closes without a new key', () => {
-    const page = { ...ON_KEYS_PAGE, keyFormOpen: true }
-    expect(currentTourStep(PASSED_CARDS, page)).toBe('save-key')
-    expect(currentTourStep(PASSED_CARDS, { ...page, keyFormOpen: false })).toBe(
-      'create-key'
-    )
+    expect(currentTourStep(PASSED_CARDS, DRAWER_OPEN)).toBe('name-key')
+    expect(
+      currentTourStep(PASSED_CARDS, { ...DRAWER_OPEN, keyFormOpen: false })
+    ).toBe('create-key')
   })
 
   it('shows the app hint, then the open button, inside the CC Switch dialog', () => {
@@ -156,8 +180,47 @@ describe('readTourPage', () => {
       onKeysPage: true,
       keyCount: 3,
       keyFormOpen: false,
+      keyNamed: false,
+      keyGroupPicked: false,
+      groupListOpen: false,
       ccSwitchOpen: true,
     })
+  })
+
+  it('reads the group list as open from the expanded group field', () => {
+    document.body.innerHTML = `
+      <div data-tour="key-group">
+        <button role="combobox" aria-expanded="true"></button>
+      </div>`
+
+    expect(readTourPage('/keys').groupListOpen).toBe(true)
+  })
+
+  it('counts the key as named only after the user leaves the filled name field', () => {
+    document.body.innerHTML = `
+      <div data-tour="key-name"><input value="laptop" /></div>
+      <button data-tour="save-key"></button>`
+    const input = document.querySelector('input')
+    if (!input) throw new Error('Expected the name input')
+
+    input.focus()
+    expect(readTourPage('/keys').keyNamed).toBe(false)
+    input.blur()
+    expect(readTourPage('/keys').keyNamed).toBe(true)
+  })
+
+  it('does not count a blank name as named', () => {
+    document.body.innerHTML = `<div data-tour="key-name"><input value="  " /></div>`
+
+    expect(readTourPage('/keys').keyNamed).toBe(false)
+  })
+
+  it('reads whether the group field reports a picked group', () => {
+    document.body.innerHTML = `<div data-tour="key-group" data-group-picked="false"></div>`
+    expect(readTourPage('/keys').keyGroupPicked).toBe(false)
+
+    document.body.innerHTML = `<div data-tour="key-group" data-group-picked="true"></div>`
+    expect(readTourPage('/keys').keyGroupPicked).toBe(true)
   })
 
   it('reports no key count while the list has not loaded', () => {

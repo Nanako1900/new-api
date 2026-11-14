@@ -30,6 +30,8 @@ export const TOUR_STEPS = [
   'install',
   'open-keys',
   'create-key',
+  'name-key',
+  'pick-group',
   'save-key',
   'open-cc-switch',
   'pick-app',
@@ -44,6 +46,13 @@ export type TourStepId = (typeof TOUR_STEPS)[number]
 const SAVE_KEY_TARGET = '[data-tour="save-key"]'
 const CC_SWITCH_OPEN_TARGET = '[data-tour="cc-switch-open"]'
 
+// The name and group fields of the key drawer. The group field says through
+// `data-group-picked` whether one of the user's groups is chosen.
+const KEY_NAME_TARGET = '[data-tour="key-name"]'
+const KEY_GROUP_TARGET = '[data-tour="key-group"]'
+export const KEY_NAME_INPUT = `${KEY_NAME_TARGET} input`
+export const KEY_GROUP_TRIGGER = `${KEY_GROUP_TARGET} button[role="combobox"]`
+
 /**
  * The element each pointing step highlights. Steps without one are cards
  * in the middle of the screen.
@@ -51,6 +60,8 @@ const CC_SWITCH_OPEN_TARGET = '[data-tour="cc-switch-open"]'
 export const TOUR_TARGETS: Partial<Record<TourStepId, string>> = {
   'open-keys': `[data-sidebar="sidebar"] a[href="${KEYS_PATH}"]`,
   'create-key': '[data-tour="create-key"]',
+  'name-key': KEY_NAME_TARGET,
+  'pick-group': KEY_GROUP_TARGET,
   'save-key': SAVE_KEY_TARGET,
   'open-cc-switch': '[data-tour="key-cc-switch"]',
   // The whole form, so the user can switch the tool and change models.
@@ -64,6 +75,8 @@ export const TOUR_TARGETS: Partial<Record<TourStepId, string>> = {
  * highlighted form (a model list) shows above the dimmed area.
  */
 export const DIALOG_STEPS: ReadonlySet<TourStepId> = new Set([
+  'name-key',
+  'pick-group',
   'save-key',
   'pick-app',
   'import',
@@ -127,6 +140,18 @@ export type TourPage = {
   /** Keys in the list, or null while the list loads or is not shown. */
   keyCount: number | null
   keyFormOpen: boolean
+  /**
+   * The new key has a name and the user left the name field, so the tour
+   * does not move on while they are still typing.
+   */
+  keyNamed: boolean
+  /** One of the user's groups is chosen for the new key. */
+  keyGroupPicked: boolean
+  /**
+   * The group list is open. It opens inside the drawer's layer, which the
+   * tour covers, so the tour steps aside until it closes.
+   */
+  groupListOpen: boolean
   ccSwitchOpen: boolean
 }
 
@@ -134,10 +159,23 @@ export type TourPage = {
 export function readTourPage(pathname: string): TourPage {
   const list = document.querySelector<HTMLElement>('[data-tour="key-list"]')
   const count = list?.dataset.keyCount
+  const nameInput = document.querySelector<HTMLInputElement>(KEY_NAME_INPUT)
   return {
     onKeysPage: pathname === KEYS_PATH,
     keyCount: count === undefined ? null : Number(count),
     keyFormOpen: document.querySelector(SAVE_KEY_TARGET) !== null,
+    keyNamed:
+      nameInput !== null &&
+      nameInput.value.trim() !== '' &&
+      document.activeElement !== nameInput,
+    keyGroupPicked:
+      document.querySelector(
+        `${KEY_GROUP_TARGET}[data-group-picked="true"]`
+      ) !== null,
+    groupListOpen:
+      document
+        .querySelector(KEY_GROUP_TRIGGER)
+        ?.getAttribute('aria-expanded') === 'true',
     ccSwitchOpen: document.querySelector(CC_SWITCH_OPEN_TARGET) !== null,
   }
 }
@@ -146,7 +184,8 @@ export function readTourPage(pathname: string): TourPage {
  * The step to show, worked out from what the user already did and what is
  * on the page rather than from a step counter. A user who closes the
  * drawer or the dialog, or opens a page by other means, is shown the step
- * that fits. Returns null while the key list is still loading.
+ * that fits. Returns null while there is nothing to point at: the key list
+ * is still loading, or the group list is open.
  */
 export function currentTourStep(
   run: Pick<TourRun, 'welcomed' | 'installed' | 'pickedApp' | 'imported'>,
@@ -156,7 +195,13 @@ export function currentTourStep(
   if (!run.installed) return 'install'
   if (run.imported) return 'done'
   if (page.ccSwitchOpen) return run.pickedApp ? 'import' : 'pick-app'
-  if (page.keyFormOpen) return 'save-key'
+  if (page.keyFormOpen) {
+    if (page.groupListOpen) return null
+    if (!page.keyNamed) return 'name-key'
+    // A key outside every group reaches no model, so it must be picked.
+    if (!page.keyGroupPicked) return 'pick-group'
+    return 'save-key'
+  }
   if (!page.onKeysPage) return 'open-keys'
   if (page.keyCount === null) return null
   return page.keyCount > 0 ? 'open-cc-switch' : 'create-key'

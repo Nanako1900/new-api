@@ -28,6 +28,8 @@ import { useOnboardingStore } from '@/stores/onboarding-store'
 
 import {
   CC_SWITCH_DOWNLOAD_URL,
+  KEY_GROUP_TRIGGER,
+  KEY_NAME_INPUT,
   KEYS_PATH,
   TOUR_STEPS,
   type TourStepId,
@@ -51,9 +53,17 @@ const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
     title: 'Create a key',
     body: 'Click here to make your first key.',
   },
+  'name-key': {
+    title: 'Name your key',
+    body: 'Give it a name you will recognize, like My laptop, then click Next.',
+  },
+  'pick-group': {
+    title: 'Pick a group',
+    body: "The group decides which models this key can use and at what rate; each group's note is in the list. Claude Code needs a Claude group, Codex a GPT group. Using both? Make one key for each.",
+  },
   'save-key': {
     title: 'Save the key',
-    body: 'The name is filled in for you. Just click Save changes.',
+    body: 'Click Save changes to create the key.',
   },
   'open-cc-switch': {
     title: 'Send the key to CC Switch',
@@ -61,7 +71,7 @@ const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
   },
   'pick-app': {
     title: 'Pick your tool and models',
-    body: 'Claude for Claude Code, Codex for Codex. Default models are filled in; open a list to pick another.',
+    body: "Match the key's group: Claude for a Claude group (Claude Code), Codex for a GPT group. Default models are filled in; open a list to pick another.",
   },
   import: {
     title: 'Open CC Switch',
@@ -123,6 +133,22 @@ export function TourStepContent(props: TourStepContentProps) {
           <ExternalLink aria-hidden='true' />
         </Button>
       </>
+    )
+  } else if (props.step === 'name-key') {
+    // The step moves on once the named field loses focus, so Next hands
+    // focus to the group field, or back to an empty name field.
+    const finishNaming = () => {
+      const input = document.querySelector<HTMLInputElement>(KEY_NAME_INPUT)
+      if (!input?.value.trim()) {
+        input?.focus()
+        return
+      }
+      document.querySelector<HTMLElement>(KEY_GROUP_TRIGGER)?.focus()
+    }
+    actions = (
+      <Button size={size} onClick={finishNaming}>
+        {t('Next')}
+      </Button>
     )
   } else if (props.step === 'pick-app') {
     actions = (
