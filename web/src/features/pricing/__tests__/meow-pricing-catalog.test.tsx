@@ -63,6 +63,7 @@ function mockApi(
   options: {
     pricing?: PricingData | 'fail' | 'fail-once'
     perf?: Record<string, number> | 'fail'
+    ttft?: Record<string, number | undefined>
   } = {}
 ) {
   let pricingCalls = 0
@@ -88,7 +89,7 @@ function mockApi(
           success_rate: rate,
           avg_latency_ms: 1300,
           avg_tps: 74,
-          avg_ttft_ms: 400,
+          avg_ttft_ms: options.ttft ? options.ttft[group] : 400,
           series: [],
         })
       )
@@ -449,6 +450,45 @@ describe('meow pricing catalog', () => {
     expect(await sonnetRow('Models · Kiro')).toHaveTextContent('97.80%')
   })
 
+  it('shows the selected channel TTFT from the backend instead of total request latency', async () => {
+    const user = userEvent.setup()
+    mockApi({
+      perf: { official: 99.95, kiro: 97.8 },
+      ttft: { official: 400, kiro: 2450 },
+    })
+    renderCatalog()
+
+    const official = await sonnetRow('Models · Official')
+    await waitFor(() => expect(official).toHaveTextContent('400ms · 74.0 t/s'))
+    expect(official).not.toHaveTextContent('1.30s')
+    expect(
+      screen.getByRole('columnheader', {
+        name: 'Time to first token · Throughput short',
+      })
+    ).toBeInTheDocument()
+    expect(api.get).toHaveBeenCalledWith('/api/perf-metrics', {
+      params: { model: 'claude-sonnet', hours: 24 },
+    })
+
+    await user.click(screen.getByRole('button', { name: 'kiro' }))
+
+    const kiro = await sonnetRow('Models · Kiro')
+    expect(kiro).toHaveTextContent('2.45s · 74.0 t/s')
+    expect(kiro).not.toHaveTextContent('400ms')
+  })
+
+  it.each([0, undefined])(
+    'shows no first-token measurement when the backend TTFT is %s without using total latency',
+    async (ttft) => {
+      mockApi({ perf: { official: 99.95 }, ttft: { official: ttft } })
+      renderCatalog()
+
+      const official = await sonnetRow('Models · Official')
+      await waitFor(() => expect(official).toHaveTextContent('— · 74.0 t/s'))
+      expect(official).not.toHaveTextContent('1.30s')
+    }
+  )
+
   it('keeps prices, stays on the page and stays quiet when the metrics request fails', async () => {
     const toastError = vi.spyOn(toast, 'error')
     const onInternalServerError = vi.fn()
@@ -469,6 +509,7 @@ describe('meow pricing catalog', () => {
     const cells = within(row).getAllByRole('cell')
     expect(cells[1]).toHaveTextContent('$4.5')
     expect(cells[4]).toHaveTextContent('—')
+    expect(cells[5]).toHaveTextContent('—')
   })
 
   it('shows the empty state when no channel has models', async () => {

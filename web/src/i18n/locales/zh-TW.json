@@ -7273,6 +7273,7 @@
     "Time Granularity": "時間粒度",
     "Time range": "時間範圍",
     "Time remaining": "剩餘時間",
+    "Time to first token": "首字延遲",
     "Time window for rate limiting": "速率限制的時間窗口",
     "Time-based": "含時間條件",
     "Time-sliced cache (Claude)": "分時緩存（Claude）",

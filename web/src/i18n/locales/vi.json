@@ -7273,6 +7273,7 @@
     "Time Granularity": "Độ chi tiết thời gian",
     "Time range": "Khoảng thời gian",
     "Time remaining": "Thời gian còn lại",
+    "Time to first token": "Độ trễ token đầu tiên",
     "Time window for rate limiting": "Cửa sổ thời gian cho giới hạn tốc độ",
     "Time-based": "Theo thời gian",
     "Time-sliced cache (Claude)": "Bộ đệm phân thời gian (Claude)",

@@ -124,7 +124,7 @@ export function MeowChannelTable(props: MeowChannelTableProps) {
           <div role='columnheader'>{t('Cache Read')}</div>
           <div role='columnheader'>{t('24h status')}</div>
           <div role='columnheader'>
-            {`${t('Latency short')} · ${t('Throughput short')}`}
+            {`${t('Time to first token')} · ${t('Throughput short')}`}
           </div>
         </div>
         {props.channel.models.map((model) => {

@@ -7273,6 +7273,7 @@
     "Time Granularity": "Гранулярность времени",
     "Time range": "Временной диапазон",
     "Time remaining": "Осталось времени",
+    "Time to first token": "Время до первого токена",
     "Time window for rate limiting": "Временное окно для ограничения скорости запросов",
     "Time-based": "Зависит от времени",
     "Time-sliced cache (Claude)": "Сегментированный кэш (Claude)",

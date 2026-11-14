@@ -277,7 +277,7 @@ describe('meow family card', () => {
 
     const official = sonnetRow('Claude · Official')
     expect(official).toHaveTextContent('99.95%')
-    expect(official).toHaveTextContent('1.30s · 74.0 t/s')
+    expect(official).toHaveTextContent('400ms · 74.0 t/s')
     expect(sonnetRow('Claude · Kiro')).toHaveTextContent('97.80%')
   })
 
