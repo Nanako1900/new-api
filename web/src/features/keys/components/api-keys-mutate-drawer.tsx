@@ -72,7 +72,6 @@ import {
   translateServerText,
 } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
-import { useOnboardingStore } from '@/stores/onboarding-store'
 
 import {
   createApiKey,
@@ -240,13 +239,9 @@ export function ApiKeysMutateDrawer({
         setInitializedTarget(target)
       }
     } else {
-      const defaults = getApiKeyFormDefaultValues(
-        defaultUseAutoGroup && backendHasAuto
+      form.reset(
+        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
       )
-      // The onboarding tour only asks the user to click Save, so it names
-      // the key for them.
-      if (useOnboardingStore.getState().run) defaults.name = t('My key')
-      form.reset(defaults)
       setInitializedTarget(target)
     }
   }, [
@@ -267,7 +262,6 @@ export function ApiKeysMutateDrawer({
     availableAutoGroupNames,
     maxAutoGroups,
     initializedTarget,
-    t,
   ])
 
   const formTarget =
@@ -410,7 +404,7 @@ export function ApiKeysMutateDrawer({
                 control={form.control}
                 name='name'
                 render={({ field }) => (
-                  <FormItem>
+                  <FormItem data-tour='key-name'>
                     <FormLabel>{t('Name')}</FormLabel>
                     <FormControl>
                       <Input {...field} placeholder={t('Enter a name')} />
@@ -424,7 +418,12 @@ export function ApiKeysMutateDrawer({
                 control={form.control}
                 name='group'
                 render={({ field }) => (
-                  <FormItem>
+                  <FormItem
+                    data-tour='key-group'
+                    data-group-picked={groups.some(
+                      (group) => group.value === field.value
+                    )}
+                  >
                     <FormLabel>{t('Group')}</FormLabel>
                     <FormControl>
                       <ApiKeyGroupCombobox

@@ -149,6 +149,82 @@ describe('OnboardingTour', () => {
     )
   })
 
+  describe('in the key drawer', () => {
+    const originalRect = Element.prototype.getBoundingClientRect
+
+    beforeEach(() => {
+      // jsdom lays nothing out: give elements a box so the tour finds the
+      // fields it points at.
+      Element.prototype.getBoundingClientRect = () =>
+        ({
+          top: 40,
+          left: 40,
+          width: 200,
+          height: 32,
+          right: 240,
+          bottom: 72,
+          x: 40,
+          y: 40,
+          toJSON: () => ({}),
+        }) as DOMRect
+      document.body.insertAdjacentHTML(
+        'beforeend',
+        `<div id="key-drawer">
+          <div data-tour="key-name"><input aria-label="Name" /></div>
+          <div data-tour="key-group" data-group-picked="false">
+            <button role="combobox">Select a group</button>
+          </div>
+          <button data-tour="save-key">Save changes</button>
+        </div>`
+      )
+      useOnboardingStore.setState({
+        run: {
+          userId: 7,
+          welcomed: true,
+          installed: true,
+          pickedApp: false,
+          imported: false,
+        },
+      })
+    })
+
+    afterEach(() => {
+      Element.prototype.getBoundingClientRect = originalRect
+      document.querySelector('#key-drawer')?.remove()
+    })
+
+    it('keeps asking for a name and focuses the field when Next is clicked with no name', async () => {
+      render(<OnboardingTour />)
+      const user = userEvent.setup()
+
+      await user.click(await screen.findByRole('button', { name: 'Next' }))
+
+      expect(screen.getByRole('textbox', { name: 'Name' })).toHaveFocus()
+      expect(
+        screen.getByRole('heading', { name: 'Name your key' })
+      ).toBeVisible()
+    })
+
+    it('waits while the user types and moves to the group after Next', async () => {
+      render(<OnboardingTour />)
+      const user = userEvent.setup()
+
+      await user.type(
+        await screen.findByRole('textbox', { name: 'Name' }),
+        'laptop'
+      )
+      expect(
+        screen.getByRole('heading', { name: 'Name your key' })
+      ).toBeVisible()
+      await user.click(screen.getByRole('button', { name: 'Next' }))
+
+      expect(screen.getByRole('combobox')).toHaveFocus()
+      expect(
+        await screen.findByRole('heading', { name: 'Pick a group' })
+      ).toBeVisible()
+    })
+  })
+
   it('moves from the welcome card to the install card and records the install', async () => {
     setScreenWidth(1280)
     render(<OnboardingTour />)
