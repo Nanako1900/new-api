@@ -7273,6 +7273,7 @@
     "Time Granularity": "Granularité temporelle",
     "Time range": "Plage horaire",
     "Time remaining": "Temps restant",
+    "Time to first token": "Délai du premier token",
     "Time window for rate limiting": "Fenêtre de temps pour la limitation de débit",
     "Time-based": "Selon l’heure",
     "Time-sliced cache (Claude)": "Cache segmenté (Claude)",

@@ -277,7 +277,7 @@ export function MeowModelRow(props: MeowModelRowProps) {
         className='text-muted-foreground hidden font-mono text-xs tabular-nums md:block'
       >
         {props.perf
-          ? `${formatLatency(props.perf.avg_latency_ms)} · ${formatThroughput(props.perf.avg_tps)}`
+          ? `${formatLatency(props.perf.avg_ttft_ms)} · ${formatThroughput(props.perf.avg_tps)}`
           : '—'}
       </div>
     </div>
