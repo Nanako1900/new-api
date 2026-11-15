@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QUOTA_TYPE_VALUES } from '../constants'
-import type { PricingModel } from '../types'
+import type { PricingModel, PricingReference } from '../types'
 import {
   getCurrentTimePricingTiers,
   splitBillingExprAndRequestRules,
@@ -34,14 +34,14 @@ export type MeowPriceOptions = {
   priceRate: number
   usdExchangeRate: number
   groupRatio: Record<string, number>
+  reference?: PricingReference
 }
 
 type ChannelPrices =
   | {
       kind: 'token'
       values: string[]
-      variable: boolean
-      currentPeriod: boolean
+      variable: boolean[]
     }
   | { kind: 'request'; price: string }
   | { kind: 'dynamic' }
@@ -91,6 +91,7 @@ export function getMeowChannelPrices(
       return { kind: 'dynamic' }
     }
     const values: string[] = []
+    const variable: boolean[] = []
     for (const field of tokenFields) {
       const amounts = tiers.flatMap((tier) => {
         if ('unitPrices' in tier) return []
@@ -105,25 +106,31 @@ export function getMeowChannelPrices(
       }
       if (amounts.length === 0) {
         values.push('—')
+        variable.push(false)
         continue
       }
       const min = Math.min(...amounts)
       const max = Math.max(...amounts)
       const minimum = formatDynamicUnitPrice(min, options)
-      values.push(
-        min === max
-          ? minimum
-          : `${minimum} – ${formatDynamicUnitPrice(max, options)}`
-      )
+      values.push(minimum)
+      variable.push(min !== max)
     }
     return {
       kind: 'token',
       values,
-      variable: tiers.length > 1,
-      currentPeriod: Boolean(dynamic.isTimePricing),
+      variable,
     }
   }
   if (isUnconfiguredTaskUsageModel(model)) return { kind: 'dynamic' }
+  if (
+    !Number.isFinite(
+      model.quota_type === QUOTA_TYPE_VALUES.REQUEST
+        ? model.model_price
+        : model.model_ratio
+    )
+  ) {
+    return { kind: 'dynamic' }
+  }
   if (model.quota_type === QUOTA_TYPE_VALUES.REQUEST) {
     return {
       kind: 'request',
@@ -152,7 +159,6 @@ export function getMeowChannelPrices(
         prices.groupRatio
       )
     }),
-    variable: false,
-    currentPeriod: false,
+    variable: [false, false, false],
   }
 }

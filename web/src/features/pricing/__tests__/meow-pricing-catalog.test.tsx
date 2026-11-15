@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import i18next from 'i18next'
 import type { ComponentProps } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -32,11 +33,27 @@ import {
 } from '@/stores/system-config-store'
 
 import { MeowPricingCatalog } from '../components/meow/meow-pricing-catalog'
-import type { PricingData, PricingModel } from '../types'
+import type { PricingData, PricingModel, PricingReference } from '../types'
 
 vi.mock('@visactor/react-vchart', () => ({ VChart: () => null }))
 
 const LAST_HOUR = 1_800_000_000
+const OPUS_EXPRESSION =
+  'tier("standard", p * 4 + cr * 0.2 + cc * 5 + cc1h * 8 + c * 20)'
+const REFERENCE: PricingReference = {
+  source_url:
+    'https://basellm.github.io/llm-metadata/api/newapi/ratio_config-v1-base.json',
+  currency: 'USD',
+  usd_to_cny_rate: 7.3,
+  updated_at: LAST_HOUR,
+  stale: false,
+  models: {
+    'claude-sonnet': {
+      billing_mode: 'tiered_expr',
+      billing_expr: OPUS_EXPRESSION,
+    },
+  },
+}
 
 const SONNET: PricingModel = {
   id: 1,
@@ -68,6 +85,7 @@ function mockApi(
     pricing?: PricingData | 'fail' | 'fail-once'
     perf?: Record<string, number> | 'fail'
     ttft?: Record<string, number | undefined>
+    reference?: PricingReference | 'fail'
   } = {}
 ) {
   let pricingCalls = 0
@@ -80,6 +98,19 @@ function mockApi(
       }
       if (options.pricing === 'fail-once') return { data: PRICING }
       return { data: options.pricing ?? PRICING }
+    }
+    if (url === '/api/pricing/reference') {
+      if (options.reference === 'fail') {
+        throw Object.assign(new Error('reference down'), {
+          response: { status: 500 },
+        })
+      }
+      return {
+        data: {
+          success: true,
+          data: options.reference ?? { ...REFERENCE, models: {} },
+        },
+      }
     }
     if (url === '/api/perf-metrics') {
       if (options.perf === 'fail') {
@@ -360,7 +391,7 @@ describe('meow pricing catalog', () => {
       within(table).getByRole('button', { name: 'custom-model' })
     ).toBeInTheDocument()
   })
-  it('shows final configured-currency expression prices in three labeled columns without recharge or official comparisons', async () => {
+  it('shows the actual CNY charge and matched reference savings without a recharge multiplier', async () => {
     useSystemConfigStore.getState().setConfig({
       currency: {
         ...DEFAULT_CURRENCY_CONFIG,
@@ -369,6 +400,7 @@ describe('meow pricing catalog', () => {
       },
     })
     mockApi({
+      reference: REFERENCE,
       pricing: {
         ...PRICING,
         data: [
@@ -391,6 +423,9 @@ describe('meow pricing catalog', () => {
     ).getAllByRole('cell')
     expect(cells[1]).toHaveAccessibleName('Input')
     expect(cells[1]).toHaveTextContent('¥5.2')
+    expect(
+      await screen.findByText('About 82.19% below reference')
+    ).toBeInTheDocument()
     expect(cells[2]).toHaveAccessibleName('Output')
     expect(cells[2]).toHaveTextContent('¥26')
     expect(cells[3]).toHaveAccessibleName('Cache Read')
@@ -417,11 +452,14 @@ describe('meow pricing catalog', () => {
     )
     expect(cells[1]).toHaveTextContent('$5.2')
     expect(
+      screen.queryByText('About 82.19% below reference')
+    ).not.toBeInTheDocument()
+    expect(
       screen.getByText('Token prices: USD / 1M tokens')
     ).toBeInTheDocument()
   })
 
-  it('discloses context-tier ranges and opens complete tiers and cache-writing details', async () => {
+  it('hides tier details until its arrow opens complete selected-channel prices', async () => {
     await import('../components/model-details')
     const user = userEvent.setup()
     mockApi({
@@ -440,22 +478,338 @@ describe('meow pricing catalog', () => {
     renderCatalog()
     const row = await sonnetRow('Models · Official')
     const cells = within(row).getAllByRole('cell')
-    expect(cells[1]).toHaveTextContent('$1.5 – $3')
-    expect(cells[2]).toHaveTextContent('$7.5 – $15')
-    expect(row).toHaveTextContent(
+    expect(cells[1]).toHaveTextContent('From $1.5')
+    expect(cells[1]).not.toHaveTextContent('$3')
+    expect(cells[2]).toHaveTextContent('From $7.5')
+    expect(cells[2]).not.toHaveTextContent('$15')
+    expect(row).not.toHaveTextContent(
       'Prices vary by usage tier and request conditions'
     )
-    await user.click(within(row).getByRole('button', { name: 'claude-sonnet' }))
-    const dialog = await screen.findByRole('dialog', { name: 'claude-sonnet' })
+    await user.click(
+      within(row).getByRole('button', {
+        name: 'Price details for claude-sonnet',
+      })
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Price details for claude-sonnet',
+    })
     expect(dialog).toHaveTextContent('short')
     expect(dialog).toHaveTextContent('long')
     expect(dialog).toHaveTextContent('Cache Write (5m)')
     expect(dialog).toHaveTextContent('Cache Write (1h)')
-    await user.click(
-      within(dialog).getByRole('button', { name: 'Base pricing' })
-    )
-    expect(dialog).toHaveTextContent('200K')
+    expect(dialog).toHaveTextContent('200,000')
+    expect(dialog).toHaveTextContent('$1.875')
+    expect(dialog).toHaveTextContent('$6')
   }, 60_000)
+
+  it('opens prices with the keyboard, closes on Escape, and restores focus to the arrow', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    renderCatalog()
+    const row = await sonnetRow('Models · Official')
+    const trigger = within(row).getByRole('button', {
+      name: 'Price details for claude-sonnet',
+    })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    trigger.focus()
+    await user.keyboard('{Enter}')
+    const popup = await screen.findByRole('dialog', {
+      name: 'Price details for claude-sonnet',
+    })
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(popup).toHaveClass('overflow-y-auto', 'overscroll-contain')
+    expect(popup).toHaveTextContent('$4.5')
+    expect(popup).not.toHaveTextContent('1.5x')
+    await user.keyboard('{Escape}')
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+    expect(trigger).toHaveFocus()
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await user.click(trigger)
+    await screen.findByRole('dialog', {
+      name: 'Price details for claude-sonnet',
+    })
+    await user.click(screen.getByRole('searchbox'))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    )
+  })
+
+  it.each([
+    { kind: 'flat token', model: {}, expected: '$4.5' },
+    {
+      kind: 'request',
+      model: { quota_type: 1, model_price: 0.04 },
+      expected: '$0.06',
+    },
+    {
+      kind: 'task usage',
+      model: {
+        billing_mode: 'tiered_expr',
+        billing_expr: 'tier("base", u("seconds") * 0.2)',
+        billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+      },
+      expected: '$0.3',
+    },
+    {
+      kind: 'plugin',
+      model: {
+        billing_plugin_variants: [
+          {
+            plugin_key: 'video',
+            plugin_name: 'Video provider',
+            billing_expr: 'tier("base", u("seconds") * 0.2)',
+            billing_mode: 'tiered_expr',
+            billing_usage_schema: {
+              seconds: { type: 'number', unit: 'second' },
+            },
+          },
+        ],
+      },
+      expected: 'Video provider',
+    },
+    {
+      kind: 'unconfigured',
+      model: {
+        billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+      },
+      expected:
+        'This model is billed by usage, but the administrator has not configured its pricing yet.',
+    },
+    {
+      kind: 'missing request price',
+      model: { quota_type: 1 },
+      expected: 'Unset price',
+    },
+  ] satisfies {
+    kind: string
+    model: Partial<PricingModel>
+    expected: string
+  }[])(
+    'provides an arrow and a usable pricing popup for $kind models',
+    async ({ model, expected }) => {
+      const user = userEvent.setup()
+      mockApi({ pricing: { ...PRICING, data: [{ ...SONNET, ...model }] } })
+      renderCatalog()
+      const row = await sonnetRow('Models · Official')
+      await user.click(
+        within(row).getByRole('button', {
+          name: 'Price details for claude-sonnet',
+        })
+      )
+      const popup = await screen.findByRole('dialog', {
+        name: 'Price details for claude-sonnet',
+      })
+      expect(popup).toHaveTextContent(expected)
+      if (
+        model.billing_usage_schema?.seconds ||
+        model.billing_plugin_variants?.length
+      ) {
+        expect(popup).toHaveTextContent('s')
+      }
+    }
+  )
+
+  it('shows source USD and converted CNY prices with the cached reference date and fixed rate', async () => {
+    const user = userEvent.setup()
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 1,
+      },
+    })
+    mockApi({
+      reference: { ...REFERENCE, stale: true },
+      pricing: {
+        ...PRICING,
+        data: [
+          {
+            ...SONNET,
+            billing_mode: 'tiered_expr',
+            billing_expr: OPUS_EXPRESSION,
+          },
+        ],
+      },
+    })
+    renderCatalog()
+    const row = await sonnetRow('Models · Official')
+    await user.click(
+      within(row).getByRole('button', {
+        name: 'Price details for claude-sonnet',
+      })
+    )
+    const popup = await screen.findByRole('dialog', {
+      name: 'Price details for claude-sonnet',
+    })
+    expect(popup).toHaveTextContent('$4 · ¥29.2')
+    // Focusing the source link would scroll a narrow popup past the actual prices.
+    expect(popup).toHaveFocus()
+    expect(popup).toHaveTextContent('1 USD = 7.3 CNY')
+    expect(popup).toHaveTextContent('Reference updated:')
+    expect(popup).toHaveTextContent(
+      'Using the last cached reference; refresh is pending.'
+    )
+    expect(
+      within(popup).getByRole('link', {
+        name: 'Source: Basellm reference data',
+      })
+    ).toHaveAttribute('href', REFERENCE.source_url)
+    expect(popup).toHaveTextContent('Savings use the smallest reduction')
+  })
+
+  it('shows explicit zero reference prices without inventing missing fields or a discount', async () => {
+    const user = userEvent.setup()
+    mockApi({
+      reference: {
+        ...REFERENCE,
+        models: {
+          'claude-sonnet': {
+            billing_mode: 'tiered_expr',
+            billing_expr: 'tier("base", p * 0 + c * 20)',
+          },
+        },
+      },
+    })
+    renderCatalog()
+    const row = await sonnetRow('Models · Official')
+    await user.click(
+      within(row).getByRole('button', {
+        name: 'Price details for claude-sonnet',
+      })
+    )
+    const popup = await screen.findByRole('dialog', {
+      name: 'Price details for claude-sonnet',
+    })
+    const reference = within(popup).getByRole('region', {
+      name: 'Reference prices',
+    })
+    expect(reference).toHaveTextContent('$0 · ¥0')
+    expect(reference).not.toHaveTextContent('Cache Read')
+    expect(reference).not.toHaveTextContent('below reference')
+  })
+
+  it('keeps request conditions in the popup with the selected-channel base prices', async () => {
+    const user = userEvent.setup()
+    mockApi({
+      pricing: {
+        ...PRICING,
+        data: [
+          {
+            ...SONNET,
+            billing_mode: 'tiered_expr',
+            billing_expr:
+              '(tier("base", p * 2 + c * 8)) * (param("speed") == "fast" ? 2 : 1)',
+          },
+        ],
+      },
+    })
+    renderCatalog()
+    const row = await sonnetRow('Models · Official')
+    expect(row).toHaveTextContent('Dynamic Pricing')
+    expect(row).not.toHaveTextContent('fast')
+    await user.click(
+      within(row).getByRole('button', {
+        name: 'Price details for claude-sonnet',
+      })
+    )
+    const popup = await screen.findByRole('dialog', {
+      name: 'Price details for claude-sonnet',
+    })
+    expect(popup).toHaveTextContent('Conditional multipliers')
+    expect(popup).toHaveTextContent('fast')
+    expect(popup).toHaveTextContent('$3')
+    expect(popup).toHaveTextContent('$12')
+  })
+
+  it('updates reference number formatting after switching all interface languages and handles invalid locales', async () => {
+    const user = userEvent.setup()
+    mockApi({
+      reference: REFERENCE,
+      pricing: {
+        ...PRICING,
+        data: [
+          {
+            ...SONNET,
+            billing_mode: 'tiered_expr',
+            billing_expr: OPUS_EXPRESSION,
+          },
+        ],
+      },
+    })
+    renderCatalog()
+    const row = await sonnetRow('Models · Official')
+    await user.click(
+      within(row).getByRole('button', {
+        name: 'Price details for claude-sonnet',
+      })
+    )
+    const popup = await screen.findByRole('dialog', {
+      name: 'Price details for claude-sonnet',
+    })
+    const languages = [
+      'zhCN',
+      'zhTW',
+      'en',
+      'fr',
+      'ja',
+      'ru',
+      'vi',
+      'invalid_locale_!',
+    ]
+    try {
+      for (const language of languages) {
+        // Ensure i18next resolves to each interface code, even with a small test resource.
+        i18next.addResource(
+          language,
+          'translation',
+          'Reference prices',
+          'Reference prices'
+        )
+        await act(() => i18next.changeLanguage(language))
+        const decimal = ['fr', 'ru', 'vi'].includes(language) ? '29,2' : '29.2'
+        expect(
+          within(popup).getByRole('region', { name: 'Reference prices' })
+        ).toHaveTextContent(decimal)
+      }
+    } finally {
+      await act(() => i18next.changeLanguage('en'))
+      for (const language of languages) {
+        if (language !== 'en') {
+          i18next.removeResourceBundle(language, 'translation')
+        }
+      }
+      delete i18next.getResourceBundle('en', 'translation')['Reference prices']
+    }
+  })
+
+  it('keeps the catalog and price popup usable without alerts when reference loading fails', async () => {
+    const user = userEvent.setup()
+    const toastError = vi.spyOn(toast, 'error')
+    const onInternalServerError = vi.fn()
+    mockApi({ reference: 'fail' })
+    const client = renderCatalog(undefined, onInternalServerError)
+    const row = await sonnetRow('Models · Official')
+    await waitFor(() =>
+      expect(client.getQueryState(['pricing-reference'])?.status).toBe('error')
+    )
+    expect(row).toHaveTextContent('$4.5')
+    await user.click(
+      within(row).getByRole('button', {
+        name: 'Price details for claude-sonnet',
+      })
+    )
+    expect(
+      await screen.findByRole('dialog', {
+        name: 'Price details for claude-sonnet',
+      })
+    ).toHaveTextContent(
+      'No matching reference price is available. Channel prices remain valid.'
+    )
+    expect(toastError).not.toHaveBeenCalled()
+    expect(onInternalServerError).not.toHaveBeenCalled()
+  })
 
   it.each([
     { expression: 'tier("base", p * 4 + cr * 0 + c * 20)', cache: '$0' },
@@ -571,7 +925,7 @@ describe('meow pricing catalog', () => {
     renderCatalog()
     const row = await sonnetRow('Models · Official')
     expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('$3')
-    expect(row).toHaveTextContent('Current period price')
+    expect(row).not.toHaveTextContent('Current period price')
     now.mockReturnValue(Date.parse('2026-11-15T13:00:00Z'))
     act(() => {
       document.dispatchEvent(new Event('visibilitychange'))

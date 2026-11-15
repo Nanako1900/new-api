@@ -26,6 +26,7 @@ import { DEFAULT_TOKEN_UNIT } from '../constants'
 import { useBillingTime } from '../hooks/use-billing-time'
 import {
   getDynamicDisplayGroupRatio,
+  formatTaskUsageUnitPrice,
   getDynamicPriceUnitLabelKey,
   getDynamicPricingSummary,
   isUnconfiguredTaskUsageModel,
@@ -48,6 +49,8 @@ export function ModelPriceCell(props: {
   model: PricingModel
   options?: ModelPriceCellOptions
   showExpression?: boolean
+  /** One starting price per usage unit; details live in a separate popup. */
+  compact?: boolean
 }) {
   const { t, i18n } = useTranslation()
   const model = useMemo(() => withBasePricing(props.model), [props.model])
@@ -104,7 +107,7 @@ export function ModelPriceCell(props: {
           <span className='text-muted-foreground block truncate text-sm'>
             {t('Special billing expression')}
           </span>
-          {providerCaption && (
+          {providerCaption && !props.compact && (
             <span className='text-muted-foreground block text-xs'>
               {[providerCaption, unconfiguredCaption]
                 .filter(Boolean)
@@ -115,6 +118,17 @@ export function ModelPriceCell(props: {
             <code className='text-muted-foreground mt-1 line-clamp-2 block text-xs break-all whitespace-normal'>
               {dynamic.rawExpression}
             </code>
+          )}
+        </span>
+      )
+    }
+    if (props.compact && !dynamic.isTaskUsage) {
+      return (
+        <span className='text-muted-foreground text-sm'>
+          {t(
+            dynamic.isMixedBilling
+              ? 'Token or per-call pricing'
+              : 'Dynamic Pricing'
           )}
         </span>
       )
@@ -135,12 +149,30 @@ export function ModelPriceCell(props: {
         if (hasRequestPrice && entry.unit === 'token') {
           suffix = `/${t('{{unit}} tokens', { unit: tokenUnitLabel })}`
         }
+        let amount = entry.formattedRange ?? entry.formatted
+        if (
+          props.compact &&
+          entry.minValue !== undefined &&
+          entry.maxValue !== entry.minValue
+        ) {
+          amount = t('From {{price}}', {
+            price: formatTaskUsageUnitPrice(entry.minValue, {
+              ...options,
+              tokenUnit,
+              showCurrencySymbol: false,
+              groupRatioMultiplier: getDynamicDisplayGroupRatio(
+                model,
+                options.selectedGroup
+              ),
+            }),
+          })
+        }
         return {
           label:
             entry.labelKind === 'schema'
               ? entry.shortLabel
               : t(entry.shortLabel),
-          value: `${entry.formattedRange ?? entry.formatted}${suffix}`,
+          value: `${amount}${suffix}`,
         }
       })
     if (metrics.length === 0) {
@@ -166,7 +198,7 @@ export function ModelPriceCell(props: {
     }
     if (providerCaption) caption += ` · ${providerCaption}`
     if (unconfiguredCaption) caption += ` · ${unconfiguredCaption}`
-    if (dynamic.tierCount > 1) {
+    if (dynamic.tierCount > 1 && !props.compact) {
       caption += ` · ${t('{{count}} tiers', { count: dynamic.tierCount })}`
     }
   } else {

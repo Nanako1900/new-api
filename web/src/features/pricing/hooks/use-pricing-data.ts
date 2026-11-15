@@ -22,7 +22,18 @@ import { useMemo } from 'react'
 import { useStatus } from '@/hooks/use-status'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
-import { getPricing } from '../api'
+import { getPricing, getPricingReference } from '../api'
+
+/** Optional comparison data must never delay or interrupt the real price list. */
+export function usePricingReference() {
+  return useQuery({
+    queryKey: ['pricing-reference'],
+    queryFn: async () => requireServerSuccess(await getPricingReference()).data,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+    meta: { errorToast: false, errorPage: false },
+  })
+}
 
 export function usePricingData(enabled = true) {
   const { status } = useStatus()

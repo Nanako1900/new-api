@@ -38,9 +38,13 @@ import {
   getMeowChannelPrices,
   type MeowPriceOptions,
 } from '../../lib/meow-price'
+import { getConfiguredGroupRatio } from '../../lib/model-helpers'
+import { getReferencePriceComparison } from '../../lib/reference-price'
 import type { PriceType, PricingModel } from '../../types'
 import { ModelPriceCell } from '../model-price-cell'
+import { MeowPricePopover } from './meow-price-popover'
 import { MeowPriceValue } from './meow-price-value'
+import { MeowReferencePriceBadge } from './meow-reference-price-badge'
 import { MeowStatusBar } from './meow-status-bar'
 
 export type { MeowPriceOptions } from '../../lib/meow-price'
@@ -70,7 +74,7 @@ export interface MeowModelRowProps {
 export function MeowModelRow(props: MeowModelRowProps) {
   const { t, i18n } = useTranslation()
   // Re-render when the display currency changes; the price formatters read it.
-  useSystemConfigStore((state) => state.config.currency)
+  const currency = useSystemConfigStore((state) => state.config.currency)
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const name = props.model.model_name
   const billingTime = useBillingTime(props.model.billing_expr)
@@ -79,6 +83,22 @@ export function MeowModelRow(props: MeowModelRowProps) {
     props.group,
     props.prices,
     billingTime === undefined ? undefined : new Date(billingTime)
+  )
+  const comparison = useMemo(
+    () =>
+      getReferencePriceComparison(
+        props.model,
+        getConfiguredGroupRatio(props.prices.groupRatio, props.group),
+        props.prices.reference,
+        currency
+      ),
+    [
+      props.model,
+      props.prices.groupRatio,
+      props.group,
+      props.prices.reference,
+      currency,
+    ]
   )
   const successRate = props.perf?.success_rate
   const hasSuccessRate =
@@ -111,7 +131,13 @@ export function MeowModelRow(props: MeowModelRowProps) {
         <span className='text-muted-foreground block text-[11px] md:hidden'>
           {t(column.labelKey)}
         </span>
-        <MeowPriceValue price={channelPrices.values[index]} />
+        <MeowPriceValue
+          price={
+            channelPrices.variable[index]
+              ? t('From {{price}}', { price: channelPrices.values[index] })
+              : channelPrices.values[index]
+          }
+        />
       </div>
     ))
   } else {
@@ -134,6 +160,7 @@ export function MeowModelRow(props: MeowModelRowProps) {
               selectedGroup: props.group,
             }}
             showExpression={false}
+            compact
           />
         )}
       </div>
@@ -168,17 +195,14 @@ export function MeowModelRow(props: MeowModelRowProps) {
             className='relative z-10 size-6'
             iconClassName='size-3'
           />
+          <MeowPricePopover
+            model={channelModel}
+            group={props.group}
+            prices={props.prices}
+            comparison={comparison}
+          />
         </div>
-        {channelPrices.kind === 'token' && channelPrices.currentPeriod && (
-          <p className='text-muted-foreground mt-1 text-xs'>
-            {t('Current period price')}
-          </p>
-        )}
-        {channelPrices.kind === 'token' && channelPrices.variable && (
-          <p className='text-muted-foreground mt-1 text-xs'>
-            {t('Prices vary by usage tier and request conditions')}
-          </p>
-        )}
+        <MeowReferencePriceBadge comparison={comparison} />
         {props.model.context_length ? (
           <p className='text-muted-foreground mt-0.5 text-xs'>
             {t('{{value}} context', {

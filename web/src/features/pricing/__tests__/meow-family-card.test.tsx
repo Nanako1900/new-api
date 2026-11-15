@@ -237,15 +237,17 @@ describe('meow family card', () => {
     expect(cells).toHaveLength(4)
   })
 
-  it('shows expression tier ranges in the corresponding token columns', () => {
+  it('shows one starting price per token column while keeping tiers out of the row', () => {
     renderFamily('claude')
     const official = within(
       screen.getByRole('table', { name: 'Claude · Official' })
     ).getByRole('row', { name: /claude-tiered/ })
     const cells = within(official).getAllByRole('cell')
-    expect(cells[1]).toHaveTextContent('$3 – $6')
-    expect(cells[2]).toHaveTextContent('$12 – $24')
-    expect(official).toHaveTextContent(
+    expect(cells[1]).toHaveTextContent('From $3')
+    expect(cells[1]).not.toHaveTextContent('$6')
+    expect(cells[2]).toHaveTextContent('From $12')
+    expect(cells[2]).not.toHaveTextContent('$24')
+    expect(official).not.toHaveTextContent(
       'Prices vary by usage tier and request conditions'
     )
   })
@@ -276,7 +278,7 @@ describe('meow family card', () => {
       )
       const row = sonnetRow('Claude · Official')
       expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('$3')
-      expect(row).toHaveTextContent('Current period price')
+      expect(row).not.toHaveTextContent('Current period price')
       act(() => {
         vi.advanceTimersByTime(1000)
       })

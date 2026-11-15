@@ -24,7 +24,10 @@ import { ErrorState } from '@/components/error-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { usePricingPreferencesStore } from '@/stores/pricing-preferences-store'
 
-import { usePricingData } from '../../hooks/use-pricing-data'
+import {
+  usePricingData,
+  usePricingReference,
+} from '../../hooks/use-pricing-data'
 import { buildMeowChannels } from '../../lib/meow-catalog'
 import { MeowChannelModels } from './meow-channel-models'
 import { MeowChannelPicker } from './meow-channel-picker'
@@ -48,6 +51,7 @@ type MeowPricingCatalogProps = {
 export function MeowPricingCatalog(props: MeowPricingCatalogProps) {
   const { t } = useTranslation()
   const pricing = usePricingData()
+  const reference = usePricingReference()
   const rememberedGroup = usePricingPreferencesStore((state) => state.group)
   const setGroup = usePricingPreferencesStore((state) => state.setGroup)
   const [selectedModelName, setSelectedModelName] = useState<string | null>(
@@ -72,6 +76,7 @@ export function MeowPricingCatalog(props: MeowPricingCatalogProps) {
     priceRate: pricing.priceRate,
     usdExchangeRate: pricing.usdExchangeRate,
     groupRatio: pricing.groupRatio,
+    reference: reference.data,
   }
   const selectedModel =
     activeChannel?.models.find(
@@ -125,7 +130,9 @@ export function MeowPricingCatalog(props: MeowPricingCatalogProps) {
           {t('Models and prices')}
         </h1>
         <p className='text-muted-foreground mt-2 text-sm'>
-          {t('Explore models and final unit prices for the selected channel.')}
+          {t(
+            'Spend less on the models you use. Compare channel prices with reference rates.'
+          )}
         </p>
       </header>
 
