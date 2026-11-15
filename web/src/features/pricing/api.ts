@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type { PricingData } from './types'
+import type { PricingData, PricingReferenceResponse } from './types'
 
 // ----------------------------------------------------------------------------
 // Pricing APIs
@@ -27,5 +27,10 @@ import type { PricingData } from './types'
 // Get model pricing data
 export async function getPricing(): Promise<PricingData> {
   const res = await api.get('/api/pricing')
+  return res.data
+}
+
+export async function getPricingReference(): Promise<PricingReferenceResponse> {
+  const res = await api.get('/api/pricing/reference')
   return res.data
 }

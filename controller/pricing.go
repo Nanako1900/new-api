@@ -76,6 +76,13 @@ func GetPricing(c *gin.Context) {
 	})
 }
 
+func GetPricingReference(c *gin.Context) {
+	c.JSON(200, gin.H{
+		"success": true,
+		"data":    service.GetPricingReference(c.Request.Context()),
+	})
+}
+
 func ResetModelRatio(c *gin.Context) {
 	defaultStr := ratio_setting.DefaultModelRatio2JSONString()
 	err := model.UpdateOption("ModelRatio", defaultStr)

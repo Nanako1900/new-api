@@ -144,3 +144,18 @@ export type PriceType =
   | 'audio_input'
   | 'audio_output'
 export type QuotaType = 0 | 1 // 0: token-based, 1: per-request
+
+export type PricingReference = {
+  source_url: string
+  currency: 'USD'
+  usd_to_cny_rate: number
+  updated_at: number
+  stale: boolean
+  models: Record<string, { billing_mode: 'tiered_expr'; billing_expr: string }>
+}
+
+export type PricingReferenceResponse = {
+  success: boolean
+  message?: string
+  data: PricingReference
+}
