@@ -16,12 +16,34 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { describe, expect, test } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { describe, expect, test, vi } from 'vitest'
+
+import { api } from '@/lib/api'
 
 import { PAYMENT_TYPES } from '../constants'
-import { requestPaymentAmount } from './use-payment'
+import { requestPaymentAmount, usePayment } from './use-payment'
 
 describe('payment amount routing', () => {
+  test('leaves Stripe totals to checkout without requesting the legacy local quote', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue({
+      data: { message: 'success', data: '730' },
+    })
+    const { result } = renderHook(() => usePayment())
+    await act(async () => {
+      await result.current.calculatePaymentAmount(100, 'alipay')
+    })
+    expect(result.current.amount).toBe(730)
+    post.mockClear()
+
+    await act(async () => {
+      await result.current.calculatePaymentAmount(100, PAYMENT_TYPES.STRIPE)
+    })
+    expect(post).not.toHaveBeenCalled()
+    expect(result.current.amount).toBe(0)
+    expect(result.current.calculating).toBe(false)
+  })
+
   test('uses the dedicated Waffo amount calculator', async () => {
     const calls: string[] = []
     const amount = await requestPaymentAmount(120, PAYMENT_TYPES.WAFFO, {

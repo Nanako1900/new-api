@@ -56,10 +56,16 @@ import type {
   PlanRecord,
   UserSubscriptionRecord,
 } from '@/features/subscriptions/types'
+import { toIntlLocale } from '@/i18n/languages'
+import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
 import type { PaymentMethod, TopupInfo } from '../types'
 
@@ -100,7 +106,13 @@ export function SubscriptionPlansCard({
   userQuota,
   onPurchaseSuccess,
 }: SubscriptionPlansCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const currency = useSystemConfigStore((state) => state.config.currency)
+  const quotaPerUnit =
+    currency.quotaPerUnit > 0
+      ? currency.quotaPerUnit
+      : DEFAULT_CURRENCY_CONFIG.quotaPerUnit
 
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [activeSubscriptions, setActiveSubscriptions] = useState<
@@ -529,7 +541,11 @@ export function SubscriptionPlansCard({
               const plan = p?.plan
               if (!plan) return null
               const totalAmount = Number(plan.total_amount || 0)
-              const price = Number(plan.price_amount || 0).toFixed(2)
+              const allowBalancePay = plan.allow_balance_pay !== false
+              const balanceCost = Math.max(
+                0,
+                Math.ceil(Number(plan.price_amount || 0) * quotaPerUnit)
+              )
               const isPopular = index === 0 && plans.length > 1
               const limit = Number(plan.max_purchase_per_user || 0)
               const count = planPurchaseCountMap.get(plan.id) || 0
@@ -580,9 +596,25 @@ export function SubscriptionPlansCard({
                     </div>
 
                     <div className='py-2'>
-                      <span className='text-primary text-2xl font-bold'>
-                        ${price}
-                      </span>
+                      {allowBalancePay ? (
+                        <>
+                          <p className='text-muted-foreground mb-1 text-xs'>
+                            {t('Balance price')}
+                          </p>
+                          <span className='text-primary text-2xl font-bold'>
+                            {formatQuotaWithCurrency(balanceCost, {
+                              digitsLarge: 2,
+                              digitsSmall: 4,
+                              abbreviate: true,
+                              locale,
+                            })}
+                          </span>
+                        </>
+                      ) : (
+                        <p className='text-muted-foreground text-sm'>
+                          {t('Price shown at checkout')}
+                        </p>
+                      )}
                     </div>
 
                     <div className='flex-1 space-y-1.5 pb-3'>
