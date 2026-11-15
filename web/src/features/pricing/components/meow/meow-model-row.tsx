@@ -20,6 +20,7 @@ import { type ReactNode, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CopyButton } from '@/components/copy-button'
+import { Button } from '@/components/ui/button'
 import {
   formatLatency,
   formatThroughput,
@@ -31,35 +32,22 @@ import { formatCompactNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
-import { QUOTA_TYPE_VALUES } from '../../constants'
-import { isDynamicPricingModel } from '../../lib/dynamic-price'
+import { useBillingTime } from '../../hooks/use-billing-time'
 import { toStatusSlots } from '../../lib/meow-catalog'
-import { getConfiguredGroupRatio } from '../../lib/model-helpers'
 import {
-  compareWithOfficialPrice,
-  officialPriceFactor,
-} from '../../lib/official-price'
-import {
-  formatFixedPrice,
-  formatGroupPrice,
-  formatOfficialRequestPrice,
-  formatOfficialTokenPrice,
-} from '../../lib/price'
+  getMeowChannelPrices,
+  type MeowPriceOptions,
+} from '../../lib/meow-price'
 import type { PriceType, PricingModel } from '../../types'
 import { ModelPriceCell } from '../model-price-cell'
 import { MeowPriceValue } from './meow-price-value'
 import { MeowStatusBar } from './meow-status-bar'
 
+export type { MeowPriceOptions } from '../../lib/meow-price'
+
 /** Desktop column widths shared by the header row and the model rows. */
 export const MEOW_ROW_GRID =
-  'md:grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,1fr))_minmax(0,1.5fr)_minmax(0,1.3fr)]'
-
-export type MeowPriceOptions = {
-  showRechargePrice: boolean
-  priceRate: number
-  usdExchangeRate: number
-  groupRatio: Record<string, number>
-}
+  'md:grid-cols-[minmax(0,2.1fr)_repeat(3,minmax(0,1.15fr))_minmax(0,1fr)_minmax(0,1.4fr)]'
 
 const TOKEN_PRICE_COLUMNS: {
   type: PriceType
@@ -69,78 +57,6 @@ const TOKEN_PRICE_COLUMNS: {
   { type: 'output', labelKey: 'Output' },
   { type: 'cache', labelKey: 'Cache Read' },
 ]
-
-type ChannelPrices =
-  | { kind: 'token'; values: string[]; officials: (string | null)[] }
-  | { kind: 'request'; price: string; official: string | null }
-  | { kind: 'dynamic' }
-
-/**
- * A model's prices in one channel, from the page's group ratios, with the
- * official prices to strike through when the channel is cheaper.
- */
-function getChannelPrices(
-  model: PricingModel,
-  group: string,
-  prices: MeowPriceOptions
-): ChannelPrices {
-  if (isDynamicPricingModel(model)) return { kind: 'dynamic' }
-  const comparison = compareWithOfficialPrice(
-    officialPriceFactor(
-      getConfiguredGroupRatio(prices.groupRatio, group),
-      prices
-    )
-  )
-  // A struck official price marks a saving, so a markup shows none.
-  const showOfficial =
-    comparison.kind === 'discount' || comparison.kind === 'free'
-  // A zero or rounded-away base price can format the same as the channel
-  // price; striking it through would claim a saving that is not shown.
-  const officialUnlessEqual = (official: string, price: string) =>
-    showOfficial && official !== price ? official : null
-  if (model.quota_type === QUOTA_TYPE_VALUES.REQUEST) {
-    const price = formatFixedPrice(
-      model,
-      group,
-      prices.showRechargePrice,
-      prices.priceRate,
-      prices.usdExchangeRate,
-      prices.groupRatio
-    )
-    return {
-      kind: 'request',
-      price,
-      official: officialUnlessEqual(formatOfficialRequestPrice(model), price),
-    }
-  }
-  const columns = TOKEN_PRICE_COLUMNS.map((column) => {
-    if (column.type === 'cache' && model.cache_ratio == null) {
-      return { value: '—', official: null }
-    }
-    const value = formatGroupPrice(
-      model,
-      group,
-      column.type,
-      'M',
-      prices.showRechargePrice,
-      prices.priceRate,
-      prices.usdExchangeRate,
-      prices.groupRatio
-    )
-    return {
-      value,
-      official: officialUnlessEqual(
-        formatOfficialTokenPrice(model, column.type, 'M'),
-        value
-      ),
-    }
-  })
-  return {
-    kind: 'token',
-    values: columns.map((column) => column.value),
-    officials: columns.map((column) => column.official),
-  }
-}
 
 export interface MeowModelRowProps {
   model: PricingModel
@@ -157,7 +73,13 @@ export function MeowModelRow(props: MeowModelRowProps) {
   useSystemConfigStore((state) => state.config.currency)
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const name = props.model.model_name
-  const channelPrices = getChannelPrices(props.model, props.group, props.prices)
+  const billingTime = useBillingTime(props.model.billing_expr)
+  const channelPrices = getMeowChannelPrices(
+    props.model,
+    props.group,
+    props.prices,
+    billingTime === undefined ? undefined : new Date(billingTime)
+  )
   const successRate = props.perf?.success_rate
   const hasSuccessRate =
     successRate !== undefined &&
@@ -183,15 +105,13 @@ export function MeowModelRow(props: MeowModelRowProps) {
       <div
         key={column.type}
         role='cell'
-        className='order-3 min-w-0 md:order-none'
+        aria-label={t(column.labelKey)}
+        className='order-3 min-w-0 md:order-none md:text-right'
       >
         <span className='text-muted-foreground block text-[11px] md:hidden'>
           {t(column.labelKey)}
         </span>
-        <MeowPriceValue
-          price={channelPrices.values[index]}
-          officialPrice={channelPrices.officials[index]}
-        />
+        <MeowPriceValue price={channelPrices.values[index]} />
       </div>
     ))
   } else {
@@ -202,10 +122,7 @@ export function MeowModelRow(props: MeowModelRowProps) {
         className='order-3 col-span-3 min-w-0 md:order-none'
       >
         {channelPrices.kind === 'request' ? (
-          <MeowPriceValue
-            price={`${channelPrices.price} / ${t('request')}`}
-            officialPrice={channelPrices.official}
-          />
+          <MeowPriceValue price={`${channelPrices.price} / ${t('request')}`} />
         ) : (
           <ModelPriceCell
             model={channelModel}
@@ -213,7 +130,7 @@ export function MeowModelRow(props: MeowModelRowProps) {
               tokenUnit: 'M',
               priceRate: props.prices.priceRate,
               usdExchangeRate: props.prices.usdExchangeRate,
-              showRechargePrice: props.prices.showRechargePrice,
+              showRechargePrice: false,
               selectedGroup: props.group,
             }}
             showExpression={false}
@@ -236,14 +153,15 @@ export function MeowModelRow(props: MeowModelRowProps) {
         className='order-1 col-span-2 min-w-0 md:order-none md:col-span-1'
       >
         <div className='flex min-w-0 items-center gap-1'>
-          <button
-            type='button'
+          <Button
+            variant='ghost'
             aria-haspopup='dialog'
             onClick={() => props.onSelect(name)}
-            className='focus-visible:after:ring-ring truncate text-left font-mono font-medium outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-inset'
+            className='h-auto min-w-0 flex-1 justify-start rounded-sm p-0 text-left font-mono font-medium'
+            title={name}
           >
-            {name}
-          </button>
+            <span className='truncate'>{name}</span>
+          </Button>
           <CopyButton
             value={name}
             tooltip={t('Copy model name')}
@@ -251,6 +169,16 @@ export function MeowModelRow(props: MeowModelRowProps) {
             iconClassName='size-3'
           />
         </div>
+        {channelPrices.kind === 'token' && channelPrices.currentPeriod && (
+          <p className='text-muted-foreground mt-1 text-xs'>
+            {t('Current period price')}
+          </p>
+        )}
+        {channelPrices.kind === 'token' && channelPrices.variable && (
+          <p className='text-muted-foreground mt-1 text-xs'>
+            {t('Prices vary by usage tier and request conditions')}
+          </p>
+        )}
         {props.model.context_length ? (
           <p className='text-muted-foreground mt-0.5 text-xs'>
             {t('{{value}} context', {
@@ -264,7 +192,14 @@ export function MeowModelRow(props: MeowModelRowProps) {
         role='cell'
         className='order-2 text-right font-mono text-xs tabular-nums md:order-none md:text-left'
       >
-        {hasSuccessRate ? formatUptimePct(successRate) : '—'}
+        <span className='text-muted-foreground block text-[11px] md:sr-only'>
+          {t('24h status')}
+        </span>
+        {hasSuccessRate ? (
+          formatUptimePct(successRate)
+        ) : (
+          <span aria-label={t('No monitoring data')}>—</span>
+        )}
         {props.perf && props.windowEnd !== undefined && (
           <MeowStatusBar
             slots={toStatusSlots(props.perf.series, props.windowEnd)}
@@ -276,9 +211,19 @@ export function MeowModelRow(props: MeowModelRowProps) {
         role='cell'
         className='text-muted-foreground hidden font-mono text-xs tabular-nums md:block'
       >
-        {props.perf
-          ? `${formatLatency(props.perf.avg_ttft_ms)} · ${formatThroughput(props.perf.avg_tps)}`
-          : '—'}
+        {props.perf ? (
+          <>
+            <span className='inline-block whitespace-nowrap'>
+              {formatLatency(props.perf.avg_ttft_ms)}
+            </span>
+            {' · '}
+            <span className='inline-block whitespace-nowrap'>
+              {formatThroughput(props.perf.avg_tps)}
+            </span>
+          </>
+        ) : (
+          '—'
+        )}
       </div>
     </div>
   )

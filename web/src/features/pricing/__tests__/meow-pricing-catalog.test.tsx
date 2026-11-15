@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { toast } from 'sonner'
@@ -26,6 +26,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import { createAppQueryClient } from '@/lib/query-client'
 import { usePricingPreferencesStore } from '@/stores/pricing-preferences-store'
+import {
+  DEFAULT_CURRENCY_CONFIG,
+  useSystemConfigStore,
+} from '@/stores/system-config-store'
 
 import { MeowPricingCatalog } from '../components/meow/meow-pricing-catalog'
 import type { PricingData, PricingModel } from '../types'
@@ -131,10 +135,16 @@ async function sonnetRow(tableName: string) {
 
 beforeEach(() => {
   usePricingPreferencesStore.setState({ group: undefined })
+  useSystemConfigStore
+    .getState()
+    .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
 })
 
 afterEach(() => {
   usePricingPreferencesStore.setState({ group: undefined })
+  useSystemConfigStore
+    .getState()
+    .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
   vi.restoreAllMocks()
 })
 
@@ -158,7 +168,7 @@ describe('meow pricing catalog', () => {
     expect(official).toHaveAttribute('data-checked', 'false')
   })
 
-  it('shows model counts and separate multipliers in the mobile channel options', async () => {
+  it('shows model counts without prominent coefficients in mobile channel options with long names', async () => {
     const previousWidth = window.innerWidth
     const pointerCapture = Object.getOwnPropertyDescriptor(
       HTMLElement.prototype,
@@ -175,23 +185,37 @@ describe('meow pricing catalog', () => {
     })
     try {
       const user = userEvent.setup()
-      mockApi()
+      const longGroup =
+        'CC Max with a very long channel name for regional access'
+      mockApi({
+        pricing: {
+          ...PRICING,
+          data: [{ ...SONNET, enable_groups: ['official', longGroup] }],
+          group_ratio: { official: 1.5, [longGroup]: 0.9 },
+          usable_group: {
+            official: { desc: 'Official', ratio: 1.5 },
+            [longGroup]: { desc: 'Long channel', ratio: 0.9 },
+          },
+        },
+      })
       renderCatalog()
       await sonnetRow('Models · Official')
       await user.click(screen.getByRole('combobox', { name: 'official' }))
       const dialog = await screen.findByRole('dialog', { name: 'Choose Group' })
       const official = within(dialog).getByRole('button', { name: /official/ })
-      const kiro = within(dialog).getByRole('button', { name: /kiro/ })
+      const kiro = within(dialog).getByRole('button', {
+        name: new RegExp(longGroup),
+      })
       expect(official).toHaveAttribute('aria-pressed', 'true')
       expect(official).toHaveAttribute('data-checked', 'true')
       expect(kiro).toHaveTextContent('1Models')
-      expect(kiro).toHaveTextContent('×0.9')
+      expect(kiro).not.toHaveTextContent('×')
       expect(kiro).toHaveAttribute('aria-pressed', 'false')
 
       await user.click(kiro)
 
-      expect(await sonnetRow('Models · Kiro')).toBeInTheDocument()
-      expect(screen.getByRole('combobox', { name: 'kiro' })).toHaveAttribute(
+      expect(await sonnetRow('Models · Long channel')).toBeInTheDocument()
+      expect(screen.getByRole('combobox', { name: longGroup })).toHaveAttribute(
         'aria-expanded',
         'false'
       )
@@ -210,6 +234,34 @@ describe('meow pricing catalog', () => {
         Reflect.deleteProperty(HTMLElement.prototype, 'setPointerCapture')
       }
     }
+  })
+
+  it('wraps desktop channel choices while preserving long names, counts and keyboard selection', async () => {
+    const user = userEvent.setup()
+    const longGroup = 'CC Max with a very long channel name for regional access'
+    mockApi({
+      pricing: {
+        ...PRICING,
+        data: [{ ...SONNET, enable_groups: ['official', longGroup] }],
+        group_ratio: { official: 1.5, [longGroup]: 1.3 },
+        usable_group: {
+          official: { desc: 'Official', ratio: 1.5 },
+          [longGroup]: { desc: 'Long channel', ratio: 1.3 },
+        },
+      },
+    })
+    renderCatalog()
+    await sonnetRow('Models · Official')
+    const choices = screen.getByRole('group', { name: 'Choose a channel' })
+    expect(choices).toHaveClass('flex-wrap')
+    const option = within(choices).getByRole('button', { name: longGroup })
+    expect(option).toHaveClass('max-w-full', 'min-w-0', 'whitespace-normal')
+    expect(option).toHaveTextContent('Models 1')
+    expect(option).not.toHaveTextContent('Long channel')
+    option.focus()
+    await user.keyboard('{Enter}')
+    expect(await sonnetRow('Models · Long channel')).toBeInTheDocument()
+    expect(option).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('shows one channel at a time and remembers the selected channel', async () => {
@@ -308,59 +360,215 @@ describe('meow pricing catalog', () => {
       within(table).getByRole('button', { name: 'custom-model' })
     ).toBeInTheDocument()
   })
-  it('hides the price mode switch when recharge and exchange rates match', async () => {
-    mockApi()
-    renderCatalog({ price: 1, usd_exchange_rate: 1 })
+  it('shows final configured-currency expression prices in three labeled columns without recharge or official comparisons', async () => {
+    useSystemConfigStore.getState().setConfig({
+      currency: {
+        ...DEFAULT_CURRENCY_CONFIG,
+        quotaDisplayType: 'CNY',
+        usdExchangeRate: 1,
+      },
+    })
+    mockApi({
+      pricing: {
+        ...PRICING,
+        data: [
+          {
+            ...SONNET,
+            enable_groups: ['CC Max'],
+            billing_mode: 'tiered_expr',
+            billing_expr:
+              'tier("standard", p * 4 + cr * 0.2 + cc * 5 + cc1h * 8 + c * 20)',
+          },
+        ],
+        group_ratio: { 'CC Max': 1.3 },
+        usable_group: { 'CC Max': { desc: 'Claude channel', ratio: 1.3 } },
+      },
+    })
+    renderCatalog({ price: 7.3, usd_exchange_rate: 1 })
 
-    await sonnetRow('Models · Official')
-
+    const cells = within(
+      await sonnetRow('Models · Claude channel')
+    ).getAllByRole('cell')
+    expect(cells[1]).toHaveAccessibleName('Input')
+    expect(cells[1]).toHaveTextContent('¥5.2')
+    expect(cells[2]).toHaveAccessibleName('Output')
+    expect(cells[2]).toHaveTextContent('¥26')
+    expect(cells[3]).toHaveAccessibleName('Cache Read')
+    expect(cells[3]).toHaveTextContent('¥0.26')
+    expect(within(cells[4]).getByText('24h status')).toHaveClass('md:sr-only')
+    expect(
+      within(cells[4]).getByLabelText('No monitoring data')
+    ).toHaveTextContent('—')
     expect(
       screen.queryByRole('button', { name: 'Recharge' })
     ).not.toBeInTheDocument()
-  })
-
-  it('switches to recharge prices when top-ups are discounted', async () => {
-    const user = userEvent.setup()
-    mockApi()
-    renderCatalog({ price: 4, usd_exchange_rate: 8 })
-    expect(await sonnetRow('Models · Official')).toHaveTextContent('$4.5')
-
-    await user.click(screen.getByRole('button', { name: 'Recharge' }))
-
-    expect(await sonnetRow('Models · Official')).toHaveTextContent('$2.25')
-  })
-
-  it('explains channel prices as the official price times the channel multiplier', async () => {
-    mockApi()
-    renderCatalog()
-
-    await sonnetRow('Models · Official')
-
     expect(
-      screen.getByText('Channel multiplier').closest('p')
-    ).toHaveTextContent('Official price × Channel multiplier = Our price')
-  })
-
-  it('compares recharge prices with the official price when recharge is shown', async () => {
-    const user = userEvent.setup()
-    mockApi()
-    renderCatalog({ price: 4, usd_exchange_rate: 8 })
-    await sonnetRow('Models · Official')
-    expect(screen.getByText('1.5× official price')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: 'Recharge' }))
-
-    expect(
-      await screen.findByText('25% off official price')
-    ).toBeInTheDocument()
-    expect(
-      within(await sonnetRow('Models · Official')).getAllByRole('deletion')[0]
-    ).toHaveTextContent('Official price $3')
-    expect(
-      screen.getByText('Channel multiplier').closest('p')
-    ).toHaveTextContent(
-      'Official price × Channel multiplier × Recharge discount = Our price'
+      screen.queryByRole('button', { name: 'Standard' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/official price/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('deletion')).not.toBeInTheDocument()
+    expect(screen.getByText('CNY / 1M tokens')).toBeInTheDocument()
+    act(() =>
+      useSystemConfigStore
+        .getState()
+        .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
     )
+    expect(cells[1]).toHaveTextContent('$5.2')
+    expect(screen.getByText('USD / 1M tokens')).toBeInTheDocument()
+  })
+
+  it('discloses context-tier ranges and opens complete tiers and cache-writing details', async () => {
+    await import('../components/model-details')
+    const user = userEvent.setup()
+    mockApi({
+      pricing: {
+        ...PRICING,
+        data: [
+          {
+            ...SONNET,
+            billing_mode: 'tiered_expr',
+            billing_expr:
+              'len <= 200000 ? tier("short", p * 1 + cr * 0.1 + cc * 1.25 + cc1h * 2 + c * 5) : tier("long", p * 2 + cr * 0.2 + cc * 2.5 + cc1h * 4 + c * 10)',
+          },
+        ],
+      },
+    })
+    renderCatalog()
+    const row = await sonnetRow('Models · Official')
+    const cells = within(row).getAllByRole('cell')
+    expect(cells[1]).toHaveTextContent('$1.5 – $3')
+    expect(cells[2]).toHaveTextContent('$7.5 – $15')
+    expect(row).toHaveTextContent(
+      'Prices vary by usage tier and request conditions'
+    )
+    await user.click(within(row).getByRole('button', { name: 'claude-sonnet' }))
+    const dialog = await screen.findByRole('dialog', { name: 'claude-sonnet' })
+    expect(dialog).toHaveTextContent('short')
+    expect(dialog).toHaveTextContent('long')
+    expect(dialog).toHaveTextContent('Cache Write (5m)')
+    expect(dialog).toHaveTextContent('Cache Write (1h)')
+    await user.click(
+      within(dialog).getByRole('button', { name: 'Base pricing' })
+    )
+    expect(dialog).toHaveTextContent('200K')
+  }, 60_000)
+
+  it.each([
+    { expression: 'tier("base", p * 4 + cr * 0 + c * 20)', cache: '$0' },
+    { expression: 'tier("base", p * 4 + c * 20)', cache: '—' },
+  ])(
+    'keeps zero and missing expression cache prices distinct: $cache',
+    async ({ expression, cache }) => {
+      mockApi({
+        pricing: {
+          ...PRICING,
+          data: [
+            {
+              ...SONNET,
+              billing_mode: 'tiered_expr',
+              billing_expr: expression,
+            },
+          ],
+        },
+      })
+      renderCatalog()
+      expect(
+        within(await sonnetRow('Models · Official')).getAllByRole('cell')[3]
+      ).toHaveTextContent(cache)
+    }
+  )
+
+  it('keeps task billing in the fallback cell with its own price unit', async () => {
+    mockApi({
+      pricing: {
+        ...PRICING,
+        data: [
+          {
+            ...SONNET,
+            billing_mode: 'tiered_expr',
+            billing_expr: 'tier("base", u("seconds") * 0.2)',
+            billing_usage_schema: {
+              seconds: { type: 'number', unit: 'second' },
+            },
+          },
+        ],
+      },
+    })
+    renderCatalog()
+    const cells = within(await sonnetRow('Models · Official')).getAllByRole(
+      'cell'
+    )
+    expect(cells[1]).toHaveAttribute('aria-colspan', '3')
+    expect(cells[1]).toHaveTextContent('0.3/s')
+    expect(cells).toHaveLength(4)
+  })
+
+  it.each([
+    {
+      kind: 'arbitrary',
+      model: { billing_mode: 'tiered_expr', billing_expr: 'p * c' },
+      expected: 'Special billing expression',
+    },
+    {
+      kind: 'mixed',
+      model: {
+        billing_mode: 'tiered_expr',
+        billing_expr:
+          'len < 1000 ? tier("request", fixed(0.01)) : tier("tokens", p * 2 + c * 8)',
+      },
+      expected: 'Token or per-call pricing',
+    },
+    {
+      kind: 'unconfigured task',
+      model: {
+        billing_usage_schema: { seconds: { type: 'number', unit: 'second' } },
+      },
+      expected: 'Not configured',
+    },
+  ] satisfies {
+    kind: string
+    model: Partial<PricingModel>
+    expected: string
+  }[])(
+    'retains the $kind pricing fallback instead of claiming token prices',
+    async ({ model, expected }) => {
+      mockApi({ pricing: { ...PRICING, data: [{ ...SONNET, ...model }] } })
+      renderCatalog()
+      const cells = within(await sonnetRow('Models · Official')).getAllByRole(
+        'cell'
+      )
+      expect(cells[1]).toHaveAttribute('aria-colspan', '3')
+      expect(cells[1]).toHaveTextContent(expected)
+      expect(cells).toHaveLength(4)
+    }
+  )
+
+  it('refreshes current-period token columns when the billing clock crosses a price boundary', async () => {
+    const now = vi
+      .spyOn(Date, 'now')
+      .mockReturnValue(Date.parse('2026-11-15T10:00:00Z'))
+    mockApi({
+      pricing: {
+        ...PRICING,
+        data: [
+          {
+            ...SONNET,
+            billing_mode: 'tiered_expr',
+            billing_expr:
+              'hour("UTC") < 12 ? tier("morning", p * 2 + c * 8) : tier("afternoon", p * 4 + c * 16)',
+          },
+        ],
+      },
+    })
+    renderCatalog()
+    const row = await sonnetRow('Models · Official')
+    expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('$3')
+    expect(row).toHaveTextContent('Current period price')
+    now.mockReturnValue(Date.parse('2026-11-15T13:00:00Z'))
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('$6')
   })
 
   it('opens the details drawer when a model name is clicked', async () => {

@@ -25,18 +25,18 @@ import { EmptyState } from '@/components/empty-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toIntlLocale } from '@/i18n/languages'
+import { getCurrencyLabel } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { useMeowChannelPerf } from '../../hooks/use-meow-channel-perf'
 import {
   channelUsageDescription,
   type MeowChannel,
 } from '../../lib/meow-catalog'
-import { officialPriceFactor } from '../../lib/official-price'
 import { MeowChannelTable } from './meow-channel-table'
 import type { MeowPriceOptions } from './meow-model-row'
-import { MeowOfficialPriceBadge } from './meow-official-price-badge'
 
 export function MeowChannelModels(props: {
   channel: MeowChannel
@@ -46,6 +46,9 @@ export function MeowChannelModels(props: {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const [search, setSearch] = useState('')
+  const currency = useSystemConfigStore((state) => state.config.currency)
+  const currencyLabel =
+    currency.quotaDisplayType === 'TOKENS' ? 'USD' : getCurrencyLabel()
   const models = useMemo(() => {
     const query = search.trim().toLowerCase()
     return props.channel.models.filter((model) =>
@@ -63,32 +66,28 @@ export function MeowChannelModels(props: {
       aria-label={t('Channel models')}
       className='bg-card overflow-hidden rounded-2xl border'
     >
-      <div className='space-y-4 px-4 py-5 sm:px-5'>
-        <div className='flex flex-wrap items-start justify-between gap-3'>
-          <div className='min-w-0 space-y-1'>
-            <h2 className='text-xl font-semibold break-words'>
+      <div className='flex flex-col gap-3 px-4 py-4 sm:px-5'>
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm'>
+            <h2 className='text-lg font-semibold break-all'>
               {props.channel.group}
             </h2>
-            <p className='text-muted-foreground text-sm break-words'>
+            <CopyButton
+              value={props.channel.group}
+              tooltip={t('Copy group name')}
+              className='size-6'
+              iconClassName='size-3'
+            />
+            <span className='text-muted-foreground text-xs'>
               {translateServerText(t, channelUsageDescription(props.channel))}
-            </p>
+            </span>
           </div>
-          <MeowOfficialPriceBadge
-            factor={officialPriceFactor(props.channel.ratio, props.prices)}
-          />
-        </div>
-        <div className='bg-muted/40 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg px-3 py-2 text-xs'>
-          <span className='text-muted-foreground'>{t('Token group')}</span>
-          <code className='break-all'>{props.channel.group}</code>
-          <CopyButton
-            value={props.channel.group}
-            tooltip={t('Copy group name')}
-            className='size-6'
-            iconClassName='size-3'
-          />
-          <span className='text-muted-foreground'>
-            {t('Select this group when creating an API key.')}
-          </span>
+          <p className='text-muted-foreground text-xs'>
+            {t('{{currency}} / {{unit}} tokens', {
+              currency: currencyLabel,
+              unit: '1M',
+            })}
+          </p>
         </div>
         <div className='flex flex-wrap items-center justify-between gap-3'>
           <p className='text-muted-foreground text-sm' role='status'>
@@ -138,7 +137,7 @@ export function MeowChannelModels(props: {
       )}
       <p className='text-muted-foreground border-t px-4 py-3 text-xs sm:px-5'>
         {t(
-          'Prices include the selected channel multiplier. Status covers the last 24 hours.'
+          'Prices include the selected channel multiplier. Select this group when creating an API key. Status covers the last 24 hours.'
         )}
       </p>
     </section>

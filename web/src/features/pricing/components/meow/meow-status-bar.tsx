@@ -31,13 +31,13 @@ export function MeowStatusBar(props: MeowStatusBarProps) {
   return (
     <div
       aria-hidden
-      className={cn('flex h-3 items-center gap-px', props.className)}
+      className={cn('flex h-3 min-w-0 items-center gap-px', props.className)}
     >
       {props.slots.map((slot) => (
         <span
           key={slot.ts}
           className={cn(
-            'h-full w-[3px] shrink-0 rounded-xs',
+            'h-full w-[3px] shrink rounded-xs',
             slot.successRate === null
               ? 'bg-muted-foreground/20'
               : getSuccessRateDotClass(slot.successRate)
