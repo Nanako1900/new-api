@@ -16,15 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
 import { beforeEach, expect, it, vi } from 'vitest'
 
-import * as subscriptionsApi from '@/features/subscriptions/api'
-import { SubscriptionPurchaseDialog } from '@/features/subscriptions/components/dialogs/subscription-purchase-dialog'
-import type { PlanRecord } from '@/features/subscriptions/types'
 import { toIntlLocale } from '@/i18n/languages'
 import {
   DEFAULT_CURRENCY_CONFIG,
@@ -34,7 +30,6 @@ import {
 
 import { PaymentConfirmDialog } from '../components/dialogs/payment-confirm-dialog'
 import { RechargeFormCard } from '../components/recharge-form-card'
-import { SubscriptionPlansCard } from '../components/subscription-plans-card'
 import type { TopupInfo } from '../types'
 
 const i18n = createInstance()
@@ -47,31 +42,8 @@ const topupInfo: TopupInfo = {
   amount_options: [100],
   discount: {},
 }
-const plan: PlanRecord = {
-  plan: {
-    id: 1,
-    title: 'Monthly plan',
-    price_amount: 10,
-    // This is a legacy server default, not evidence of the checkout currency.
-    currency: 'USD',
-    duration_unit: 'month',
-    duration_value: 1,
-    quota_reset_period: 'never',
-    enabled: true,
-    sort_order: 0,
-    max_purchase_per_user: 0,
-    total_amount: 0,
-    allow_balance_pay: true,
-    allow_wallet_overflow: true,
-  },
-}
-
 function renderWallet(children: React.ReactNode) {
-  return render(
-    <QueryClientProvider client={new QueryClient()}>
-      <I18nextProvider i18n={i18n}>{children}</I18nextProvider>
-    </QueryClientProvider>
-  )
+  return render(<I18nextProvider i18n={i18n}>{children}</I18nextProvider>)
 }
 
 beforeEach(async () => {
@@ -126,10 +98,8 @@ it.each<{ name: string; config: Partial<CurrencyConfig>; expected: string }>([
       .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG, ...config } })
     const onSelectPreset = vi.fn()
     const onAmountChange = vi.fn()
-    const paymentEstimate = { paymentAmount: 730, calculating: false }
     const view = renderWallet(
       <RechargeFormCard
-        {...paymentEstimate}
         topupInfo={topupInfo}
         presetAmounts={[{ value: 100 }]}
         selectedPreset={100}
@@ -215,60 +185,23 @@ it('shows Stripe checkout guidance instead of a local payment estimate or discou
   expect(screen.queryByText('730')).not.toBeInTheDocument()
 })
 
-it('shows the actual balance debit in both the plan card and purchase dialog', async () => {
-  useSystemConfigStore.getState().setConfig({
-    currency: {
-      ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CNY',
-      usdExchangeRate: 7,
-    },
-  })
-  vi.spyOn(subscriptionsApi, 'getPublicPlans').mockResolvedValue({
-    success: true,
-    data: [plan],
-  })
-  vi.spyOn(subscriptionsApi, 'getSelfSubscriptionFull').mockResolvedValue({
-    success: true,
-    data: {
-      subscriptions: [],
-      all_subscriptions: [],
-      billing_preference: 'subscription_first',
-    },
-  })
-  const view = renderWallet(<SubscriptionPlansCard topupInfo={topupInfo} />)
-  expect(await screen.findByText('¥70', { exact: true })).toBeVisible()
-  expect(screen.getByText('Balance price')).toBeVisible()
-  expect(screen.queryByText('$10.00')).not.toBeInTheDocument()
-  view.unmount()
-  renderWallet(
-    <SubscriptionPurchaseDialog
-      open
-      onOpenChange={vi.fn()}
-      plan={plan}
-      userQuota={5_000_000}
-    />
-  )
-  expect(
-    screen.getByText('Balance price').nextElementSibling
-  ).toHaveTextContent('¥70')
-  expect(screen.getByText('Required').nextElementSibling).toHaveTextContent(
-    '¥70'
-  )
-})
-
 it.each(['zhCN', 'zhTW', 'en', 'fr', 'ru', 'ja', 'vi', 'invalid_locale'])(
-  'formats plan prices for interface language %s',
+  'formats recharge credit for interface language %s',
   async (language) => {
     useSystemConfigStore.getState().setConfig({
       currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: 'CNY' },
     })
     await i18n.changeLanguage(language)
     renderWallet(
-      <SubscriptionPurchaseDialog
+      <PaymentConfirmDialog
         open
         onOpenChange={vi.fn()}
-        plan={plan}
-        userQuota={5_000_000}
+        onConfirm={vi.fn()}
+        topupAmount={10}
+        paymentAmount={0}
+        paymentMethod={{ name: 'Stripe', type: 'stripe' }}
+        calculating={false}
+        processing={false}
       />
     )
     const expected = new Intl.NumberFormat(toIntlLocale(language), {
@@ -279,7 +212,7 @@ it.each(['zhCN', 'zhTW', 'en', 'fr', 'ru', 'ja', 'vi', 'invalid_locale'])(
       minimumFractionDigits: 0,
     }).format(10)
     expect(
-      screen.getByText('Balance price').nextElementSibling?.textContent
+      screen.getByText('Topup Amount').nextElementSibling?.textContent
     ).toBe(expected)
   }
 )
@@ -289,67 +222,22 @@ it('updates currency formatting when the interface language changes', async () =
     currency: { ...DEFAULT_CURRENCY_CONFIG, quotaDisplayType: 'CNY' },
   })
   renderWallet(
-    <SubscriptionPurchaseDialog
+    <PaymentConfirmDialog
       open
       onOpenChange={vi.fn()}
-      plan={plan}
-      userQuota={5_000_000}
+      onConfirm={vi.fn()}
+      topupAmount={10}
+      paymentAmount={0}
+      paymentMethod={{ name: 'Stripe', type: 'stripe' }}
+      calculating={false}
+      processing={false}
     />
   )
-  expect(
-    screen.getByText('Balance price').nextElementSibling
-  ).toHaveTextContent('¥10')
+  expect(screen.getByText('Topup Amount').nextElementSibling).toHaveTextContent(
+    '¥10'
+  )
   await act(() => i18n.changeLanguage('fr'))
-  expect(
-    screen.getByText('Balance price').nextElementSibling
-  ).toHaveTextContent('10 ¥')
-})
-
-it('leaves an online-only plan price to the checkout provider', async () => {
-  const onlineOnlyPlan: PlanRecord = {
-    plan: {
-      ...plan.plan,
-      allow_balance_pay: false,
-      stripe_price_id: 'price_actual_gateway_price',
-    },
-  }
-  useSystemConfigStore.getState().setConfig({
-    currency: {
-      ...DEFAULT_CURRENCY_CONFIG,
-      quotaDisplayType: 'CNY',
-      usdExchangeRate: 7,
-    },
-  })
-  vi.spyOn(subscriptionsApi, 'getPublicPlans').mockResolvedValue({
-    success: true,
-    data: [onlineOnlyPlan],
-  })
-  vi.spyOn(subscriptionsApi, 'getSelfSubscriptionFull').mockResolvedValue({
-    success: true,
-    data: {
-      subscriptions: [],
-      all_subscriptions: [],
-      billing_preference: 'subscription_first',
-    },
-  })
-  const view = renderWallet(<SubscriptionPlansCard topupInfo={topupInfo} />)
-  expect(await screen.findByText('Price shown at checkout')).toBeVisible()
-  expect(screen.queryByText('Balance price')).not.toBeInTheDocument()
-  expect(screen.queryByText('¥10', { exact: true })).not.toBeInTheDocument()
-  expect(screen.queryByText('¥70', { exact: true })).not.toBeInTheDocument()
-  view.unmount()
-  renderWallet(
-    <SubscriptionPurchaseDialog
-      open
-      onOpenChange={vi.fn()}
-      plan={onlineOnlyPlan}
-      enableStripe
-    />
+  expect(screen.getByText('Topup Amount').nextElementSibling).toHaveTextContent(
+    '10 ¥'
   )
-  expect(screen.queryByText('Amount Due')).not.toBeInTheDocument()
-  expect(screen.queryByText('Balance price')).not.toBeInTheDocument()
-  expect(
-    screen.getByText('Final payment amount and currency are shown at checkout.')
-  ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Stripe' })).toBeEnabled()
 })

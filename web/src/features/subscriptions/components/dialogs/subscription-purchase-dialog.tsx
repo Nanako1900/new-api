@@ -28,8 +28,6 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Separator } from '@/components/ui/separator'
 import { useSystemConfig } from '@/hooks/use-system-config'
-import { toIntlLocale } from '@/i18n/languages'
-import { formatQuotaWithCurrency } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { DEFAULT_CURRENCY_CONFIG } from '@/stores/system-config-store'
@@ -65,8 +63,7 @@ interface Props {
 }
 
 export function SubscriptionPurchaseDialog(props: Props) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const { t } = useTranslation()
   const { currency } = useSystemConfig()
   const [paying, setPaying] = useState(false)
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
@@ -90,6 +87,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
   const hasAnyPayment = hasStripe || hasCreem || hasWaffoPancake || hasEpay
   const totalAmount = Number(plan.total_amount || 0)
+  const price = Number(plan.price_amount || 0).toFixed(2)
   const quotaPerUnit =
     currency?.quotaPerUnit && currency.quotaPerUnit > 0
       ? currency.quotaPerUnit
@@ -98,12 +96,6 @@ export function SubscriptionPurchaseDialog(props: Props) {
     0,
     Math.ceil(Number(plan.price_amount || 0) * quotaPerUnit)
   )
-  const balancePrice = formatQuotaWithCurrency(balanceCost, {
-    digitsLarge: 2,
-    digitsSmall: 4,
-    abbreviate: true,
-    locale,
-  })
   const userQuota = Math.max(0, Number(props.userQuota || 0))
   const allowBalancePay = plan.allow_balance_pay !== false
   const insufficientBalance = userQuota < balanceCost
@@ -291,19 +283,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
               <GroupBadge group={plan.upgrade_group} />
             </div>
           )}
-          {allowBalancePay && (
-            <>
-              <Separator />
-              <div className='flex items-center justify-between'>
-                <span className='text-sm font-medium'>
-                  {t('Balance price')}
-                </span>
-                <span className='text-primary text-lg font-bold'>
-                  {balancePrice}
-                </span>
-              </div>
-            </>
-          )}
+          <Separator />
+          <div className='flex items-center justify-between'>
+            <span className='text-sm font-medium'>{t('Amount Due')}</span>
+            <span className='text-primary text-lg font-bold'>${price}</span>
+          </div>
         </div>
 
         {limitReached && (
@@ -318,7 +302,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
         <div className='flex flex-col gap-2 rounded-md border p-3'>
           <div className='flex items-center justify-between gap-2 text-xs'>
             <span className='text-muted-foreground'>{t('Required')}</span>
-            <span>{balancePrice}</span>
+            <span>{formatQuota(balanceCost)}</span>
           </div>
           <div className='flex items-center justify-between gap-2 text-xs'>
             <span className='text-muted-foreground'>{t('Available')}</span>
@@ -352,9 +336,6 @@ export function SubscriptionPurchaseDialog(props: Props) {
           <div className='space-y-3'>
             <p className='text-muted-foreground text-xs'>
               {t('Select payment method')}
-            </p>
-            <p className='text-muted-foreground text-xs'>
-              {t('Final payment amount and currency are shown at checkout.')}
             </p>
             {(hasStripe || hasCreem || hasWaffoPancake) && (
               <div className='grid grid-cols-2 gap-2 sm:flex'>
