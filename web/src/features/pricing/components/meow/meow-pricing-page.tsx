@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 import { useNavigate, useSearch } from '@tanstack/react-router'
 
 import { PublicLayout } from '@/components/layout'
@@ -48,7 +47,7 @@ export function MeowPricing() {
             WebkitMaskImage: GLOW_MASK,
           }}
         />
-        <PageTransition className='relative mx-auto w-full px-3 pt-16 pb-8 sm:px-6 sm:pt-20 sm:pb-10 xl:px-8'>
+        <PageTransition className='relative mx-auto w-full px-3 pt-16 pb-8 sm:px-6 sm:pt-16 sm:pb-10 xl:px-8'>
           <MeowPricingCatalog
             group={search.group}
             onGroupChange={(group) => {

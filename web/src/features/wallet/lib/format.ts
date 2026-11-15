@@ -18,11 +18,35 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
 
+import {
+  formatCurrencyFromUSD,
+  formatQuotaWithCurrency,
+  getCurrencyDisplay,
+  type CurrencyFormatOptions,
+} from '@/lib/currency'
+
 import { DEFAULT_DISCOUNT_RATE } from '../constants'
 
 // ============================================================================
 // Wallet-specific Formatting Functions
 // ============================================================================
+
+/** Top-up requests use base credit units, except TOKENS requests use raw quota. */
+export function formatTopupCredit(
+  amount: number,
+  options?: CurrencyFormatOptions
+): string {
+  const formatOptions = {
+    digitsLarge: 2,
+    digitsSmall: 2,
+    abbreviate: false,
+    ...options,
+  }
+  if (getCurrencyDisplay().meta.kind === 'tokens') {
+    return formatQuotaWithCurrency(amount, formatOptions)
+  }
+  return formatCurrencyFromUSD(amount, formatOptions)
+}
 
 /**
  * Format Creem price with currency symbol (USD/EUR)

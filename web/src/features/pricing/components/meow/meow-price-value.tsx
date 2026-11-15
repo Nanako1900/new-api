@@ -16,27 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useTranslation } from 'react-i18next'
-
 export interface MeowPriceValueProps {
   price: string
-  /** Official price, struck through under a discounted price. */
-  officialPrice?: string | null
 }
 
-/** A channel price, with the official price it replaces when it is lower. */
+/** A final channel price in the site's configured currency. */
 export function MeowPriceValue(props: MeowPriceValueProps) {
-  const { t } = useTranslation()
-
   return (
-    <span className='flex flex-col'>
-      <span className='font-mono font-medium tabular-nums'>{props.price}</span>
-      {props.officialPrice && (
-        <del className='text-muted-foreground font-mono text-xs leading-tight tabular-nums'>
-          <span className='sr-only'>{t('Official price')} </span>
-          {props.officialPrice}
-        </del>
-      )}
+    <span className='font-mono font-medium break-words tabular-nums'>
+      {props.price}
     </span>
   )
 }

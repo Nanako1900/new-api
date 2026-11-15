@@ -89,6 +89,11 @@ export function usePayment() {
   // Calculate payment amount
   const calculatePaymentAmount = useCallback(
     async (topupAmount: number, paymentType: string) => {
+      // Stripe Checkout uses its configured product price and currency.
+      if (isStripePayment(paymentType)) {
+        setAmount(0)
+        return 0
+      }
       try {
         setCalculating(true)
         const calculatedAmount = await requestPaymentAmount(

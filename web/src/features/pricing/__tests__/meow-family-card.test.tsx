@@ -16,13 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PerformanceGroup } from '@/features/performance-metrics/types'
-import zhCN from '@/i18n/locales/zh.json'
 
 import { MeowFamilyCard } from '../components/meow/meow-family-card'
 import type { MeowPriceOptions } from '../components/meow/meow-model-row'
@@ -36,7 +35,6 @@ import type { PricingModel } from '../types'
 
 const GROUP_RATIO = { official: 1.5, kiro: 0.9 }
 const PRICES: MeowPriceOptions = {
-  showRechargePrice: false,
   priceRate: 1,
   usdExchangeRate: 1,
   groupRatio: GROUP_RATIO,
@@ -239,22 +237,54 @@ describe('meow family card', () => {
     expect(cells).toHaveLength(4)
   })
 
-  it('shows expression prices with the channel multiplier applied once and notes the tiers', () => {
+  it('shows expression tier ranges in the corresponding token columns', () => {
     renderFamily('claude')
+    const official = within(
+      screen.getByRole('table', { name: 'Claude · Official' })
+    ).getByRole('row', { name: /claude-tiered/ })
+    const cells = within(official).getAllByRole('cell')
+    expect(cells[1]).toHaveTextContent('$3 – $6')
+    expect(cells[2]).toHaveTextContent('$12 – $24')
+    expect(official).toHaveTextContent(
+      'Prices vary by usage tier and request conditions'
+    )
+  })
 
-    const mergedCell = (tableName: string) =>
-      within(
-        within(screen.getByRole('table', { name: tableName })).getByRole(
-          'row',
-          { name: /claude-tiered/ }
-        )
-      ).getAllByRole('cell')[1]
-    const official = mergedCell('Claude · Official')
-    expect(within(official).getByTitle(/^3(\.0+)?$/)).toBeInTheDocument()
-    expect(official).toHaveTextContent('2 tiers')
-    expect(
-      within(mergedCell('Claude · Kiro')).getByTitle(/^1\.8(0+)?$/)
-    ).toBeInTheDocument()
+  it('refreshes current-period token columns when the billing clock crosses a price boundary', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-15T11:59:59Z'))
+    try {
+      const timedFamily = buildMeowCatalog(
+        [
+          {
+            ...SONNET,
+            billing_mode: 'tiered_expr',
+            billing_expr:
+              'hour("UTC") < 12 ? tier("morning", p * 2 + c * 8) : tier("afternoon", p * 4 + c * 16)',
+          },
+        ],
+        { official: 'Official' },
+        GROUP_RATIO
+      )[0]
+      render(
+        <MeowFamilyCard
+          family={timedFamily}
+          prices={PRICES}
+          perf={NO_PERF}
+          onSelect={vi.fn()}
+        />
+      )
+      const row = sonnetRow('Claude · Official')
+      expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('$3')
+      expect(row).toHaveTextContent('Current period price')
+      act(() => {
+        vi.advanceTimersByTime(1000)
+      })
+      expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('$6')
+    } finally {
+      cleanup()
+      vi.useRealTimers()
+    }
   })
 
   it('shows each channel its own success rate and speed', () => {
@@ -278,6 +308,9 @@ describe('meow family card', () => {
     const official = sonnetRow('Claude · Official')
     expect(official).toHaveTextContent('99.95%')
     expect(official).toHaveTextContent('400ms · 74.0 t/s')
+    expect(within(official).getByText('74.0 t/s')).toHaveClass(
+      'whitespace-nowrap'
+    )
     expect(sonnetRow('Claude · Kiro')).toHaveTextContent('97.80%')
   })
 
@@ -324,181 +357,11 @@ describe('meow family card', () => {
   })
 })
 
-describe('meow family card official price comparison', () => {
-  it('strikes the official prices under a channel priced below them', () => {
+describe('meow family card configured prices', () => {
+  it('shows configured channel prices without claiming an official discount or striking base prices', () => {
     renderFamily('claude')
-
-    expect(
-      within(sonnetRow('Claude · Kiro'))
-        .getAllByRole('deletion')
-        .map((price) => price.textContent)
-    ).toEqual([
-      'Official price $3',
-      'Official price $15',
-      'Official price $0.3',
-    ])
-  })
-
-  it('shows no official prices in a channel priced above them', () => {
-    renderFamily('claude')
-
-    expect(
-      within(sonnetRow('Claude · Official')).queryAllByRole('deletion')
-    ).toHaveLength(0)
-  })
-
-  it('labels each channel with its price relative to the official price', () => {
-    renderFamily('claude')
-
-    const card = screen.getByRole('region', { name: 'Claude' })
-    expect(within(card).getByText('10% off official price')).toBeInTheDocument()
-    expect(within(card).getByText('1.5× official price')).toBeInTheDocument()
-  })
-
-  it('shows the lowest channel discount in a family with several channels', () => {
-    renderFamily('claude')
-
-    expect(
-      within(screen.getByRole('region', { name: 'Claude' })).getByText(
-        'Up to 10% off official price'
-      )
-    ).toBeInTheDocument()
-  })
-
-  it('shows no family discount when the family has one channel', () => {
-    renderFamily('gpt')
-
-    expect(screen.queryByText(/^Up to/)).not.toBeInTheDocument()
-  })
-
-  it('strikes the official per-request price in a discounted channel', () => {
-    const ratios = { kiro: 0.5 }
-    const discounted = buildMeowCatalog(
-      [{ ...TOOL, enable_groups: ['kiro'] }],
-      { kiro: 'Kiro' },
-      ratios
-    )[0]
-    render(
-      <MeowFamilyCard
-        family={discounted}
-        prices={{ ...PRICES, groupRatio: ratios }}
-        perf={NO_PERF}
-        onSelect={vi.fn()}
-      />
-    )
-
-    const row = within(
-      screen.getByRole('table', { name: 'Claude · Kiro' })
-    ).getByRole('row', { name: /claude-tool/ })
-    expect(row).toHaveTextContent('$0.02 / request')
-    expect(within(row).getByRole('deletion')).toHaveTextContent(
-      'Official price $0.04'
-    )
-  })
-
-  it('labels a channel priced at the official price without struck prices', () => {
-    const ratios = { official: 1, kiro: 0.9 }
-    const sameFamily = buildMeowCatalog(
-      [SONNET],
-      { official: 'Official', kiro: 'Kiro' },
-      ratios
-    )[0]
-    render(
-      <MeowFamilyCard
-        family={sameFamily}
-        prices={{ ...PRICES, groupRatio: ratios }}
-        perf={NO_PERF}
-        onSelect={vi.fn()}
-      />
-    )
-
-    expect(screen.getByText('Same as official price')).toBeInTheDocument()
-    expect(
-      within(sonnetRow('Claude · Official')).queryAllByRole('deletion')
-    ).toHaveLength(0)
-  })
-
-  it('labels a free channel and the family as free of charge', () => {
-    const ratios = { official: 1.5, free: 0 }
-    const freeFamily = buildMeowCatalog(
-      [{ ...SONNET, enable_groups: ['official', 'free'] }],
-      { official: 'Official', free: 'Trial' },
-      ratios
-    )[0]
-    render(
-      <MeowFamilyCard
-        family={freeFamily}
-        prices={{ ...PRICES, groupRatio: ratios }}
-        perf={NO_PERF}
-        onSelect={vi.fn()}
-      />
-    )
-
-    expect(screen.getAllByText('Free of charge')).toHaveLength(2)
-    expect(
-      within(sonnetRow('Claude · Trial')).getAllByRole('deletion')
-    ).toHaveLength(3)
-  })
-
-  it('shows no struck price that equals the discounted price', () => {
-    const ratios = { kiro: 0.5 }
-    const zeroFamily = buildMeowCatalog(
-      [{ ...SONNET, model_ratio: 0, enable_groups: ['kiro'] }],
-      { kiro: 'Kiro' },
-      ratios
-    )[0]
-    render(
-      <MeowFamilyCard
-        family={zeroFamily}
-        prices={{ ...PRICES, groupRatio: ratios }}
-        perf={NO_PERF}
-        onSelect={vi.fn()}
-      />
-    )
-
-    expect(
-      within(sonnetRow('Claude · Kiro')).queryAllByRole('deletion')
-    ).toHaveLength(0)
-  })
-
-  it('writes a free channel as 免费 for simplified Chinese', async () => {
-    const key = 'Free of charge'
-    i18next.addResource('zhCN', 'translation', key, zhCN.translation[key])
-    await i18next.changeLanguage('zhCN')
-    try {
-      const ratios = { free: 0 }
-      const freeFamily = buildMeowCatalog(
-        [{ ...SONNET, enable_groups: ['free'] }],
-        { free: 'Trial' },
-        ratios
-      )[0]
-      render(
-        <MeowFamilyCard
-          family={freeFamily}
-          prices={{ ...PRICES, groupRatio: ratios }}
-          perf={NO_PERF}
-          onSelect={vi.fn()}
-        />
-      )
-
-      expect(screen.getByText('免费')).toBeInTheDocument()
-    } finally {
-      await i18next.changeLanguage('en')
-      i18next.removeResourceBundle('zhCN', 'translation')
-    }
-  })
-
-  it('writes a channel discount in 折 for simplified Chinese', async () => {
-    const key = '{{off}}% off official price'
-    i18next.addResource('zhCN', 'translation', key, zhCN.translation[key])
-    await i18next.changeLanguage('zhCN')
-    try {
-      renderFamily('claude')
-
-      expect(screen.getByText('官方价 9 折')).toBeInTheDocument()
-    } finally {
-      await i18next.changeLanguage('en')
-      i18next.removeResourceBundle('zhCN', 'translation')
-    }
+    expect(sonnetRow('Claude · Kiro')).toHaveTextContent('$2.7')
+    expect(screen.queryByText(/official price/i)).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('deletion')).toHaveLength(0)
   })
 })

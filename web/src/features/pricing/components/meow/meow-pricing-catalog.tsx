@@ -21,9 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { usePricingPreferencesStore } from '@/stores/pricing-preferences-store'
 
 import { usePricingData } from '../../hooks/use-pricing-data'
@@ -52,7 +50,6 @@ export function MeowPricingCatalog(props: MeowPricingCatalogProps) {
   const pricing = usePricingData()
   const rememberedGroup = usePricingPreferencesStore((state) => state.group)
   const setGroup = usePricingPreferencesStore((state) => state.setGroup)
-  const [showRechargePrice, setShowRechargePrice] = useState(false)
   const [selectedModelName, setSelectedModelName] = useState<string | null>(
     null
   )
@@ -71,10 +68,7 @@ export function MeowPricingCatalog(props: MeowPricingCatalogProps) {
     channels.find((channel) => channel.group === rememberedGroup) ??
     channels[0]
 
-  // Recharge and standard prices only differ when top-ups are discounted.
-  const offerRechargePrice = pricing.priceRate !== pricing.usdExchangeRate
   const prices: MeowPriceOptions = {
-    showRechargePrice: offerRechargePrice && showRechargePrice,
     priceRate: pricing.priceRate,
     usdExchangeRate: pricing.usdExchangeRate,
     groupRatio: pricing.groupRatio,
@@ -125,45 +119,14 @@ export function MeowPricingCatalog(props: MeowPricingCatalogProps) {
   }
 
   return (
-    <div className='mx-auto w-full max-w-5xl'>
-      <header className='mb-6 flex flex-wrap items-end justify-between gap-4 pt-6 sm:mb-8 sm:pt-10'>
-        <div>
-          <h1 className='text-3xl font-bold tracking-tight sm:text-4xl'>
-            {t('Models and prices')}
-          </h1>
-          <p className='text-muted-foreground mt-3 flex flex-wrap items-center gap-1.5 text-sm'>
-            <Badge variant='outline'>{t('Official price')}</Badge>
-            {' × '}
-            <Badge variant='outline'>{t('Channel multiplier')}</Badge>
-            {prices.showRechargePrice && (
-              <>
-                {' × '}
-                <Badge variant='outline'>{t('Recharge discount')}</Badge>
-              </>
-            )}
-            {' = '}
-            <Badge>{t('Our price')}</Badge>
-          </p>
-          <p className='text-muted-foreground mt-2 text-sm'>
-            {t('Choose a channel to explore its models and prices.')}
-          </p>
-        </div>
-        {offerRechargePrice && (
-          <ToggleGroup
-            value={[showRechargePrice ? 'recharge' : 'standard']}
-            onValueChange={(values) => {
-              if (values.length > 0) {
-                setShowRechargePrice(values[0] === 'recharge')
-              }
-            }}
-            variant='outline'
-            size='sm'
-            aria-label={t('Price display mode')}
-          >
-            <ToggleGroupItem value='standard'>{t('Standard')}</ToggleGroupItem>
-            <ToggleGroupItem value='recharge'>{t('Recharge')}</ToggleGroupItem>
-          </ToggleGroup>
-        )}
+    <div className='mx-auto w-full max-w-6xl'>
+      <header className='mb-5 pt-4 sm:pt-5'>
+        <h1 className='text-3xl font-bold tracking-tight sm:text-4xl'>
+          {t('Models and prices')}
+        </h1>
+        <p className='text-muted-foreground mt-2 text-sm'>
+          {t('Explore models and final unit prices for the selected channel.')}
+        </p>
       </header>
 
       {body}
@@ -189,7 +152,7 @@ export function MeowPricingCatalog(props: MeowPricingCatalogProps) {
             priceRate={pricing.priceRate}
             usdExchangeRate={pricing.usdExchangeRate}
             tokenUnit='M'
-            showRechargePrice={prices.showRechargePrice}
+            showRechargePrice={false}
           />
         </Suspense>
       )}

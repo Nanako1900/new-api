@@ -41,7 +41,7 @@ type MeowChannelPickerProps = {
   onChange: (group: string) => void
 }
 
-/** The same channel summary inside desktop cards and the mobile picker. */
+/** Channel context and model count in the shared mobile picker. */
 function MeowChannelOption(props: { channel: MeowChannel; selected: boolean }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
@@ -75,27 +75,14 @@ function MeowChannelOption(props: { channel: MeowChannel; selected: boolean }) {
           {t('Models')}
         </Badge>
       </span>
-      <span className='flex shrink-0 flex-col items-end justify-center gap-1.5'>
-        <span
-          className={cn(
-            'flex items-baseline gap-0.5 text-2xl leading-none font-semibold tracking-tight tabular-nums',
-            props.selected && 'text-primary'
-          )}
-        >
-          <span className='text-muted-foreground text-sm font-normal'>×</span>
-          {formatNumber(props.channel.ratio, locale)}
-        </span>
-        <span className='text-muted-foreground text-[11px] font-normal'>
-          {t('Ratio')}
-        </span>
-      </span>
     </span>
   )
 }
 
 /** A visible channel overview on desktop; the shared picker on mobile. */
 export function MeowChannelPicker(props: MeowChannelPickerProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
 
   return (
     <div className='mb-5'>
@@ -131,9 +118,9 @@ export function MeowChannelPicker(props: MeowChannelPickerProps) {
         onValueChange={(values) => {
           if (values[0]) props.onChange(values[0])
         }}
-        spacing={3}
+        spacing={2}
         variant='outline'
-        className='hidden w-full grid-cols-2 items-stretch sm:grid md:grid-cols-3'
+        className='hidden w-full flex-wrap justify-start sm:flex'
       >
         {props.channels.map((channel) => (
           <ToggleGroupItem
@@ -141,12 +128,16 @@ export function MeowChannelPicker(props: MeowChannelPickerProps) {
             value={channel.group}
             aria-label={channel.group}
             data-checked={channel.group === props.value}
-            className={CHANNEL_OPTION_CLASSNAME}
+            className='data-[checked=true]:border-primary/40 data-[checked=true]:bg-primary/10 data-[checked=true]:text-primary h-auto min-h-10 max-w-full min-w-0 gap-2 rounded-lg px-3 py-2 whitespace-normal'
           >
-            <MeowChannelOption
-              channel={channel}
-              selected={channel.group === props.value}
-            />
+            <span className='min-w-0 text-left break-all'>{channel.group}</span>
+            <Badge
+              variant='secondary'
+              className='shrink-0 font-normal tabular-nums'
+            >
+              <span className='sr-only'>{t('Models')} </span>
+              {formatNumber(channel.models.length, locale)}
+            </Badge>
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
