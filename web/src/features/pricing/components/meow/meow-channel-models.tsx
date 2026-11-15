@@ -83,6 +83,7 @@ export function MeowChannelModels(props: {
             </span>
           </div>
           <p className='text-muted-foreground text-xs'>
+            {t('Token prices')}:{' '}
             {t('{{currency}} / {{unit}} tokens', {
               currency: currencyLabel,
               unit: '1M',

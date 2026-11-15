@@ -407,14 +407,18 @@ describe('meow pricing catalog', () => {
     ).not.toBeInTheDocument()
     expect(screen.queryByText(/official price/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('deletion')).not.toBeInTheDocument()
-    expect(screen.getByText('CNY / 1M tokens')).toBeInTheDocument()
+    expect(
+      screen.getByText('Token prices: CNY / 1M tokens')
+    ).toBeInTheDocument()
     act(() =>
       useSystemConfigStore
         .getState()
         .setConfig({ currency: { ...DEFAULT_CURRENCY_CONFIG } })
     )
     expect(cells[1]).toHaveTextContent('$5.2')
-    expect(screen.getByText('USD / 1M tokens')).toBeInTheDocument()
+    expect(
+      screen.getByText('Token prices: USD / 1M tokens')
+    ).toBeInTheDocument()
   })
 
   it('discloses context-tier ranges and opens complete tiers and cache-writing details', async () => {
@@ -478,7 +482,7 @@ describe('meow pricing catalog', () => {
     }
   )
 
-  it('keeps task billing in the fallback cell with its own price unit', async () => {
+  it('scopes the shared token unit in a task-only channel while retaining task billing units', async () => {
     mockApi({
       pricing: {
         ...PRICING,
@@ -501,6 +505,10 @@ describe('meow pricing catalog', () => {
     expect(cells[1]).toHaveAttribute('aria-colspan', '3')
     expect(cells[1]).toHaveTextContent('0.3/s')
     expect(cells).toHaveLength(4)
+    expect(
+      screen.getByText('Token prices: USD / 1M tokens')
+    ).toBeInTheDocument()
+    expect(screen.queryByText('USD / 1M tokens')).not.toBeInTheDocument()
   })
 
   it.each([
