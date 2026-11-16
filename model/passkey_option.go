@@ -104,6 +104,11 @@ func UpdatePasskeyDomainOptions(values map[string]string, preview bool, confirma
 	}
 	var change *PasskeyDomainChange
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if value, ok := values["UserIdStart"]; ok {
+			if err := saveUserIDStartWithTx(tx, value); err != nil {
+				return err
+			}
+		}
 		settings, serverAddress, err := lockPasskeyDomainSettings(tx)
 		if err != nil {
 			return err

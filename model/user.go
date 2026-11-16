@@ -757,27 +757,9 @@ func ensureEmailAvailableWithTx(tx *gorm.DB, email string, excludeUserID int) er
 }
 
 func (user *User) Insert(inviterId int) error {
-	if err := DB.Transaction(func(tx *gorm.DB) error {
-		return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
-			if err := user.prepareForInsert(tx); err != nil {
-				return err
-			}
-			user.Quota = common.QuotaForNewUser
-			user.AffCode = common.GetRandomString(4)
-
-			// 初始化用户设置，包括默认的边栏配置
-			if user.Setting == "" {
-				defaultSetting := dto.UserSetting{}
-				// 这里暂时不设置SidebarModules，因为需要在用户创建后根据角色设置
-				user.SetSetting(defaultSetting)
-			}
-
-			return tx.Create(user).Error
-		})
-	}); err != nil {
+	if err := UserCreationTransaction(func(tx *gorm.DB) error { return user.InsertWithTx(tx, inviterId) }); err != nil {
 		return err
 	}
-
 	user.finishInsert(inviterId)
 	return nil
 }
@@ -820,10 +802,16 @@ func (user *User) FinishInsert(inviterId int) {
 	user.finishInsert(inviterId)
 }
 
-// InsertWithTx inserts a new user within an existing transaction.
+// InsertWithTx inserts a new user inside UserCreationTransaction.
 // This is used for OAuth registration where user creation and binding need to be atomic.
 // Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
+	return user.InsertWithGeneratedUsername(tx, inviterId, "")
+}
+
+// InsertWithGeneratedUsername uses the assigned ID for provider fallback names.
+// An empty prefix preserves a username supplied by the caller.
+func (user *User) InsertWithGeneratedUsername(tx *gorm.DB, inviterId int, generatedUsernamePrefix string) error {
 	return withNormalizedEmailLock(tx, user.Email, func(tx *gorm.DB) error {
 		if err := user.prepareForInsert(tx); err != nil {
 			return err
@@ -837,7 +825,7 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 			user.SetSetting(defaultSetting)
 		}
 
-		return tx.Create(user).Error
+		return CreateUserWithAllocatedID(tx, user, generatedUsernamePrefix)
 	})
 }
 
@@ -1091,7 +1079,7 @@ func (user *User) HardDelete() (int64, error) {
 	var tokens []Token
 	var deletedAuthVersion int64
 	var revokedAccessTokens int64
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := UserCreationTransaction(func(tx *gorm.DB) error {
 		var err error
 		deletedAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
@@ -1107,6 +1095,9 @@ func (user *User) HardDelete() (int64, error) {
 			}
 		}
 		if err := deleteUserAuthenticationData(tx, user.Id); err != nil {
+			return err
+		}
+		if err := tx.Create(&Option{Key: userIDRetiredPrefix + strconv.Itoa(user.Id), Value: "1"}).Error; err != nil {
 			return err
 		}
 		return tx.Unscoped().Delete(user).Error

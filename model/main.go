@@ -85,7 +85,7 @@ func createRootAccountIfNeed() error {
 			AccessToken: nil,
 			Quota:       100000000,
 		}
-		DB.Create(&rootUser)
+		return UserCreationTransaction(func(tx *gorm.DB) error { return CreateUserWithAllocatedID(tx, &rootUser, "") })
 	}
 	return nil
 }

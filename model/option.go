@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Option struct {
@@ -28,7 +29,7 @@ type Option struct {
 func AllOption() ([]*Option, error) {
 	var options []*Option
 	var err error
-	err = DB.Find(&options).Error
+	err = DB.Where(clause.Not(clause.Like{Column: "key", Value: userIDOptionPrefix + "%"})).Find(&options).Error
 	return options, err
 }
 
@@ -41,6 +42,7 @@ func InitOptionMap() {
 	common.OptionMap["FileDownloadPermission"] = strconv.Itoa(common.FileDownloadPermission)
 	common.OptionMap["ImageUploadPermission"] = strconv.Itoa(common.ImageUploadPermission)
 	common.OptionMap["ImageDownloadPermission"] = strconv.Itoa(common.ImageDownloadPermission)
+	common.OptionMap["UserIdStart"] = "1"
 	common.OptionMap["PasswordLoginEnabled"] = strconv.FormatBool(common.PasswordLoginEnabled)
 	common.OptionMap["PasswordRegisterEnabled"] = strconv.FormatBool(common.PasswordRegisterEnabled)
 	common.OptionMap["EmailVerificationEnabled"] = strconv.FormatBool(common.EmailVerificationEnabled)
@@ -262,6 +264,22 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	// Configuration identifiers use printable ASCII. Reject invisible characters
+	// and Unicode lookalikes that database collations can equate to internal state.
+	for _, ch := range key {
+		if ch < 32 || ch > 126 {
+			return common.NewMessage("Invalid parameters")
+		}
+	}
+	if isInternalUserIDOption(key) {
+		return common.NewMessage("Internal user ID allocation state cannot be modified")
+	}
+	if strings.EqualFold(strings.TrimRight(key, " "), "UserIdStart") {
+		if key != "UserIdStart" {
+			return common.NewMessage("Invalid parameters")
+		}
+		return validateUserIDStart(value)
+	}
 	if key == legacyAccessTokenRetireAtKey {
 		return errLegacyRetireAtReadOnly
 	}
@@ -311,6 +329,9 @@ func validateOptionValue(key string, value string) error {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == "UserIdStart" {
+		return UpdateOptionsBulk(map[string]string{key: value})
+	}
 	if IsRequestPolicyOption(key) {
 		return UpdateRequestPolicyOptions(map[string]string{key: value})
 	}
@@ -384,7 +405,15 @@ func UpdateOptionsBulk(values map[string]string) error {
 	}
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
+		if value, ok := values["UserIdStart"]; ok {
+			if err := saveUserIDStartWithTx(tx, value); err != nil {
+				return err
+			}
+		}
 		for k, v := range values {
+			if k == "UserIdStart" {
+				continue
+			}
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
 				return err
@@ -412,7 +441,7 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
-	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey || slices.Contains(retiredTurnstileOptionKeys, key) {
+	if isInternalUserIDOption(key) || key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey || slices.Contains(retiredTurnstileOptionKeys, key) {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()
