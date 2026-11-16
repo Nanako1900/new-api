@@ -40,15 +40,11 @@ import {
   normalizeTierLabel,
   parseTaskTiersFromExpr,
 } from '@/features/pricing/lib/billing-expr'
-import {
-  formatTaskUsageUnitPrice,
-  getTaskUsagePriceUnitLabelKey,
-} from '@/features/pricing/lib/dynamic-price'
+import { getTaskUsagePriceUnitLabelKey } from '@/features/pricing/lib/dynamic-price'
 import { pluginUsageSchema } from '@/features/pricing/lib/plugin-pricing'
 import { taskUsageUnitLabel } from '@/features/pricing/lib/task-price-display'
 import type { BillingUsageSchema } from '@/features/pricing/types'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
-import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -59,6 +55,7 @@ import {
   formatModelName,
   decodeBillingExprB64,
   getTieredBillingSummary,
+  formatLogUnitPrice,
   hasAnyCacheTokens,
   parseLogOther,
   isViolationFeeLog,
@@ -84,31 +81,6 @@ interface DetailSegment {
   text: string
   muted?: boolean
   danger?: boolean
-}
-
-function formatRatioCompact(ratio: number | undefined): string {
-  if (ratio == null || !Number.isFinite(ratio)) return '-'
-  return ratio % 1 === 0
-    ? String(ratio)
-    : ratio.toFixed(4).replace(/\.?0+$/, '')
-}
-
-function getGroupRatio(other: LogOtherData | null): number | null {
-  const userGroupRatio = other?.user_group_ratio
-  if (
-    userGroupRatio != null &&
-    userGroupRatio !== -1 &&
-    Number.isFinite(userGroupRatio)
-  ) {
-    return userGroupRatio
-  }
-
-  const groupRatio = other?.group_ratio
-  if (groupRatio != null && groupRatio !== 1 && Number.isFinite(groupRatio)) {
-    return groupRatio
-  }
-
-  return null
 }
 
 function buildDetailSegments(
@@ -171,11 +143,8 @@ function buildTypeDetailSegments(
 
   const segments: DetailSegment[] = []
 
-  const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
-  const formatPrice = (price: number) =>
-    `${formatBillingCurrencyFromUSD(price, priceOpts)}/M`
-  const formatPriceCompact = (price: number) =>
-    formatBillingCurrencyFromUSD(price, priceOpts)
+  const formatPrice = (price: number) => `${formatLogUnitPrice(price, other)}/M`
+  const formatPriceCompact = (price: number) => formatLogUnitPrice(price, other)
   const formatPriceList = (prices: string[], showUnit: boolean) => {
     const text = prices.join(' / ')
     return showUnit ? `${text}/M` : text
@@ -199,11 +168,11 @@ function buildTypeDetailSegments(
         const definition = usageSchema?.[field]
         const unitKey = getTaskUsagePriceUnitLabelKey(definition?.unit)
         const unitLabel = taskUsageUnitLabel(definition, language, t(unitKey))
-        return `${field} ${formatTaskUsageUnitPrice(price, { tokenUnit: 'M' })}/${unitLabel}`
+        return `${field} ${formatLogUnitPrice(price, other)}/${unitLabel}`
       })
       if (tier.constant > 0) {
         prices.push(
-          `${t('Additional charge')} ${formatTaskUsageUnitPrice(tier.constant, { tokenUnit: 'M' })}/${t('request')}`
+          `${t('Additional charge')} ${formatLogUnitPrice(tier.constant, other)}/${t('request')}`
         )
       }
       segments.push({
@@ -280,7 +249,7 @@ function buildTypeDetailSegments(
     const isPerCall = isPerCallBilling(modelPrice)
     if (isPerCall && modelPrice != null) {
       segments.push({
-        text: `${t('Per-call')} · ${formatBillingCurrencyFromUSD(modelPrice, priceOpts)}`,
+        text: `${t('Per-call')} · ${formatLogUnitPrice(modelPrice, other)}`,
       })
     } else if (other.model_ratio != null) {
       const inputPriceUSD = other.model_ratio * 2.0
@@ -318,23 +287,6 @@ function buildTypeDetailSegments(
             muted: true,
           })
         }
-      }
-    } else {
-      const userGroupRatio = other.user_group_ratio
-      const groupRatio = other.group_ratio
-      const isUserGroup =
-        userGroupRatio != null &&
-        Number.isFinite(userGroupRatio) &&
-        userGroupRatio !== -1
-      const effectiveRatio = isUserGroup ? userGroupRatio : groupRatio
-      const ratioLabel = isUserGroup
-        ? t('User Exclusive Ratio')
-        : t('Group Ratio')
-
-      if (effectiveRatio != null && Number.isFinite(effectiveRatio)) {
-        segments.push({
-          text: `${ratioLabel} ${formatRatioCompact(effectiveRatio)}x`,
-        })
       }
     }
   }
@@ -630,7 +582,6 @@ export function useCommonLogsColumns(
         const displayName = sensitiveVisible ? tokenName : '••••'
         let group = log.group
         if (!group) group = other?.group || ''
-        const groupRatio = getGroupRatio(other)
 
         return (
           <div className='flex max-w-[200px] flex-col gap-0.5'>
@@ -653,7 +604,7 @@ export function useCommonLogsColumns(
                 )}
               </Tooltip>
             </TooltipProvider>
-            {(group || groupRatio != null) && (
+            {group && (
               <span className='block max-w-full truncate text-xs leading-none'>
                 {group ? (
                   <GroupBadge
@@ -663,12 +614,6 @@ export function useCommonLogsColumns(
                     size='sm'
                     className='inline align-baseline text-xs leading-none [&>span]:leading-none'
                   />
-                ) : null}
-                {group && groupRatio != null ? ' ' : null}
-                {groupRatio != null ? (
-                  <span className='text-muted-foreground/60 relative top-px align-baseline tabular-nums'>
-                    {formatRatioCompact(groupRatio)}x
-                  </span>
                 ) : null}
               </span>
             )}

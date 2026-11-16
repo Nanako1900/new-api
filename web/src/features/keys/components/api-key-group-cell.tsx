@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BadgeCell, TruncatedCell } from '@/components/data-table'
@@ -26,15 +27,18 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import type { GroupReferencePriceComparison } from '@/features/pricing/lib/reference-price'
 import { useMediaQuery } from '@/hooks'
 import { cn } from '@/lib/utils'
 
-import { GroupRatioBadge, type GroupRatio } from './auto-group-visuals'
+import { useGroupPriceComparisons } from '../use-group-price-comparisons'
+import { ApiKeyGroupPriceBadge, type GroupRatio } from './auto-group-visuals'
 
 type ApiKeyGroupCellProps = {
   crossGroupRetry: boolean
   group: string
   ratio?: GroupRatio
+  comparison?: GroupReferencePriceComparison | null
   shouldReduceMotion: boolean
 }
 
@@ -44,8 +48,6 @@ export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
 
   const group = props.group?.trim() || ''
   if (group !== 'auto') {
-    const ratio =
-      group && typeof props.ratio === 'number' ? props.ratio : undefined
     return (
       <TruncatedCell
         className={isMobile ? 'w-full' : 'max-w-50'}
@@ -53,14 +55,22 @@ export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
         tooltipContent={group || t('Follow user group')}
         tooltipClassName='break-all'
       >
-        <GroupBadge
-          group={group}
-          ratio={ratio}
-          ratioLabel={group ? undefined : t('Inherited')}
-          type='text'
-          className='px-0'
-          containerClassName={cn('gap-3', isMobile && 'w-full justify-between')}
-        />
+        <div className='flex min-w-0 flex-wrap items-center gap-1'>
+          <GroupBadge
+            group={group}
+            ratioLabel={group ? undefined : t('Inherited')}
+            type='text'
+            className='px-0'
+            containerClassName={cn(
+              'gap-3',
+              isMobile && 'w-full justify-between'
+            )}
+          />
+          <ApiKeyGroupPriceBadge
+            ratio={props.ratio}
+            comparison={props.comparison}
+          />
+        </div>
       </TruncatedCell>
     )
   }
@@ -85,7 +95,7 @@ export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
           copyable={false}
           className='px-0'
         />
-        <GroupRatioBadge
+        <ApiKeyGroupPriceBadge
           ratio={props.ratio}
           isAuto
           shouldReduceMotion={props.shouldReduceMotion}
@@ -100,4 +110,17 @@ export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
       </TooltipContent>
     </Tooltip>
   )
+}
+
+/** Keep optional pricing refreshes inside the group cell so open quota popovers stay mounted. */
+export function PricedApiKeyGroupCell(props: ApiKeyGroupCellProps) {
+  const ratios = useMemo(
+    () => ({ [props.group]: props.ratio ?? 'auto' }),
+    [props.group, props.ratio]
+  )
+  const comparisons = useGroupPriceComparisons(
+    ratios,
+    typeof props.ratio === 'number' && props.group !== 'auto'
+  )
+  return <ApiKeyGroupCell {...props} comparison={comparisons[props.group]} />
 }

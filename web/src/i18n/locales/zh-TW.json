@@ -1502,6 +1502,8 @@
     "Community plugins": "社群外掛",
     "Community plugins are published and maintained by their authors. Check the source before you install.": "社群外掛由作者發布和維護，安裝前建議先查看原始碼。",
     "Compact": "緊湊",
+    "Comparable models: about {{off}}% below reference": "可比模型：約{{zhe}}折（省{{off}}%）",
+    "Comparable models: at least {{off}}% below reference": "可比模型：至多{{zhe}}折（至少省{{off}}%）",
     "Compare each vendor's token share across the past few weeks": "對比過去幾週各廠商的 Token 份額",
     "Compare each vendor's token share across the past year": "對比過去一年各廠商的 Token 份額",
     "Compare each vendor's token share over the past 24 hours": "對比過去 24 小時各廠商的 Token 份額",

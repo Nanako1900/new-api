@@ -20,7 +20,10 @@ import { describe, expect, it } from 'vitest'
 
 import { DEFAULT_CURRENCY_CONFIG } from '@/stores/system-config-store'
 
-import { getReferencePriceComparison } from '../lib/reference-price'
+import {
+  getReferencePriceComparison,
+  getGroupReferencePriceComparison,
+} from '../lib/reference-price'
 import type { PricingModel, PricingReference } from '../types'
 
 const EXPRESSION =
@@ -222,6 +225,74 @@ describe('reference price comparison', () => {
         { ...REFERENCE, usd_to_cny_rate: Number.MAX_VALUE },
         CNY
       )
+    ).toBeNull()
+  })
+})
+
+describe('group reference savings', () => {
+  it('uses the least favorable comparable model and reports incomplete coverage', () => {
+    const cheaper = {
+      ...MODEL,
+      model_name: 'cheap',
+      billing_expr:
+        'tier("standard", p * 2 + cr * 0.1 + cc * 2.5 + cc1h * 4 + c * 10)',
+    }
+    const reference = {
+      ...REFERENCE,
+      models: {
+        ...REFERENCE.models,
+        cheap: REFERENCE.models[MODEL.model_name],
+      },
+    }
+    const models = [
+      MODEL,
+      cheaper,
+      { ...MODEL, model_name: 'unmatched' },
+      { ...MODEL, enable_groups: ['private'] },
+    ]
+    const result = getGroupReferencePriceComparison(
+      models,
+      'CC Max',
+      1.3,
+      reference,
+      CNY
+    )
+    expect(result?.factor).toBeCloseTo(5.2 / 29.2)
+    expect(result).toMatchObject({
+      comparableModels: 2,
+      totalModels: 3,
+      uniform: false,
+    })
+  })
+
+  it('uses the supplied user-specific ratio, supports all groups, and preserves free prices', () => {
+    const models = [{ ...MODEL, enable_groups: ['all'] }]
+    expect(
+      getGroupReferencePriceComparison(models, 'custom', 0, REFERENCE, CNY)
+    ).toMatchObject({
+      factor: 0,
+      comparableModels: 1,
+      totalModels: 1,
+      uniform: true,
+    })
+    expect(
+      getGroupReferencePriceComparison(models, 'custom', 0.3, REFERENCE, CNY)
+        ?.factor
+    ).toBeCloseTo(0.3 / 7.3)
+    expect(
+      getGroupReferencePriceComparison(
+        models,
+        'custom',
+        Number.NaN,
+        REFERENCE,
+        CNY
+      )
+    ).toBeNull()
+    expect(
+      getGroupReferencePriceComparison(models, 'custom', 0.3, undefined, CNY)
+    ).toBeNull()
+    expect(
+      getGroupReferencePriceComparison([MODEL], 'other', 0.3, REFERENCE, CNY)
     ).toBeNull()
   })
 })

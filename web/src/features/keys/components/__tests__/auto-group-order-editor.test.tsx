@@ -256,21 +256,21 @@ describe('Auto group order editor', () => {
         name: 'VIP',
         title: 'Priority access',
         description: 'Priority access',
-        ratio: '3x',
+        ratio: undefined,
       },
       {
         index: '2',
         name: 'Default',
         title: 'Standard access',
         description: 'Standard access',
-        ratio: '1x',
+        ratio: undefined,
       },
       {
         index: '3',
         name: 'Team',
         title: 'Shared access',
         description: 'Shared access',
-        ratio: '2x',
+        ratio: undefined,
       },
     ])
 

@@ -1502,6 +1502,8 @@
     "Community plugins": "Plugin cộng đồng",
     "Community plugins are published and maintained by their authors. Check the source before you install.": "Plugin cộng đồng do tác giả phát hành và duy trì. Hãy xem mã nguồn trước khi cài đặt.",
     "Compact": "Gọn",
+    "Comparable models: about {{off}}% below reference": "Mô hình có thể so sánh: rẻ hơn khoảng {{off}}%",
+    "Comparable models: at least {{off}}% below reference": "Mô hình có thể so sánh: rẻ hơn ít nhất {{off}}%",
     "Compare each vendor's token share across the past few weeks": "So sánh thị phần token của từng nhà cung cấp trong vài tuần qua",
     "Compare each vendor's token share across the past year": "So sánh thị phần token của từng nhà cung cấp trong năm qua",
     "Compare each vendor's token share over the past 24 hours": "So sánh thị phần token của từng nhà cung cấp trong 24 giờ qua",

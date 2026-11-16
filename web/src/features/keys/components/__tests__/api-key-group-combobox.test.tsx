@@ -97,6 +97,49 @@ function getCommandItem(label: string): HTMLElement {
 }
 
 describe('API key group combobox Auto effect', () => {
+  test('labels partial reference coverage and keeps savings visible after selection', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ApiKeyGroupCombobox
+          options={[
+            {
+              value: 'pool',
+              label: 'Pool',
+              ratio: 0.3,
+              comparison: {
+                factor: 0.25,
+                uniform: true,
+                priceCount: 3,
+                comparableModels: 1,
+                totalModels: 2,
+              },
+            },
+          ]}
+          value='pool'
+          onValueChange={() => undefined}
+        />
+      </I18nextProvider>
+    )
+    expect(getTrigger()).toHaveTextContent(
+      'Comparable models: about 75% below reference'
+    )
+    expect(getTrigger()).not.toHaveTextContent('0.3x')
+    fireEvent.click(getTrigger())
+    expect(getCommandItem('Pool')).toHaveTextContent(
+      'Comparable models: about 75% below reference'
+    )
+    const priceBadge = within(getCommandItem('Pool'))
+      .getByText('Comparable models: about 75% below reference')
+      .closest('[data-slot="badge"]')
+    expect(priceBadge?.parentElement).toHaveClass('basis-full', 'sm:basis-auto')
+  })
+  test('does not present an internal billing coefficient as a customer discount', () => {
+    render(<Harness initialValue='vip' />)
+    expect(screen.queryByText('3x')).not.toBeInTheDocument()
+    fireEvent.click(getTrigger())
+    expect(screen.queryByText('1x')).not.toBeInTheDocument()
+    expect(screen.queryByText('3x')).not.toBeInTheDocument()
+  })
   test('uses the compact table capsules in the selected group and dropdown options', () => {
     setReducedMotion(false)
     render(<Harness initialValue='auto' />)
@@ -159,20 +202,7 @@ describe('API key group combobox Auto effect', () => {
     expect(defaultOption.querySelector('[data-auto-group-flow-border]')).toBe(
       null
     )
-    const defaultRatio = within(defaultOption)
-      .getByText('1x')
-      .closest('[data-slot="badge"]')
-    expect(defaultRatio).toHaveClass(
-      'h-5',
-      'min-w-12',
-      'rounded-full',
-      'tabular-nums',
-      'border-muted-foreground/30'
-    )
-    expect(defaultRatio).not.toHaveTextContent('Ratio')
-    expect(
-      defaultOption.querySelector('[data-auto-group-effect="ratio"]')
-    ).toBe(null)
+    expect(within(defaultOption).queryByText('1x')).not.toBeInTheDocument()
   })
 
   test('keeps search and selection behavior while leaving normal groups unstyled', async () => {

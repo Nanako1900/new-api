@@ -26,6 +26,7 @@ import type { ReferencePriceComparison } from '../../lib/reference-price'
 
 export function MeowReferencePriceBadge(props: {
   comparison: ReferencePriceComparison | null
+  partial?: boolean
 }) {
   const { t, i18n } = useTranslation()
   const comparison = props.comparison
@@ -41,11 +42,17 @@ export function MeowReferencePriceBadge(props: {
     off: formatNumber(off, locale),
     zhe: formatNumber(zhe, locale),
   }
+  let label = comparison.uniform
+    ? t('About {{off}}% below reference', values)
+    : t('At least {{off}}% below reference', values)
+  if (props.partial) {
+    label = comparison.uniform
+      ? t('Comparable models: about {{off}}% below reference', values)
+      : t('Comparable models: at least {{off}}% below reference', values)
+  }
   return (
     <Badge className='bg-success/10 text-success mt-1 h-auto min-h-5 max-w-full whitespace-normal'>
-      {comparison.uniform
-        ? t('About {{off}}% below reference', values)
-        : t('At least {{off}}% below reference', values)}
+      {label}
     </Badge>
   )
 }
