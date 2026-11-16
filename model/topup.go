@@ -13,16 +13,19 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	Money           float64 `json:"money"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	Id                int     `json:"id"`
+	UserId            int     `json:"user_id" gorm:"index"`
+	Amount            int64   `json:"amount"`
+	Money             float64 `json:"money"`
+	TradeNo           string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod     string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider   string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime        int64   `json:"create_time"`
+	CompleteTime      int64   `json:"complete_time"`
+	Status            string  `json:"status"`
+	AffiliateCurrency string  `json:"-" gorm:"-"`
+	AffiliateFeeCents int64   `json:"-" gorm:"-"`
+	AffiliateEligible bool    `json:"-"`
 }
 
 const (
@@ -53,9 +56,12 @@ var (
 )
 
 func (topUp *TopUp) Insert() error {
-	var err error
-	err = DB.Create(topUp).Error
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(topUp).Error; err != nil {
+			return err
+		}
+		return snapshotAffiliateOrder(tx, topUp)
+	})
 }
 
 func topUpQuotaMaxCurrent(creditedQuota int) (int, error) {
@@ -174,7 +180,7 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 // 在同一个事务内完成，因此同一订单的并发/重复回调（包括多实例部署下）最多充值一次。
 // alreadyDone=true 表示订单此前已完成，本次为幂等重复回调。
 // 进程内的 LockOrder 只是优化，正确性由本函数的数据库行锁保证。
-func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (alreadyDone bool, err error) {
+func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string, payments ...AffiliatePayment) (alreadyDone bool, err error) {
 	if tradeNo == "" {
 		return false, errors.New("payment order number not provided")
 	}
@@ -215,7 +221,10 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		if err := tx.Save(topUp).Error; err != nil {
 			return err
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+			return err
+		}
+		return settleAffiliateOrder(tx, topUp, payments)
 	})
 	if err != nil {
 		if !errors.Is(err, ErrTopUpNotFound) && !errors.Is(err, ErrPaymentMethodMismatch) && !errors.Is(err, ErrTopUpStatusInvalid) {
@@ -233,12 +242,13 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 	return false, nil
 }
 
-func Recharge(referenceId string, customerId string, callerIp string) (err error) {
+func Recharge(referenceId string, customerId string, callerIp string, payments ...AffiliatePayment) (err error) {
 	if referenceId == "" {
 		return errors.New("payment order number not provided")
 	}
 
 	var quota int
+	alreadyDone := false
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -256,6 +266,10 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 			return ErrPaymentMethodMismatch
 		}
 
+		if topUp.Status == common.TopUpStatusSuccess {
+			alreadyDone = true
+			return nil
+		}
 		if topUp.Status != common.TopUpStatusPending {
 			return errors.New("invalid top-up order status")
 		}
@@ -273,14 +287,18 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
-		return creditTopUpQuota(tx, topUp.UserId, quota, map[string]any{
-			"stripe_customer": customerId,
-		})
+		if err := creditTopUpQuota(tx, topUp.UserId, quota, map[string]any{"stripe_customer": customerId}); err != nil {
+			return err
+		}
+		return settleAffiliateOrder(tx, topUp, payments)
 	})
 
 	if err != nil {
 		common.SysError(common.LogText("topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
+	}
+	if alreadyDone {
+		return nil
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quota, common.LogText("stripe topup"))
 
@@ -447,7 +465,7 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 }
 
 // ManualCompleteTopUp 管理员手动完成订单并给用户充值
-func ManualCompleteTopUp(tradeNo string, callerIp string) error {
+func ManualCompleteTopUp(tradeNo string, callerIp string, payments ...AffiliatePayment) error {
 	if tradeNo == "" {
 		return common.NewMessage("Order number not provided")
 	}
@@ -486,6 +504,8 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
 			)
+		} else if topUp.PaymentProvider == PaymentProviderCreem {
+			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(topUp.Amount))
 		} else {
 			quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 				decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
@@ -507,6 +527,9 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return err
 		}
 
+		if err := settleAffiliateOrder(tx, topUp, payments); err != nil {
+			return err
+		}
 		userId = topUp.UserId
 		payMoney = topUp.Money
 		paymentMethod = topUp.PaymentMethod
@@ -517,17 +540,21 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		return err
 	}
 
+	if userId == 0 {
+		return nil
+	}
 	// 事务外记录日志，避免阻塞
 	syncCreditUserQuotaCache(userId, quotaToAdd, common.LogText("manual topup"))
 	RecordTopupLog(userId, common.NewMessage("Administrator completed the order, amount added: {{quota}}, payment amount: {{amount}}", map[string]any{"quota": logger.FormatQuota(quotaToAdd), "amount": fmt.Sprintf("%f", payMoney)}), callerIp, paymentMethod, "admin")
 	return nil
 }
-func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
+func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string, payments ...AffiliatePayment) (err error) {
 	if referenceId == "" {
 		return errors.New("payment order number not provided")
 	}
 
 	var quota int
+	alreadyDone := false
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -545,6 +572,10 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			return ErrPaymentMethodMismatch
 		}
 
+		if topUp.Status == common.TopUpStatusSuccess {
+			alreadyDone = true
+			return nil
+		}
 		if topUp.Status != common.TopUpStatusPending {
 			return errors.New("invalid top-up order status")
 		}
@@ -580,12 +611,18 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			}
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quota, updateFields)
+		if err := creditTopUpQuota(tx, topUp.UserId, quota, updateFields); err != nil {
+			return err
+		}
+		return settleAffiliateOrder(tx, topUp, payments)
 	})
 
 	if err != nil {
 		common.SysError(common.LogText("creem topup failed: %s", err.Error()))
 		return errors.New("top-up failed")
+	}
+	if alreadyDone {
+		return nil
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quota, common.LogText("creem topup"))
 
@@ -594,7 +631,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	return nil
 }
 
-func RechargeWaffo(tradeNo string, callerIp string) (err error) {
+func RechargeWaffo(tradeNo string, callerIp string, payments ...AffiliatePayment) (err error) {
 	if tradeNo == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -638,7 +675,10 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+			return err
+		}
+		return settleAffiliateOrder(tx, topUp, payments)
 	})
 
 	if err != nil {
@@ -654,7 +694,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	return nil
 }
 
-func RechargeWaffoPancake(tradeNo string) (err error) {
+func RechargeWaffoPancake(tradeNo string, payments ...AffiliatePayment) (err error) {
 	if tradeNo == "" {
 		return errors.New("payment order number not provided")
 	}
@@ -698,7 +738,10 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return err
 		}
 
-		return creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil)
+		if err := creditTopUpQuota(tx, topUp.UserId, quotaToAdd, nil); err != nil {
+			return err
+		}
+		return settleAffiliateOrder(tx, topUp, payments)
 	})
 
 	if err != nil {

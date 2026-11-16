@@ -351,14 +351,15 @@ func RequestEpay(c *gin.Context) {
 		amount = dAmount.Div(dQuotaPerUnit).IntPart()
 	}
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          amount,
-		Money:           payMoney,
-		TradeNo:         tradeNo,
-		PaymentMethod:   req.PaymentMethod,
-		PaymentProvider: model.PaymentProviderEpay,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:            id,
+		Amount:            amount,
+		Money:             payMoney,
+		TradeNo:           tradeNo,
+		PaymentMethod:     req.PaymentMethod,
+		PaymentProvider:   model.PaymentProviderEpay,
+		AffiliateCurrency: "CNY",
+		CreateTime:        time.Now().Unix(),
+		Status:            common.TopUpStatusPending,
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -474,7 +475,7 @@ func EpayNotify(c *gin.Context) {
 		// 数据库行锁 + 事务内状态校验保证（多实例部署下同样安全）。
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
-		alreadyDone, err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP())
+		alreadyDone, err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP(), model.AffiliatePayment{Amount: params["money"], Currency: "CNY"})
 		if err != nil {
 			switch {
 			case errors.Is(err, model.ErrTopUpNotFound):
@@ -584,7 +585,8 @@ func GetAllTopUps(c *gin.Context) {
 }
 
 type AdminCompleteTopupRequest struct {
-	TradeNo string `json:"trade_no"`
+	TradeNo string                  `json:"trade_no"`
+	Payment *model.AffiliatePayment `json:"payment,omitempty"`
 }
 
 // AdminCompleteTopUp 管理员补单接口
@@ -599,7 +601,11 @@ func AdminCompleteTopUp(c *gin.Context) {
 	LockOrder(req.TradeNo)
 	defer UnlockOrder(req.TradeNo)
 
-	if err := model.ManualCompleteTopUp(req.TradeNo, c.ClientIP()); err != nil {
+	var payments []model.AffiliatePayment
+	if req.Payment != nil {
+		payments = append(payments, *req.Payment)
+	}
+	if err := model.ManualCompleteTopUp(req.TradeNo, c.ClientIP(), payments...); err != nil {
 		common.ApiError(c, err)
 		return
 	}

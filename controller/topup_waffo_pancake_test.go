@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -85,6 +87,21 @@ func TestGetWaffoPancakePayMoney(t *testing.T) {
 			operation_setting.GetGeneralSetting().QuotaDisplayType = tc.quotaDisplayType
 			actual := getWaffoPancakePayMoney(tc.amount, tc.group)
 			require.InDelta(t, tc.expected, actual, 0.000001)
+		})
+	}
+}
+
+func TestWaffoPancakeCashbackExcludesTax(t *testing.T) {
+	for _, tc := range []struct{ amount, tax, want string }{
+		{"31.32", "2.32", "29"}, {"0.00", "0.00", "0"},
+		{"12.50", "0", "12.5"}, {"12", "-1", ""},
+		{"12", "13", ""}, {"bad", "0", ""}, {"12", "", ""},
+		{"1e9999999", "0", ""},
+	} {
+		t.Run(tc.amount+"/"+tc.tax, func(t *testing.T) {
+			p := waffoPancakeCashbackPayment(service.WaffoPancakeWebhookData{Amount: tc.amount, TaxAmount: tc.tax, Currency: "USD"})
+			assert.Equal(t, tc.want, p.Amount)
+			assert.Equal(t, "USD", p.Currency)
 		})
 	}
 }

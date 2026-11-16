@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { AffiliateAction } from '@/features/affiliate/types'
 import type { AuthBundle } from '@/stores/auth-store'
 
 export type VerificationMethod =
@@ -24,6 +25,7 @@ export type VerificationMethod =
   | 'password'
   | 'oauth'
   | 'session'
+
 export type SecurityProofScope =
   | 'channel.key.read'
   | 'passkey.register'
@@ -45,12 +47,14 @@ export type SecurityProofScope =
   | 'admin.user.manage'
   | 'admin.user.passkey.reset'
   | 'admin.user.2fa.disable'
+  | 'admin.user.affiliate'
   | 'admin.user.binding.clear'
 
 /** ManageUser actions that change a user's status or role and need step-up. */
 export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
 
 export type VerificationOperation =
+  | { scope: 'admin.user.affiliate'; context: AffiliateAction }
   | { scope: 'channel.key.read'; context: { channel_id: number } }
   | {
       scope: 'account.binding.bind'

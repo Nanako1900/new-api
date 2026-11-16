@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 // MeowAPI: console page look (large title) for the wallet.
 import { MeowSectionLayout as SectionPageLayout } from '@/components/meow-section-layout'
+import { AffiliateCard } from '@/features/affiliate/components/affiliate-card'
 import { getSelf } from '@/lib/api'
 
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
@@ -327,6 +328,7 @@ export function Wallet(props: WalletProps) {
               />
             </div>
 
+            <AffiliateCard />
             <AffiliateRewardsCard
               user={user}
               affiliateLink={affiliateLink}

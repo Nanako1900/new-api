@@ -222,14 +222,15 @@ func RequestWaffoPay(c *gin.Context) {
 
 	// 创建本地订单
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          amount,
-		Money:           payMoney,
-		TradeNo:         merchantOrderId,
-		PaymentMethod:   model.PaymentMethodWaffo,
-		PaymentProvider: model.PaymentProviderWaffo,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:            id,
+		Amount:            amount,
+		Money:             payMoney,
+		TradeNo:           merchantOrderId,
+		PaymentMethod:     model.PaymentMethodWaffo,
+		PaymentProvider:   model.PaymentProviderWaffo,
+		AffiliateCurrency: getWaffoCurrency(),
+		CreateTime:        time.Now().Unix(),
+		Status:            common.TopUpStatusPending,
 	}
 	if err := topUp.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo failed to create top-up order user_id=%d trade_no=%s amount=%d error=%q", id, merchantOrderId, req.Amount, err.Error()))
@@ -411,7 +412,7 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 	LockOrder(merchantOrderId)
 	defer UnlockOrder(merchantOrderId)
 
-	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP()); err != nil {
+	if err := model.RechargeWaffo(merchantOrderId, c.ClientIP(), model.AffiliatePayment{Amount: result.OrderAmount, Currency: result.OrderCurrency}); err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo top-up processing failed trade_no=%s client_ip=%s error=%q", merchantOrderId, c.ClientIP(), err.Error()))
 		sendWaffoWebhookResponse(c, wh, false, err.Error())
 		return

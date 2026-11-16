@@ -43,7 +43,7 @@ func useUserIDTestDB(t *testing.T, dialect string) *gorm.DB {
 	}
 	db, err := gorm.Open(driver, &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), NamingStrategy: schema.NamingStrategy{TablePrefix: "user_id_test_"}})
 	require.NoError(t, err)
-	tables := []any{&Option{}, &User{}, &SystemTask{}, &UserSubscription{}, &Log{}, &AuditLog{}, &ContentSafetyLog{}, &Token{}, &UserSession{}, &AuthFlow{}, &ExternalIdentityClaim{}, &PasskeyCredential{}, &Redemption{}, &Midjourney{}, &TopUp{}, &QuotaData{}, &Task{}, &TwoFA{}, &TwoFABackupCode{}, &Checkin{}, &SubscriptionOrder{}, &SubscriptionPreConsumeRecord{}, &UserOAuthBinding{}, &UserAccessToken{}, &CasbinRule{}}
+	tables := []any{&Option{}, &User{}, &SystemTask{}, &UserSubscription{}, &Log{}, &AuditLog{}, &ContentSafetyLog{}, &Token{}, &UserSession{}, &AuthFlow{}, &ExternalIdentityClaim{}, &PasskeyCredential{}, &Redemption{}, &Midjourney{}, &TopUp{}, &QuotaData{}, &Task{}, &TwoFA{}, &TwoFABackupCode{}, &Checkin{}, &SubscriptionOrder{}, &SubscriptionPreConsumeRecord{}, &UserOAuthBinding{}, &UserAccessToken{}, &CasbinRule{}, &AffiliateAccount{}, &AffiliateOrder{}, &AffiliateEntry{}, &AffiliateChange{}}
 	require.NoError(t, db.AutoMigrate(tables...))
 	require.NoError(t, db.AutoMigrate(tables...))
 	var version string
@@ -203,10 +203,14 @@ func TestUserIDStartDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.Create(&Log{UserId: 11000}).Error)
 			require.NoError(t, db.Create(&UserSubscription{UserId: 11001}).Error)
 			require.NoError(t, db.Create(&CasbinRule{Ptype: "p", V0: "user:11002", V1: "admin.users", V2: "allow"}).Error)
+			require.NoError(t, db.Create(&AffiliateAccount{UserID: 11003, BalanceCents: 800}).Error)
+			require.NoError(t, db.Create(&AffiliateOrder{TradeNo: "retained-affiliate", BuyerID: 11004, InviterID: 11005}).Error)
+			require.NoError(t, db.Create(&AffiliateEntry{EventKey: "retained-affiliate", UserID: 11006, BuyerID: 11007, OperatorID: 11008}).Error)
+			require.NoError(t, db.Create(&AffiliateChange{UserID: 11009, OldInviter: 11010, NewInviter: 11011, OperatorID: 11012}).Error)
 			require.NoError(t, UpdateOption("UserIdStart", "11000"))
 			orphanSafe := User{Username: "after-orphans"}
 			require.NoError(t, UserCreationTransaction(func(tx *gorm.DB) error { return orphanSafe.InsertWithTx(tx, 0) }))
-			assert.Equal(t, 11003, orphanSafe.Id)
+			assert.Equal(t, 11013, orphanSafe.Id)
 			// Dedicated simultaneously held connections ensure this is not a one-connection test.
 			conn1, err := sqlDB.Conn(context.Background())
 			require.NoError(t, err)

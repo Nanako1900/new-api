@@ -635,3 +635,26 @@ export function formatLocalCurrencyAmount(
 
   return formatCurrencyValue(amount, merged, meta)
 }
+
+/** Formats a cash amount in its actual currency without applying display exchange rates. */
+export function formatCurrencyAmount(
+  amount: number,
+  currency: string,
+  options?: CurrencyFormatOptions
+): string {
+  return formatCurrencyValue(
+    amount,
+    mergeOptions({
+      digitsLarge: 2,
+      digitsSmall: 2,
+      abbreviate: false,
+      ...options,
+    }),
+    {
+      kind: 'currency',
+      currencyCode: currency,
+      symbol: currency,
+      exchangeRate: 1,
+    }
+  )
+}

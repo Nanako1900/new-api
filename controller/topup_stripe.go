@@ -109,7 +109,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	reference := fmt.Sprintf("new-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "ref_" + common.Sha1([]byte(reference))
 
-	payLink, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.Amount, req.SuccessURL, req.CancelURL)
+	checkout, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.Amount, req.SuccessURL, req.CancelURL)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Stripe failed to create Checkout Session user_id=%d trade_no=%s amount=%d error=%q", id, referenceId, req.Amount, err.Error()))
 		paymentError(c, common.NewMessage("Failed to start payment"))
@@ -117,14 +117,15 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	}
 
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          req.Amount,
-		Money:           chargedMoney,
-		TradeNo:         referenceId,
-		PaymentMethod:   model.PaymentMethodStripe,
-		PaymentProvider: model.PaymentProviderStripe,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:            id,
+		Amount:            req.Amount,
+		Money:             chargedMoney,
+		TradeNo:           referenceId,
+		PaymentMethod:     model.PaymentMethodStripe,
+		PaymentProvider:   model.PaymentProviderStripe,
+		AffiliateCurrency: string(checkout.Currency),
+		CreateTime:        time.Now().Unix(),
+		Status:            common.TopUpStatusPending,
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -136,7 +137,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
-			"pay_link": payLink,
+			"pay_link": checkout.URL,
 		},
 	})
 }
@@ -192,11 +193,17 @@ func StripeWebhook(c *gin.Context) {
 	logger.LogInfo(ctx, common.LogText("Stripe webhook signature verified event_type=%s client_ip=%s path=%q", string(event.Type), callerIp, c.Request.RequestURI))
 	switch event.Type {
 	case stripe.EventTypeCheckoutSessionCompleted:
-		sessionCompleted(ctx, event, callerIp)
+		if err := sessionCompleted(ctx, event, callerIp); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
 	case stripe.EventTypeCheckoutSessionExpired:
 		sessionExpired(ctx, event)
 	case stripe.EventTypeCheckoutSessionAsyncPaymentSucceeded:
-		sessionAsyncPaymentSucceeded(ctx, event, callerIp)
+		if err := sessionAsyncPaymentSucceeded(ctx, event, callerIp); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
 	case stripe.EventTypeCheckoutSessionAsyncPaymentFailed:
 		sessionAsyncPaymentFailed(ctx, event, callerIp)
 	default:
@@ -206,32 +213,32 @@ func StripeWebhook(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-func sessionCompleted(ctx context.Context, event stripe.Event, callerIp string) {
+func sessionCompleted(ctx context.Context, event stripe.Event, callerIp string) error {
 	customerId := event.GetObjectValue("customer")
 	referenceId := event.GetObjectValue("client_reference_id")
 	status := event.GetObjectValue("status")
 	if "complete" != status {
 		logger.LogWarn(ctx, common.LogText("Stripe checkout.completed has unexpected status, ignored trade_no=%s status=%s client_ip=%s", referenceId, status, callerIp))
-		return
+		return nil
 	}
 
 	paymentStatus := event.GetObjectValue("payment_status")
 	if paymentStatus != "paid" {
 		logger.LogInfo(ctx, common.LogText("Stripe Checkout payment not completed, waiting for async result trade_no=%s payment_status=%s client_ip=%s", referenceId, paymentStatus, callerIp))
-		return
+		return nil
 	}
 
-	fulfillOrder(ctx, event, referenceId, customerId, callerIp)
+	return fulfillOrder(ctx, event, referenceId, customerId, callerIp)
 }
 
 // sessionAsyncPaymentSucceeded handles delayed payment methods (bank transfer, SEPA, etc.)
 // that confirm payment after the checkout session completes.
-func sessionAsyncPaymentSucceeded(ctx context.Context, event stripe.Event, callerIp string) {
+func sessionAsyncPaymentSucceeded(ctx context.Context, event stripe.Event, callerIp string) error {
 	customerId := event.GetObjectValue("customer")
 	referenceId := event.GetObjectValue("client_reference_id")
 	logger.LogInfo(ctx, common.LogText("Stripe async payment succeeded trade_no=%s client_ip=%s", referenceId, callerIp))
 
-	fulfillOrder(ctx, event, referenceId, customerId, callerIp)
+	return fulfillOrder(ctx, event, referenceId, customerId, callerIp)
 }
 
 // sessionAsyncPaymentFailed marks orders as failed when delayed payment methods
@@ -273,10 +280,10 @@ func sessionAsyncPaymentFailed(ctx context.Context, event stripe.Event, callerIp
 }
 
 // fulfillOrder is the shared logic for crediting quota after payment is confirmed.
-func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, customerId string, callerIp string) {
+func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, customerId string, callerIp string) error {
 	if len(referenceId) == 0 {
 		logger.LogWarn(ctx, common.LogText("Stripe order completion missing order number client_ip=%s", callerIp))
-		return
+		return nil
 	}
 
 	LockOrder(referenceId)
@@ -289,23 +296,36 @@ func fulfillOrder(ctx context.Context, event stripe.Event, referenceId string, c
 	}
 	if err := model.CompleteSubscriptionOrder(referenceId, common.GetJsonString(payload), model.PaymentProviderStripe, ""); err == nil {
 		logger.LogInfo(ctx, common.LogText("Stripe subscription order processed trade_no=%s event_type=%s client_ip=%s", referenceId, string(event.Type), callerIp))
-		return
+		return nil
 	} else if err != nil && !errors.Is(err, model.ErrSubscriptionOrderNotFound) {
 		logger.LogError(ctx, common.LogText("Stripe subscription order processing failed trade_no=%s event_type=%s client_ip=%s error=%q", referenceId, string(event.Type), callerIp, err.Error()))
-		return
+		return err
 	}
 
-	err := model.Recharge(referenceId, customerId, callerIp)
+	total, totalErr := decimal.NewFromString(event.GetObjectValue("amount_total"))
+	tax := decimal.Zero
+	if value := event.GetObjectValue("total_details", "amount_tax"); value != "" {
+		var taxErr error
+		tax, taxErr = decimal.NewFromString(value)
+		if taxErr != nil {
+			return taxErr
+		}
+	}
+	if totalErr != nil {
+		return totalErr
+	}
+	err := model.Recharge(referenceId, customerId, callerIp, model.AffiliatePayment{Amount: total.Sub(tax).Div(decimal.NewFromInt(100)).String(), Currency: event.GetObjectValue("currency")})
 	if err != nil {
 		logger.LogError(ctx, common.LogText("Stripe top-up processing failed trade_no=%s event_type=%s client_ip=%s error=%q", referenceId, string(event.Type), callerIp, err.Error()))
-		return
+		return err
 	}
 
-	total, _ := strconv.ParseFloat(event.GetObjectValue("amount_total"), 64)
+	totalFloat, _ := strconv.ParseFloat(event.GetObjectValue("amount_total"), 64)
 	currency := strings.ToUpper(event.GetObjectValue("currency"))
-	logger.LogInfo(ctx, common.LogText("Stripe top-up succeeded trade_no=%s amount_total=%.2f currency=%s event_type=%s client_ip=%s", referenceId, total/100, currency, string(event.Type), callerIp))
-}
+	logger.LogInfo(ctx, common.LogText("Stripe top-up succeeded trade_no=%s amount_total=%.2f currency=%s event_type=%s client_ip=%s", referenceId, totalFloat/100, currency, string(event.Type), callerIp))
 
+	return nil
+}
 func sessionExpired(ctx context.Context, event stripe.Event) {
 	referenceId := event.GetObjectValue("client_reference_id")
 	status := event.GetObjectValue("status")
@@ -354,10 +374,10 @@ func sessionExpired(ctx context.Context, event stripe.Event) {
 //   - successURL: custom URL to redirect after successful payment (empty for default)
 //   - cancelURL: custom URL to redirect when payment is canceled (empty for default)
 //
-// Returns the checkout session URL or an error if the session creation fails.
-func genStripeLink(referenceId string, customerId string, email string, amount int64, successURL string, cancelURL string) (string, error) {
+// Returns the checkout session so the payment currency can be snapshotted.
+func genStripeLink(referenceId string, customerId string, email string, amount int64, successURL string, cancelURL string) (*stripe.CheckoutSession, error) {
 	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
-		return "", errors.New("invalid Stripe API key")
+		return nil, errors.New("invalid Stripe API key")
 	}
 
 	stripe.Key = setting.StripeApiSecret
@@ -396,10 +416,10 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 
 	result, err := session.New(params)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return result.URL, nil
+	return result, nil
 }
 
 func GetChargedAmount(count float64, user model.User) float64 {
