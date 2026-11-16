@@ -20,6 +20,7 @@ import { queryOptions, type QueryClient } from '@tanstack/react-query'
 
 import { getStatus } from '@/lib/api'
 import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
+import { applyFaviconToDom } from '@/lib/dom-utils'
 import {
   useSystemConfigStore,
   type CurrencyConfig,
@@ -112,6 +113,27 @@ export function readCachedStatus(): StatusData | null {
   } catch {
     return null
   }
+}
+
+/** Apply the HTML response's current branding before persisted stores mount. */
+export function initializeSystemLogo(cachedLogo: unknown): void {
+  const serverIcon = document.querySelector<HTMLLinkElement>(
+    'link[rel~="icon"][data-server-favicon]'
+  )
+  let logo = typeof cachedLogo === 'string' ? cachedLogo : ''
+  if (serverIcon) logo = serverIcon.getAttribute('href') || DEFAULT_LOGO
+  if (!logo) return
+  // Update both in memory before persistence: quota/blocked storage must not
+  // leave the old logo active. A saved URL is not a loaded image in this page.
+  try {
+    useSystemConfigStore.setState((state) => ({
+      config: { ...state.config, logo },
+      loadedLogoUrl: '',
+    }))
+  } catch {
+    // Zustand updates memory before trying to persist; the server still wins.
+  }
+  applyFaviconToDom(logo)
 }
 
 /** Persist the latest status so the next cold start can render before fetching. */
