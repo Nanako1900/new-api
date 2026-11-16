@@ -1142,3 +1142,77 @@ func TestSecurityRoutesDisableCachingBeforeAuthentication(t *testing.T) {
 		})
 	}
 }
+
+func TestWebFaviconUsesCurrentBrandingBeforeJavaScript(t *testing.T) {
+	previous := common.Logo
+	t.Cleanup(func() { common.OptionMapRWMutex.Lock(); common.Logo = previous; common.OptionMapRWMutex.Unlock() })
+	page := []byte(`<html><head><title>New API</title><link rel="icon" href="/favicon.ico"><link rel=icon href=/alternate.ico><script>const s = '<link rel="icon" href="script">'</script></head><body>QuantumNous</body></html>`)
+	original := bytes.Clone(page)
+	engine := gin.New()
+	SetWebRouter(engine, WebAssets{IndexPage: page}, func(c *gin.Context) { c.Next() })
+	for _, tc := range []struct{ logo, want string }{
+		{"https://images.example/logo.svg?a=1&b=2", `href="https://images.example/logo.svg?a=1&amp;b=2"`},
+		{"/custom.svg", `href="/custom.svg"`},
+		{"data:image/png;base64,aWNvbg==", `href="data:image/png;base64,aWNvbg=="`},
+		{"data:image/svg+xml,%3Csvg%3E%3C/svg%3E", `href="data:image/svg+xml,%3Csvg%3E%3C/svg%3E"`},
+		{"data:text/html,%3Cscript%3Ealert(1)%3C/script%3E", `href="/logo.png"`},
+		{"data:image/png;base64,!bad!", `href="/logo.png"`},
+		{"", `href="/logo.png"`},
+		{"javascript:alert(1)", `href="/logo.png"`},
+		{`https://images.example/logo.svg?x=" onerror="alert(1)`, `href="https://images.example/logo.svg?x=&#34; onerror=&#34;alert(1)"`},
+	} {
+		common.OptionMapRWMutex.Lock()
+		common.Logo = tc.logo
+		common.OptionMapRWMutex.Unlock()
+		for _, route := range []string{"/", "/dashboard", "/console/security?tab=keys"} {
+			response := performPluginRequest(engine, http.MethodGet, route)
+			assert.Equal(t, http.StatusOK, response.Code)
+			assert.Contains(t, response.Body.String(), tc.want)
+			assert.Contains(t, response.Body.String(), "data-server-favicon")
+			assert.NotContains(t, response.Body.String(), `href="/favicon.ico"`)
+			assert.NotContains(t, response.Body.String(), "/alternate.ico")
+			assert.Equal(t, 1, strings.Count(response.Body.String(), "data-server-favicon"))
+			assert.Contains(t, response.Body.String(), "<title>New API</title>")
+			assert.Contains(t, response.Body.String(), "QuantumNous")
+			assert.Contains(t, response.Body.String(), `<script>const s = '<link rel="icon" href="script">'</script>`)
+			assert.Equal(t, "no-cache", response.Header().Get("Cache-Control"))
+		}
+	}
+	assert.Equal(t, original, page, "request branding must not mutate the embedded template")
+}
+
+func TestWebFaviconRedirectAvoidsStaticCacheAndSelfLoops(t *testing.T) {
+	previous := common.Logo
+	t.Cleanup(func() { common.OptionMapRWMutex.Lock(); common.Logo = previous; common.OptionMapRWMutex.Unlock() })
+	engine := gin.New()
+	SetWebRouter(engine, WebAssets{IndexPage: []byte(`<head><link rel=icon href=/favicon.ico></head>`)}, func(c *gin.Context) { c.Next() })
+	for _, tc := range []struct {
+		logo     string
+		redirect bool
+	}{
+		{"https://images.example/logo.svg", true}, {"/logo.svg", true}, {"", false},
+		{"/favicon.ico?version=2", false}, {"https://app.example/favicon.ico?x=1", false},
+		{"/assets/../favicon.ico?x=1", false}, {"/%66avicon.ico?x=1", false},
+		{"favicon.ico?x=1", false}, {"//app.example/favicon.ico?x=1", false},
+		{"javascript:alert(1)", false},
+		{"data:image/png;base64,aWNvbg==", false},
+		{"https://app.example:443/favicon.ico?x=1", false},
+	} {
+		common.OptionMapRWMutex.Lock()
+		common.Logo = tc.logo
+		common.OptionMapRWMutex.Unlock()
+		for _, method := range []string{http.MethodGet, http.MethodHead} {
+			response := performPluginRequest(engine, method, "https://app.example/favicon.ico?probe=1")
+			if tc.redirect {
+				assert.Equal(t, http.StatusFound, response.Code, tc.logo)
+				assert.Equal(t, tc.logo, response.Header().Get("Location"))
+				assert.Equal(t, "no-store", response.Header().Get("Cache-Control"))
+			} else {
+				assert.Empty(t, response.Header().Get("Location"), tc.logo)
+			}
+			if method == http.MethodHead {
+				assert.Empty(t, response.Body.String())
+			}
+		}
+	}
+}

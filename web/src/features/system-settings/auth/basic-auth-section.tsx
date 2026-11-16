@@ -34,9 +34,11 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useStatus } from '@/hooks/use-status'
+import { getServerErrorMessage } from '@/lib/server-error-message'
 
 import {
   SettingsForm,
@@ -47,11 +49,20 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeNumberFieldProps } from '../utils/numeric-field'
 
 const basicAuthSchema = z.object({
   PasswordLoginEnabled: z.boolean(),
   PasswordRegisterEnabled: z.boolean(),
   RegisterEnabled: z.boolean(),
+  UserIdStart: z
+    .number()
+    .int('User ID start must be an integer between 1 and 2147483647')
+    .min(1, 'User ID start must be an integer between 1 and 2147483647')
+    .max(
+      2147483647,
+      'User ID start must be an integer between 1 and 2147483647'
+    ),
   EmailDomainRestrictionEnabled: z.boolean(),
   EmailAliasRestrictionEnabled: z.boolean(),
   EmailDomainWhitelist: z.string(),
@@ -87,7 +98,7 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
   useResetForm(form, formDefaults)
 
   const onSubmit = async (data: BasicAuthFormValues) => {
-    const updates: Array<{ key: string; value: string | boolean }> = []
+    const updates: Array<{ key: string; value: string | boolean | number }> = []
 
     Object.entries(data).forEach(([key, value]) => {
       if (key === 'EmailDomainWhitelist') {
@@ -106,7 +117,20 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
     })
 
     for (const update of updates) {
-      await updateOption.mutateAsync(update)
+      try {
+        await updateOption.mutateAsync(update)
+      } catch (error) {
+        if (update.key === 'UserIdStart') {
+          form.setError('UserIdStart', {
+            type: 'server',
+            message: getServerErrorMessage(
+              error,
+              t('Failed to update setting')
+            ),
+          })
+        }
+        return
+      }
     }
   }
 
@@ -157,6 +181,31 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
                   />
                 </FormControl>
               </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='UserIdStart'
+            render={({ field }) => (
+              <FormItem data-settings-form-span='full'>
+                <FormLabel>{t('New user ID starting number')}</FormLabel>
+                <FormControl>
+                  <Input
+                    type='number'
+                    min={1}
+                    max={2147483647}
+                    step={1}
+                    {...safeNumberFieldProps(field)}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'New users receive IDs in ascending order from this number, skipping occupied IDs, including deleted users. Progress is preserved across restarts. Changing this number starts a new scan; saving the same number keeps progress. Existing user IDs stay unchanged.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
             )}
           />
 

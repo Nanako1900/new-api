@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -82,15 +81,15 @@ func WeChatAuth(c *gin.Context) {
 		}
 	} else {
 		if common.RegisterEnabled {
-			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
 
-			if err := user.Insert(0); err != nil {
+			if err := model.UserCreationTransaction(func(tx *gorm.DB) error { return user.InsertWithGeneratedUsername(tx, 0, "wechat_") }); err != nil {
 				common.ApiError(c, err)
 				return
 			}
+			user.FinishInsert(0)
 		} else {
 			common.ApiErrorT(c, "New user registration has been disabled by administrator")
 			return

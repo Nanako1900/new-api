@@ -105,7 +105,7 @@ func CompleteEmailRegistration(token, email string, user *User, inviterId int, d
 	if token == "" || email == "" || email != NormalizeEmail(email) {
 		return ErrEmailRegistrationInvalid
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
+	return UserCreationTransaction(func(tx *gorm.DB) error {
 		// Acquire ownership protection before the first consistent read. Under
 		// MySQL REPEATABLE READ, a snapshot created before this lock could hide
 		// an address claimed by a concurrent transaction while we were waiting.

@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, renderHook, waitFor } from '@testing-library/react'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { useStatus } from '@/hooks/use-status'
+import { useSystemConfig } from '@/hooks/use-system-config'
 import { api } from '@/lib/api'
 import {
   getModuleAccessForGuard,
@@ -30,6 +31,7 @@ import {
 import {
   STATUS_QUERY_KEY,
   ensureStatus,
+  initializeSystemLogo,
   statusQueryOptions,
 } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -83,6 +85,10 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
+  document
+    .querySelectorAll('link[rel~="icon"]')
+    .forEach((link) => link.remove())
   queryClients.splice(0).forEach((client) => client.clear())
   apiClient.get = originalGet
   window.localStorage.clear()
@@ -262,4 +268,125 @@ describe('module guard status freshness', () => {
       })
     }
   )
+})
+
+describe('first-response favicon branding', () => {
+  test.each(['/current.svg', '', '/logo.png'])(
+    'server favicon %s overrides both old caches before mount without claiming an image loaded',
+    (href) => {
+      localStorage.setItem(
+        'status',
+        JSON.stringify({ logo: '/old-status.svg' })
+      )
+      localStorage.setItem(
+        'system-config-storage',
+        JSON.stringify({
+          state: {
+            config: {
+              ...useSystemConfigStore.getState().config,
+              logo: '/old-store.svg',
+            },
+            loadedLogoUrl: '/old-store.svg',
+          },
+          version: 0,
+        })
+      )
+      useSystemConfigStore.persist.rehydrate()
+      document.head.insertAdjacentHTML(
+        'beforeend',
+        `<link rel="icon" href="${href}" data-server-favicon>`
+      )
+      initializeSystemLogo('/old-status.svg')
+      const expected = href || '/logo.png'
+      expect(
+        document
+          .querySelector<HTMLLinkElement>('link[rel~="icon"]')
+          ?.getAttribute('href')
+      ).toBe(expected)
+      expect(useSystemConfigStore.getState().config.logo).toBe(expected)
+      expect(useSystemConfigStore.getState().loadedLogoUrl).toBe('')
+      expect(
+        JSON.parse(localStorage.getItem('system-config-storage') ?? '{}')
+      ).toMatchObject({ state: { config: { logo: expected } } })
+    }
+  )
+
+  test('blocked persistence does not leave the old logo in the mounted store', () => {
+    useSystemConfigStore.getState().setConfig({ logo: '/old-store.svg' })
+    document.head.insertAdjacentHTML(
+      'beforeend',
+      '<link rel="icon" href="/server.svg" data-server-favicon>'
+    )
+    const storage = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(() => {
+        throw new DOMException('Quota exceeded', 'QuotaExceededError')
+      })
+    try {
+      expect(() => initializeSystemLogo('/old-cache.svg')).not.toThrow()
+      expect(useSystemConfigStore.getState().config.logo).toBe('/server.svg')
+      expect(useSystemConfigStore.getState().loadedLogoUrl).toBe('')
+    } finally {
+      storage.mockRestore()
+    }
+  })
+
+  test('standalone frontend keeps cached branding when there is no server marker', () => {
+    document.head.insertAdjacentHTML(
+      'beforeend',
+      '<link rel="icon" href="/favicon.ico">'
+    )
+    initializeSystemLogo('/cached.svg')
+    expect(
+      document
+        .querySelector<HTMLLinkElement>('link[rel~="icon"]')
+        ?.getAttribute('href')
+    ).toBe('/cached.svg')
+    expect(useSystemConfigStore.getState().config.logo).toBe('/cached.svg')
+  })
+
+  test('fresh status replaces server branding and a cleaned-up image cannot restore it', async () => {
+    const images: HTMLImageElement[] = []
+    vi.stubGlobal(
+      'Image',
+      class {
+        constructor() {
+          const image = document.createElement('img')
+          images.push(image)
+          return image
+        }
+      }
+    )
+    document.head.insertAdjacentHTML(
+      'beforeend',
+      '<link rel="icon" href="/server.svg" data-server-favicon>'
+    )
+    initializeSystemLogo('/old.svg')
+    const client = createQueryClient()
+    renderHook(() => useSystemConfig(), { wrapper: wrapper(client) })
+    expect(images[0].getAttribute('src')).toBe('/server.svg')
+    apiClient.get = async () => ({
+      data: { success: true, data: { logo: '/fresh.svg' } },
+    })
+    await act(async () => {
+      await ensureStatus(client)
+    })
+    act(() => {
+      images[1].dispatchEvent(new Event('load'))
+    })
+    expect(
+      document
+        .querySelector<HTMLLinkElement>('link[rel~="icon"]')
+        ?.getAttribute('href')
+    ).toBe('/fresh.svg')
+    act(() => {
+      images[0].dispatchEvent(new Event('load'))
+    })
+    expect(
+      document
+        .querySelector<HTMLLinkElement>('link[rel~="icon"]')
+        ?.getAttribute('href')
+    ).toBe('/fresh.svg')
+    expect(useSystemConfigStore.getState().loadedLogoUrl).toBe('/fresh.svg')
+  })
 })

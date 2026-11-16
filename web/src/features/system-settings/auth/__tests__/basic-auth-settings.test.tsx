@@ -23,11 +23,18 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, within } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { useState } from 'react'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SystemStatus } from '@/features/auth/types'
+import { api } from '@/lib/api'
 import { STATUS_QUERY_KEY } from '@/lib/status-query'
 
 import { SettingsPageProvider } from '../../components/settings-page-context'
@@ -37,12 +44,16 @@ const defaults = {
   PasswordLoginEnabled: true,
   PasswordRegisterEnabled: true,
   RegisterEnabled: true,
+  UserIdStart: 1,
   EmailDomainRestrictionEnabled: false,
   EmailAliasRestrictionEnabled: false,
   EmailDomainWhitelist: '',
 }
 
-async function renderSettings(status: SystemStatus) {
+async function renderSettings(
+  status: SystemStatus,
+  values: Partial<typeof defaults> = {}
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -53,7 +64,7 @@ async function renderSettings(status: SystemStatus) {
       <QueryClientProvider client={client}>
         <div ref={setContainer} />
         <SettingsPageProvider actionsContainer={container}>
-          <BasicAuthSection defaultValues={defaults} />
+          <BasicAuthSection defaultValues={{ ...defaults, ...values }} />
         </SettingsPageProvider>
       </QueryClientProvider>
     )
@@ -65,6 +76,112 @@ async function renderSettings(status: SystemStatus) {
   await router.load()
   render(<RouterProvider router={router} />)
 }
+
+beforeEach(() => {
+  vi.spyOn(api, 'put').mockResolvedValue({ data: { success: true } })
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined)
+})
+
+describe('Basic Authentication user ID allocation', () => {
+  it('shows the starting number and explains allocation for new users', async () => {
+    await renderSettings({})
+
+    const input = await screen.findByRole('spinbutton', {
+      name: 'New user ID starting number',
+    })
+    expect(input).toHaveValue(1)
+    expect(input).toHaveAccessibleDescription(
+      'New users receive IDs in ascending order from this number, skipping occupied IDs, including deleted users. Progress is preserved across restarts. Changing this number starts a new scan; saving the same number keeps progress. Existing user IDs stay unchanged.'
+    )
+  })
+
+  it.each([
+    ['1', 1],
+    ['10000', 10000],
+    ['2147483647', 2147483647],
+  ])('saving start %s sends its numeric value', async (value, expected) => {
+    await renderSettings({}, { UserIdStart: 2 })
+    const input = await screen.findByRole('spinbutton', {
+      name: 'New user ID starting number',
+    })
+
+    fireEvent.change(input, { target: { value } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/option/', {
+        key: 'UserIdStart',
+        value: expected,
+      })
+    )
+  })
+
+  it.each(['0', '-1', '1.5', '2147483648'])(
+    'invalid start %s shows a field error and prevents saving',
+    async (value) => {
+      await renderSettings({})
+      const input = await screen.findByRole('spinbutton', {
+        name: 'New user ID starting number',
+      })
+
+      fireEvent.change(input, { target: { value } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+      await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
+      expect(input).toHaveAccessibleDescription(
+        expect.stringContaining(
+          'User ID start must be an integer between 1 and 2147483647'
+        )
+      )
+      expect(api.put).not.toHaveBeenCalled()
+    }
+  )
+
+  it('saving an unchanged starting number makes no update', async () => {
+    await renderSettings({})
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+    )
+    expect(api.put).not.toHaveBeenCalled()
+  })
+
+  it.each(['business rejection', 'network rejection'])(
+    'a %s shows the server error and keeps the starting number editable',
+    async (failure) => {
+      if (failure === 'business rejection') {
+        vi.mocked(api.put).mockResolvedValueOnce({
+          data: { success: false, message: 'Setting could not be saved' },
+        })
+      } else {
+        vi.mocked(api.put).mockRejectedValueOnce(
+          new Error('Setting could not be saved')
+        )
+      }
+      await renderSettings({})
+      const input = await screen.findByRole('spinbutton', {
+        name: 'New user ID starting number',
+      })
+
+      fireEvent.change(input, { target: { value: '10000' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+      expect(
+        await screen.findByText('Setting could not be saved')
+      ).toBeVisible()
+      expect(input).toHaveValue(10000)
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+      await waitFor(() => expect(api.put).toHaveBeenCalledTimes(2))
+      await waitFor(() =>
+        expect(input).toHaveAttribute('aria-invalid', 'false')
+      )
+    }
+  )
+})
 
 describe('Basic Authentication email verification', () => {
   it('states that password sign-up always verifies email, with no switch to turn it off', async () => {
