@@ -62,6 +62,7 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { channelUsageDescription } from '@/features/pricing/lib/meow-catalog'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
@@ -88,6 +89,7 @@ import {
   transformApiKeyToFormDefaults,
 } from '../lib'
 import type { ApiKey } from '../types'
+import { useGroupPriceComparisons } from '../use-group-price-comparisons'
 import {
   ApiKeyGroupCombobox,
   type ApiKeyGroupOption,
@@ -161,16 +163,33 @@ export function ApiKeysMutateDrawer({
     staleTime: 0,
   })
 
+  const groupRatios = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(groupsData?.data ?? {}).map(([group, info]) => [
+          group,
+          info.ratio,
+        ])
+      ),
+    [groupsData]
+  )
+  const comparisons = useGroupPriceComparisons(groupRatios, open)
   const models = modelsData?.data || []
   const groups = useMemo<ApiKeyGroupOption[]>(
     () =>
       Object.entries(groupsData?.data || {}).map(([key, info]) => ({
         value: key,
         label: key,
-        desc: info.desc ? translateServerText(t, info.desc) : key,
+        desc: info.desc
+          ? channelUsageDescription({
+              description: translateServerText(t, info.desc),
+              ratio: typeof info.ratio === 'number' ? info.ratio : 1,
+            })
+          : key,
         ratio: info.ratio,
+        comparison: comparisons[key],
       })),
-    [groupsData, t]
+    [groupsData, comparisons, t]
   )
   const backendHasAuto = groups.some((g) => g.value === 'auto')
   const availableAutoGroupNames = useMemo(

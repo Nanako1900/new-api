@@ -25,12 +25,13 @@ import { requireServerSuccess } from '@/lib/server-error-message'
 import { getPricing, getPricingReference } from '../api'
 
 /** Optional comparison data must never delay or interrupt the real price list. */
-export function usePricingReference() {
+export function usePricingReference(enabled = true) {
   return useQuery({
     queryKey: ['pricing-reference'],
     queryFn: async () => requireServerSuccess(await getPricingReference()).data,
     staleTime: 5 * 60 * 1000,
     retry: false,
+    enabled,
     meta: { errorToast: false, errorPage: false },
   })
 }

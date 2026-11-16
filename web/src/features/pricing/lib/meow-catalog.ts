@@ -153,7 +153,9 @@ export function buildMeowCatalog(
 }
 
 /** Keep the channel's usage notes beside a separately formatted multiplier. */
-export function channelUsageDescription(channel: MeowChannel): string {
+export function channelUsageDescription(
+  channel: Pick<MeowChannel, 'description' | 'ratio'>
+): string {
   const prefix = channel.description.match(/^(\d+(?:\.\d+)?)\s*[x×]\s*/i)
   if (prefix && Number(prefix[1]) === channel.ratio) {
     return channel.description.slice(prefix[0].length).trim()

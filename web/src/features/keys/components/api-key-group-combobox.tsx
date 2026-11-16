@@ -34,13 +34,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import type { GroupReferencePriceComparison } from '@/features/pricing/lib/reference-price'
 import { useMediaQuery } from '@/hooks'
 import { cn } from '@/lib/utils'
 
 import {
   AUTO_GROUP_FRAME_CLASS_NAME,
   AutoGroupFlowBorder,
-  GroupRatioBadge,
+  ApiKeyGroupPriceBadge,
 } from './auto-group-visuals'
 
 export type ApiKeyGroupOption = {
@@ -48,6 +49,7 @@ export type ApiKeyGroupOption = {
   label: string
   desc?: string
   ratio?: number | string
+  comparison?: GroupReferencePriceComparison | null
 }
 
 type ApiKeyGroupComboboxProps = {
@@ -77,12 +79,10 @@ export function ApiKeyGroupCombobox({
     if (!search) return options
 
     return options.filter((option) => {
-      const ratioText = String(option.ratio ?? '').toLowerCase()
       return (
         option.value.toLowerCase().includes(search) ||
         option.label.toLowerCase().includes(search) ||
-        option.desc?.toLowerCase().includes(search) ||
-        ratioText.includes(search)
+        option.desc?.toLowerCase().includes(search)
       )
     })
   }, [options, searchValue])
@@ -118,7 +118,7 @@ export function ApiKeyGroupCombobox({
         {isAutoSelected && (
           <AutoGroupFlowBorder shouldReduceMotion={shouldReduceMotion} />
         )}
-        <span className='flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3'>
+        <span className='flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 sm:gap-3'>
           <span className='min-w-0'>
             <span className='block truncate font-medium'>
               {selectedOption?.label || placeholder || t('Select a group')}
@@ -129,9 +129,10 @@ export function ApiKeyGroupCombobox({
               </span>
             )}
           </span>
-          <span className='hidden sm:block'>
-            <GroupRatioBadge
+          <span className='max-w-full'>
+            <ApiKeyGroupPriceBadge
               ratio={selectedOption?.ratio}
+              comparison={selectedOption?.comparison}
               isAuto={isAutoSelected}
               shouldReduceMotion={shouldReduceMotion}
             />
@@ -167,7 +168,7 @@ export function ApiKeyGroupCombobox({
                     data-auto-group-effect={isAutoOption ? 'option' : undefined}
                     onSelect={() => handleSelect(option.value)}
                     className={cn(
-                      'data-[selected=true]:bg-muted items-start gap-3 rounded-lg px-3 py-3 transition-colors',
+                      'data-[selected=true]:bg-muted flex-wrap items-start gap-3 rounded-lg px-3 py-3 transition-colors',
                       isAutoOption &&
                         cn(
                           AUTO_GROUP_FRAME_CLASS_NAME,
@@ -197,11 +198,17 @@ export function ApiKeyGroupCombobox({
                         </span>
                       )}
                     </span>
-                    <GroupRatioBadge
-                      ratio={option.ratio}
-                      isAuto={isAutoOption}
-                      shouldReduceMotion={shouldReduceMotion}
-                    />
+                    {(isAutoOption ||
+                      (option.comparison && option.comparison.factor < 1)) && (
+                      <span className='max-w-full basis-full pl-7 sm:basis-auto sm:pl-0'>
+                        <ApiKeyGroupPriceBadge
+                          ratio={option.ratio}
+                          comparison={option.comparison}
+                          isAuto={isAutoOption}
+                          shouldReduceMotion={shouldReduceMotion}
+                        />
+                      </span>
+                    )}
                   </CommandItem>
                 )
               })}

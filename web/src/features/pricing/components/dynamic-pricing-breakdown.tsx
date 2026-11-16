@@ -101,6 +101,8 @@ type DynamicPricingBreakdownProps = {
   formatUnitPrice?: (value: number) => string
   /** Reuse request-rule details beside an already rendered group price table. */
   hideTierPrices?: boolean
+  /** Log prices already include the recorded request factors. */
+  hideRequestRules?: boolean
   /** Keep explicitly free reference prices visible without treating absence as zero. */
   showZeroPrices?: boolean
 }
@@ -308,6 +310,7 @@ export function DynamicPricingBreakdown({
   usageFacts,
   formatUnitPrice,
   hideTierPrices = false,
+  hideRequestRules = false,
   showZeroPrices = false,
 }: DynamicPricingBreakdownProps) {
   const { t, i18n } = useTranslation()
@@ -725,7 +728,7 @@ export function DynamicPricingBreakdown({
         </div>
       )}
 
-      {hasRules && (
+      {hasRules && !hideRequestRules && (
         <div>
           <div
             className={

@@ -20,6 +20,8 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { GroupBadge, GroupMultiplierBadge } from '@/components/group-badge'
+import { MeowReferencePriceBadge } from '@/features/pricing/components/meow/meow-reference-price-badge'
+import type { GroupReferencePriceComparison } from '@/features/pricing/lib/reference-price'
 import { cn } from '@/lib/utils'
 
 export type GroupRatio = number | string | null | undefined
@@ -71,14 +73,27 @@ export function AutoGroupFrame(props: AutoGroupFrameProps) {
   )
 }
 
-type GroupRatioBadgeProps = {
+type ApiKeyGroupPriceBadgeProps = {
   isAuto?: boolean
   ratio: GroupRatio
+  comparison?: GroupReferencePriceComparison | null
   shouldReduceMotion?: boolean
 }
 
-export function GroupRatioBadge(props: GroupRatioBadgeProps) {
+export function ApiKeyGroupPriceBadge(props: ApiKeyGroupPriceBadgeProps) {
   const { t } = useTranslation()
+
+  if (!props.isAuto) {
+    return (
+      <MeowReferencePriceBadge
+        comparison={props.comparison ?? null}
+        partial={
+          props.comparison != null &&
+          props.comparison.comparableModels < props.comparison.totalModels
+        }
+      />
+    )
+  }
 
   if (props.ratio === undefined || props.ratio === null || props.ratio === '') {
     return null
@@ -86,8 +101,7 @@ export function GroupRatioBadge(props: GroupRatioBadgeProps) {
 
   return (
     <GroupMultiplierBadge
-      ratio={typeof props.ratio === 'number' ? props.ratio : undefined}
-      label={typeof props.ratio === 'number' ? undefined : t('Auto')}
+      label={t('Auto')}
       className={cn(
         props.isAuto &&
           'overflow-visible rounded-md border-primary/30 bg-primary/10 text-primary'

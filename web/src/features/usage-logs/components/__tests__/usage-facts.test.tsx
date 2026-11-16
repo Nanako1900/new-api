@@ -21,6 +21,8 @@ import { render, screen, within } from '@testing-library/react'
 import i18next from 'i18next'
 import { afterEach, beforeAll, describe, expect, test } from 'vitest'
 
+import { useSystemConfigStore } from '@/stores/system-config-store'
+
 import type { UsageLog } from '../../data/schema'
 import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
@@ -91,8 +93,107 @@ function renderDetails(other: LogOtherData, promptTokens = 0): QueryClient {
 }
 
 function rowValue(label: string): string | null {
-  return screen.getByText(label).nextElementSibling?.textContent ?? null
+  return (
+    screen.getByText(label, { selector: 'span.text-muted-foreground' })
+      .nextElementSibling?.textContent ?? null
+  )
 }
+
+test('shows recorded channel prices in both breakdowns without exposing multipliers', () => {
+  const original = useSystemConfigStore.getState().config.currency
+  useSystemConfigStore.setState((state) => ({
+    config: {
+      ...state.config,
+      currency: { ...original, quotaDisplayType: 'CNY', usdExchangeRate: 1 },
+    },
+  }))
+  const queryClient = renderDetails({
+    billing_mode: 'tiered_expr',
+    expr_b64: Buffer.from(
+      'tier("0_272k", p * 10 + c * 50 + cr * 1 + cc * 12.5 + cc12h * 25)'
+    ).toString('base64'),
+    matched_tier: '0_272k',
+    group_ratio: 0.3,
+    cache_tokens: 10,
+  })
+  try {
+    expect(rowValue('Input')).toBe('¥3/M')
+    expect(rowValue('Output')).toBe('¥15/M')
+    expect(rowValue('Cache Read')).toBe('¥0.3/M')
+    expect(rowValue('Cache Write')).toBe('¥3.75/M')
+    expect(rowValue('Cache Write (12h)')).toBe('¥7.5/M')
+    expect(screen.getAllByText('¥3').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('¥15').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Group Ratio')).not.toBeInTheDocument()
+    expect(screen.queryByText('0.3000x')).not.toBeInTheDocument()
+    expect(rowValue('Total Cost')).toBe('¥0.01')
+  } finally {
+    queryClient.clear()
+    useSystemConfigStore.setState((state) => ({
+      config: { ...state.config, currency: original },
+    }))
+  }
+})
+
+test.each([0, 0.2])(
+  'uses the recorded exclusive group price %s and only matched request rules',
+  (ratio) => {
+    const queryClient = renderDetails({
+      billing_mode: 'tiered_expr',
+      expr_b64: Buffer.from(
+        '(tier("base", p * 10 + c * 50)) * (param("fast") == true ? 2 : 1)'
+      ).toString('base64'),
+      matched_tier: 'base',
+      group_ratio: 0.3,
+      user_group_ratio: ratio,
+      request_rules: [
+        { cond: 'param("fast") == true', multiplier: 2, matched: true },
+        { cond: 'param("other") == true', multiplier: 5, matched: false },
+      ],
+    })
+    expect(rowValue('Input')).toBe(`$${ratio * 20}/M`)
+    expect(rowValue('Output')).toBe(`$${ratio * 100}/M`)
+    expect(screen.getAllByText(`$${ratio * 20}`).length).toBeGreaterThan(0)
+    expect(screen.queryByText('User Exclusive Ratio')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Conditional multipliers')
+    ).not.toBeInTheDocument()
+    queryClient.clear()
+  }
+)
+
+test('does not invent final unit prices when an older conditional log has no rule trace', () => {
+  const queryClient = renderDetails({
+    billing_mode: 'tiered_expr',
+    expr_b64: Buffer.from(
+      '(tier("base", p * 10 + c * 50)) * (param("fast") == true ? 2 : 1)'
+    ).toString('base64'),
+    matched_tier: 'base',
+    group_ratio: 0.3,
+  })
+  expect(rowValue('Input')).toBe('—/M')
+  expect(rowValue('Output')).toBe('—/M')
+  expect(rowValue('Total Cost')).toBe('$0.01')
+  expect(screen.queryByText('Conditional multipliers')).not.toBeInTheDocument()
+  queryClient.clear()
+})
+
+test('keeps per-image prices per image while applying the historical group price', () => {
+  const queryClient = renderDetails({
+    billing_mode: 'tiered_expr',
+    expr_b64: Buffer.from('tier("image", fixed(0.2)) * image_count').toString(
+      'base64'
+    ),
+    matched_tier: 'image',
+    billing_unit: 'request',
+    fixed_price: 0.2,
+    image_count: 4,
+    group_ratio: 0.3,
+  })
+  expect(rowValue('Per image')).toBe('$0.06/image')
+  expect(screen.getAllByText('$0.06/image').length).toBeGreaterThan(1)
+  queryClient.clear()
+})
 
 test('shows the recorded request and response models in log details', () => {
   const queryClient = renderDetails({

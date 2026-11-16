@@ -30,6 +30,44 @@ export type ReferencePriceComparison = {
   uniform: boolean
 }
 
+export type GroupReferencePriceComparison = ReferencePriceComparison & {
+  comparableModels: number
+  totalModels: number
+}
+
+/** A conservative comparison across the models actually available in one group. */
+export function getGroupReferencePriceComparison(
+  models: PricingModel[],
+  group: string,
+  groupRatio: number,
+  reference: PricingReference | undefined,
+  currency: CurrencyConfig
+): GroupReferencePriceComparison | null {
+  const available = models.filter((model) =>
+    model.enable_groups?.some((name) => name === group || name === 'all')
+  )
+  const comparisons = available.flatMap((model) => {
+    const comparison = getReferencePriceComparison(
+      model,
+      groupRatio,
+      reference,
+      currency
+    )
+    return comparison ? [comparison] : []
+  })
+  if (!comparisons.length) return null
+  const factor = Math.max(...comparisons.map((entry) => entry.factor))
+  return {
+    factor,
+    uniform: comparisons.every(
+      (entry) => entry.uniform && Math.abs(entry.factor - factor) < 1e-9
+    ),
+    priceCount: comparisons.reduce((sum, entry) => sum + entry.priceCount, 0),
+    comparableModels: comparisons.length,
+    totalModels: available.length,
+  }
+}
+
 /** Preserve the billing quantities, conditions, order and units; ignore only
  * tier names and unit-price coefficients. This also distinguishes p from
  * max(len - ai, 0), which the display parser labels with the same price field. */

@@ -32,7 +32,7 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { API_KEY_STATUSES } from '../constants'
 import type { ApiKey } from '../types'
-import { ApiKeyGroupCell } from './api-key-group-cell'
+import { PricedApiKeyGroupCell } from './api-key-group-cell'
 import { ApiKeyQuotaCell } from './api-key-quota-cell'
 import {
   ApiKeyActivityCell,
@@ -155,7 +155,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
           const apiKey = row.original
           const group = row.getValue('group') as string
           return (
-            <ApiKeyGroupCell
+            <PricedApiKeyGroupCell
               group={group}
               ratio={groupRatios[group]}
               crossGroupRetry={apiKey.cross_group_retry}

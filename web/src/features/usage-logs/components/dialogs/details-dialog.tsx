@@ -76,6 +76,7 @@ import {
   parseAuditLine,
   decodeBillingExprB64,
   getTieredBillingSummary,
+  formatLogUnitPrice,
   hasAnyCacheTokens,
   isViolationFeeLog,
   getFirstResponseTimeColor,
@@ -117,11 +118,6 @@ function timingTextColorClass(
   if (variant === 'success') return 'text-emerald-600'
   if (variant === 'warning') return 'text-amber-600'
   return 'text-rose-600'
-}
-
-function formatRatio(ratio: number | undefined): string {
-  if (ratio == null) return '-'
-  return ratio.toFixed(4)
 }
 
 function getUsageBillingPathLabel(
@@ -186,7 +182,9 @@ function BillingBreakdown(props: {
 
   const rows: Array<{ label: string; value: string }> = []
   const priceOpts = { digitsLarge: 4, digitsSmall: 6, abbreviate: false }
-  const fmtPrice = (usd: number) => formatBillingCurrencyFromUSD(usd, priceOpts)
+  const fmtPrice = (usd: number) => formatLogUnitPrice(usd, other)
+  const fmtSurcharge = (usd: number) =>
+    formatBillingCurrencyFromUSD(usd, priceOpts)
   const baseInputUSD = other.model_ratio != null ? other.model_ratio * 2.0 : 0
 
   if (isTieredExpr) {
@@ -235,16 +233,6 @@ function BillingBreakdown(props: {
         value: `${fmtPrice(baseInputUSD * other.completion_ratio)}/M`,
       })
     }
-  }
-
-  const userGR = other.user_group_ratio
-  const isUserGR = userGR != null && Number.isFinite(userGR) && userGR !== -1
-  const effectiveGR = isUserGR ? userGR : other.group_ratio
-  if (effectiveGR != null && Number.isFinite(effectiveGR)) {
-    rows.push({
-      label: isUserGR ? t('User Exclusive Ratio') : t('Group Ratio'),
-      value: `${formatRatio(effectiveGR)}x`,
-    })
   }
 
   if (
@@ -327,28 +315,28 @@ function BillingBreakdown(props: {
   if (other.web_search && other.web_search_call_count) {
     rows.push({
       label: t('Web Search'),
-      value: `${other.web_search_call_count}x${other.web_search_price ? ` (${fmtPrice(other.web_search_price)})` : ''}`,
+      value: `${other.web_search_call_count}x${other.web_search_price ? ` (${fmtSurcharge(other.web_search_price)})` : ''}`,
     })
   }
 
   if (other.file_search && other.file_search_call_count) {
     rows.push({
       label: t('File Search'),
-      value: `${other.file_search_call_count}x${other.file_search_price ? ` (${fmtPrice(other.file_search_price)})` : ''}`,
+      value: `${other.file_search_call_count}x${other.file_search_price ? ` (${fmtSurcharge(other.file_search_price)})` : ''}`,
     })
   }
 
   if (other.image_generation_call && other.image_generation_call_price) {
     rows.push({
       label: t('Image Generation'),
-      value: fmtPrice(other.image_generation_call_price),
+      value: fmtSurcharge(other.image_generation_call_price),
     })
   }
 
   if (other.audio_input_seperate_price && other.audio_input_price) {
     rows.push({
       label: t('Audio Input Price'),
-      value: fmtPrice(other.audio_input_price),
+      value: fmtSurcharge(other.audio_input_price),
     })
   }
 
@@ -1271,6 +1259,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
             )}
             <DynamicPricingBreakdown
               compact
+              showZeroPrices
+              hideRequestRules
+              formatUnitPrice={(price) => formatLogUnitPrice(price, other)}
               billingExpr={decodeBillingExprB64(other.expr_b64)}
               matchedTierLabel={other.matched_tier}
               matchedBillingUnit={other.billing_unit}

@@ -36,7 +36,7 @@ import {
   ApiKeyGroupCombobox,
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
-import { GroupRatioBadge } from './auto-group-visuals'
+import { ApiKeyGroupPriceBadge } from './auto-group-visuals'
 
 type AutoGroupOrderEditorProps = Omit<ComponentProps<'div'>, 'onChange'> & {
   value: string[]
@@ -189,7 +189,10 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
                     {option.desc}
                   </span>
                 )}
-                <GroupRatioBadge ratio={option.ratio} />
+                <ApiKeyGroupPriceBadge
+                  ratio={option.ratio}
+                  comparison={option.comparison}
+                />
               </span>
             </li>
           ))}

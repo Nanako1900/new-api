@@ -24,6 +24,7 @@ import {
   splitBillingExprAndRequestRules,
   type ParsedTier,
 } from '@/features/pricing/lib/billing-expr'
+import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { translateServerText } from '@/lib/server-error-message'
 
 import type { UsageLog } from '../data/schema'
@@ -340,6 +341,39 @@ export function hasAnyCacheTokens(
     (other.cache_creation_tokens_1h || 0) > 0 ||
     (other.cache_creation_tokens_12h || 0) > 0
   )
+}
+
+/** The effective group coefficient recorded for this request, including free groups. */
+export function getLogGroupRatio(other: LogOtherData): number | null {
+  const exclusive = other.user_group_ratio
+  const ratio =
+    exclusive != null && exclusive !== -1 ? exclusive : (other.group_ratio ?? 1)
+  return Number.isFinite(ratio) && ratio >= 0 ? ratio : null
+}
+
+/** Format historical unit prices without consulting today's model/group configuration. */
+export function formatLogUnitPrice(price: number, other: LogOtherData): string {
+  let multiplier = getLogGroupRatio(other)
+  if (multiplier === null || !Number.isFinite(price) || price < 0) return '—'
+  if (other.billing_mode === 'tiered_expr') {
+    const split = splitBillingExprAndRequestRules(
+      decodeBillingExprB64(other.expr_b64)
+    )
+    // Older logs without a rule trace cannot tell us which request factors fired.
+    if (split.requestRuleExpr && other.request_rules == null) return '—'
+    for (const rule of other.request_rules ?? []) {
+      if (!rule.matched) continue
+      if (!Number.isFinite(rule.multiplier) || rule.multiplier < 0) return '—'
+      multiplier *= rule.multiplier
+    }
+  }
+  const amount = price * multiplier
+  if (!Number.isFinite(amount)) return '—'
+  return formatBillingCurrencyFromUSD(amount, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
 }
 
 export function getTieredBillingSummary(

@@ -1502,6 +1502,8 @@
     "Community plugins": "Плагины сообщества",
     "Community plugins are published and maintained by their authors. Check the source before you install.": "Плагины сообщества публикуют и поддерживают их авторы. Перед установкой посмотрите исходный код.",
     "Compact": "Компактная",
+    "Comparable models: about {{off}}% below reference": "Сопоставимые модели: примерно на {{off}}% дешевле",
+    "Comparable models: at least {{off}}% below reference": "Сопоставимые модели: минимум на {{off}}% дешевле",
     "Compare each vendor's token share across the past few weeks": "Сравните долю токенов каждого поставщика за последние несколько недель",
     "Compare each vendor's token share across the past year": "Сравните долю токенов каждого поставщика за последний год",
     "Compare each vendor's token share over the past 24 hours": "Сравните долю токенов каждого поставщика за последние 24 часа",
