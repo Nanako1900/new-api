@@ -115,14 +115,15 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 
 	// 先创建订单记录，使用产品配置的金额和充值额度
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          selectedProduct.Quota, // 充值额度
-		Money:           selectedProduct.Price, // 支付金额
-		TradeNo:         referenceId,
-		PaymentMethod:   model.PaymentMethodCreem,
-		PaymentProvider: model.PaymentProviderCreem,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:            id,
+		Amount:            selectedProduct.Quota, // 充值额度
+		Money:             selectedProduct.Price, // 支付金额
+		TradeNo:           referenceId,
+		PaymentMethod:     model.PaymentMethodCreem,
+		PaymentProvider:   model.PaymentProviderCreem,
+		AffiliateCurrency: selectedProduct.Currency,
+		CreateTime:        time.Now().Unix(),
+		Status:            common.TopUpStatusPending,
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -356,7 +357,7 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 		logger.LogWarn(c.Request.Context(), common.LogText("Creem callback customer name is empty trade_no=%s creem_order_id=%s", referenceId, event.Object.Order.Id))
 	}
 
-	err := model.RechargeCreem(referenceId, customerEmail, customerName, c.ClientIP())
+	err := model.RechargeCreem(referenceId, customerEmail, customerName, c.ClientIP(), model.AffiliatePayment{Amount: decimal.NewFromInt(int64(event.Object.Order.AmountPaid)).Sub(decimal.NewFromInt(int64(event.Object.Order.TaxAmount))).Div(decimal.NewFromInt(100)).StringFixed(2), Currency: event.Object.Order.Currency})
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Creem top-up processing failed trade_no=%s creem_order_id=%s client_ip=%s error=%q", referenceId, event.Object.Order.Id, c.ClientIP(), err.Error()))
 		c.AbortWithStatus(http.StatusInternalServerError)

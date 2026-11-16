@@ -285,5 +285,6 @@ export interface BillingHistoryResponse {
  * Complete order request (admin only)
  */
 export interface CompleteOrderRequest {
+  payment?: { amount: string; currency: string }
   trade_no: string
 }

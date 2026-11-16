@@ -6,10 +6,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -386,4 +388,123 @@ func TestAdminUserVerificationPolicy(t *testing.T) {
 		require.NoError(t, model.DB.Model(&model.AuthFlow{}).Count(&flows).Error)
 		assert.Zero(t, flows)
 	})
+}
+
+func TestAdminAffiliateAuthorization(t *testing.T) {
+	for _, kind := range []string{"settings", "withdrawal", "reversal"} {
+		for _, scenario := range []string{"missing", "mismatch", "expired", "replay", "insufficient role"} {
+			t.Run(kind+"/"+scenario, func(t *testing.T) {
+				operator, identity, target := setupAdminUserTest(t)
+				require.NoError(t, model.DB.AutoMigrate(&model.AffiliateAccount{}, &model.AffiliateOrder{}, &model.AffiliateEntry{}, &model.AffiliateChange{}, &model.AffiliateGraphLock{}))
+				payment := operation_setting.GetPaymentSetting()
+				original := *payment
+				payment.ComplianceConfirmed, payment.ComplianceTermsVersion = true, operation_setting.CurrentComplianceTermsVersion
+				t.Cleanup(func() { *payment = original })
+				require.NoError(t, model.DB.Create(&model.AffiliateAccount{UserID: target.Id, BalanceCents: 1000, EarnedCents: 1000}).Error)
+				require.NoError(t, model.DB.Create(&model.AffiliateOrder{TradeNo: "verified-recharge", BuyerID: operator.Id, InviterID: target.Id, RewardCents: 200, SettledAt: 1}).Error)
+				action := model.AffiliateAction{UserID: target.Id, Action: kind}
+				switch kind {
+				case "settings":
+					action.InviterID, action.RateBPS = operator.Id, 1250
+				case "withdrawal":
+					action.AmountCents, action.RequestID, action.Note = 1000, "e90054d8-1c38-4489-a212-5f8869c6d9ce", "Bank transfer 123"
+				case "reversal":
+					action.TradeNo, action.Note = "verified-recharge", "Refund confirmed"
+				}
+				context, err := common.Marshal(action.VerificationContext())
+				require.NoError(t, err)
+				operation := service.VerificationOperation{Scope: service.VerificationScopeAdminUserAffiliate, Context: context}
+				proof := ""
+				if scenario != "missing" {
+					proof = issueSecurityEnrollmentProof(t, identity, operation, service.VerificationMethodPassword)
+				}
+				wantCode := "SECURITY_PROOF_REQUIRED"
+				role := common.RoleRootUser
+				switch scenario {
+				case "mismatch":
+					wantCode = "SECURITY_PROOF_CONTEXT_MISMATCH"
+					switch kind {
+					case "settings":
+						action.RateBPS++
+					case "withdrawal":
+						action.AmountCents--
+					case "reversal":
+						action.Note = "Different reason"
+					}
+				case "expired":
+					wantCode = "SECURITY_PROOF_EXPIRED"
+					require.NoError(t, model.DB.Model(&model.AuthFlow{}).Where("purpose = ?", model.AuthFlowPurposeSecurityProof).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+				case "insufficient role":
+					role = common.RoleCommonUser
+				case "replay":
+					wantCode = "SECURITY_PROOF_CONSUMED"
+				}
+				body, err := common.Marshal(action)
+				require.NoError(t, err)
+				params := gin.Params{{Key: "id", Value: fmt.Sprint(target.Id)}}
+				if scenario == "replay" {
+					response := adminUserRequest(http.MethodPost, "/api/user/:id/affiliate", string(body), proof, identity, role, params, ManageAffiliate)
+					require.True(t, decodeSecurityEnrollmentResponse(t, response).Success, response.Body.String())
+					var audit model.AuditLog
+					require.NoError(t, model.LOG_DB.Where("action = ?", "user.affiliate."+kind).Last(&audit).Error)
+					auditJSON, err := common.Marshal(audit)
+					require.NoError(t, err)
+					assert.NotContains(t, string(auditJSON), proof)
+				}
+				response := adminUserRequest(http.MethodPost, "/api/user/:id/affiliate", string(body), proof, identity, role, params, ManageAffiliate)
+				result := decodeSecurityEnrollmentResponse(t, response)
+				assert.Equal(t, http.StatusForbidden, response.Code)
+				assert.False(t, result.Success)
+				if scenario != "insufficient role" {
+					assert.Equal(t, wantCode, result.Code)
+				}
+				summary, err := model.GetAffiliateSummary(target.Id)
+				require.NoError(t, err)
+				if scenario == "replay" {
+					switch kind {
+					case "settings":
+						assert.Equal(t, 1250, summary.RateBPS)
+						assert.Equal(t, operator.Id, summary.InviterID)
+					case "withdrawal":
+						assert.Zero(t, summary.BalanceCents)
+						assert.EqualValues(t, 1000, summary.PaidCents)
+					case "reversal":
+						assert.EqualValues(t, 800, summary.BalanceCents)
+						assert.EqualValues(t, 200, summary.ReversedCents)
+					}
+				} else {
+					assert.Zero(t, summary.RateBPS)
+					assert.Zero(t, summary.InviterID)
+					assert.EqualValues(t, 1000, summary.BalanceCents)
+					assert.Zero(t, summary.PaidCents)
+					assert.Zero(t, summary.ReversedCents)
+				}
+			})
+		}
+	}
+}
+
+func TestAffiliateSelfReadIgnoresForeignQueryID(t *testing.T) {
+	operator, identity, target := setupAdminUserTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.AffiliateAccount{}))
+	require.NoError(t, model.DB.Create(&model.AffiliateAccount{UserID: operator.Id, BalanceCents: 123}).Error)
+	require.NoError(t, model.DB.Create(&model.AffiliateAccount{UserID: target.Id, BalanceCents: 999}).Error)
+	response := adminUserRequest(http.MethodGet, fmt.Sprintf("/api/user/affiliate?user_id=%d", target.Id), "", "", identity, common.RoleCommonUser, nil, GetAffiliate)
+	result := decodeSecurityEnrollmentResponse(t, response)
+	require.True(t, result.Success, response.Body.String())
+	var summary model.AffiliateSummary
+	require.NoError(t, common.Unmarshal(result.Data, &summary))
+	assert.Equal(t, operator.Id, summary.UserID)
+	assert.EqualValues(t, 123, summary.BalanceCents)
+}
+
+func TestAffiliateProofRejectsMissingOrUnknownFields(t *testing.T) {
+	for _, context := range []string{
+		`{"user_id":1,"action":"settings","inviter_id":0,"unknown":0}`,
+		`{"user_id":1,"action":"settings","inviter_id":null,"rate_bps":0}`,
+		`{"user_id":1,"action":"settings","inviter_id":0,"rate_bps":1.5}`,
+	} {
+		_, err := service.BindVerificationOperation(service.VerificationOperation{Scope: service.VerificationScopeAdminUserAffiliate, Context: []byte(context)})
+		assert.ErrorIs(t, err, service.ErrVerificationContextInvalid)
+	}
 }

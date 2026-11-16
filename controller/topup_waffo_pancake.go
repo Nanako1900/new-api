@@ -379,14 +379,15 @@ func RequestWaffoPancakePay(c *gin.Context) {
 
 	tradeNo := fmt.Sprintf("WAFFO_PANCAKE-%d-%d-%s", id, time.Now().UnixMilli(), randstr.String(6))
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          normalizeWaffoPancakeTopUpAmount(req.Amount),
-		Money:           payMoney,
-		TradeNo:         tradeNo,
-		PaymentMethod:   model.PaymentMethodWaffoPancake,
-		PaymentProvider: model.PaymentProviderWaffoPancake,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:            id,
+		Amount:            normalizeWaffoPancakeTopUpAmount(req.Amount),
+		Money:             payMoney,
+		TradeNo:           tradeNo,
+		PaymentMethod:     model.PaymentMethodWaffoPancake,
+		PaymentProvider:   model.PaymentProviderWaffoPancake,
+		AffiliateCurrency: "USD",
+		CreateTime:        time.Now().Unix(),
+		Status:            common.TopUpStatusPending,
 	}
 	if err := topUp.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create top-up order user_id=%d trade_no=%s amount=%d error=%q", id, tradeNo, req.Amount, err.Error()))
@@ -523,7 +524,7 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
 
-	if err := model.RechargeWaffoPancake(tradeNo); err != nil {
+	if err := model.RechargeWaffoPancake(tradeNo, waffoPancakeCashbackPayment(event.Data)); err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake top-up processing failed trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
 		c.String(http.StatusInternalServerError, "retry")
 		return
@@ -531,4 +532,20 @@ func WaffoPancakeWebhook(c *gin.Context) {
 
 	logger.LogInfo(c.Request.Context(), common.LogText("Waffo Pancake top-up succeeded trade_no=%s event_id=%s order_id=%s client_ip=%s", tradeNo, event.ID, event.Data.OrderID, c.ClientIP()))
 	c.String(http.StatusOK, "OK")
+}
+
+// Pancake payment-event amounts include tax. Subtotal may be the list price
+// before discounts, so derive the cashback principal from the charged total.
+func waffoPancakeCashbackPayment(data service.WaffoPancakeWebhookData) model.AffiliatePayment {
+	payment := model.AffiliatePayment{Currency: data.Currency}
+	if len(data.Amount) > 40 || len(data.TaxAmount) > 40 {
+		return payment
+	}
+	total, totalErr := decimal.NewFromString(data.Amount)
+	tax, taxErr := decimal.NewFromString(data.TaxAmount)
+	if totalErr != nil || taxErr != nil || total.Exponent() < -2 || tax.Exponent() < -2 || total.Exponent() > 8 || tax.Exponent() > 8 || total.IsNegative() || tax.IsNegative() || total.LessThan(tax) {
+		return payment
+	}
+	payment.Amount = total.Sub(tax).String()
+	return payment
 }

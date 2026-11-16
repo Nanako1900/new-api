@@ -46,6 +46,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { AffiliateAdminDialog } from '@/features/affiliate/components/affiliate-admin-dialog'
 import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -87,6 +88,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
+  const [affiliateDialogOpen, setAffiliateDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
 
   const handleEdit = () => {
@@ -275,6 +277,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuShortcut>
         </DropdownMenuItem>
 
+        <DropdownMenuItem onClick={() => setAffiliateDialogOpen(true)}>
+          {t('Manage referrals')}
+        </DropdownMenuItem>
+
         <DropdownMenuSeparator />
 
         <DropdownMenuItem
@@ -347,6 +353,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         userId={user.id}
         onUnbindSuccess={triggerRefresh}
       />
+
+      {affiliateDialogOpen && (
+        <AffiliateAdminDialog
+          userId={user.id}
+          username={user.username}
+          open={affiliateDialogOpen}
+          onOpenChange={setAffiliateDialogOpen}
+        />
+      )}
 
       <UserSubscriptionsDialog
         open={subscriptionsDialogOpen}

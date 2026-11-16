@@ -20,18 +20,9 @@ import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -81,13 +72,20 @@ export function BillingHistoryDialog({
   } = useBillingHistory()
 
   const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
+  const [verifiedAmount, setVerifiedAmount] = useState('')
+  const [verifiedCurrency, setVerifiedCurrency] = useState('CNY')
   const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
 
   const totalPages = Math.ceil(total / pageSize)
 
   const handleConfirmComplete = async () => {
     if (confirmTradeNo) {
-      const success = await handleCompleteOrder(confirmTradeNo)
+      const success = await handleCompleteOrder(
+        confirmTradeNo,
+        verifiedAmount
+          ? { amount: verifiedAmount, currency: verifiedCurrency }
+          : undefined
+      )
       if (success) {
         setConfirmTradeNo(null)
       }
@@ -271,7 +269,11 @@ export function BillingHistoryDialog({
                           <Button
                             size='sm'
                             variant='outline'
-                            onClick={() => setConfirmTradeNo(record.trade_no)}
+                            onClick={() => {
+                              setVerifiedAmount('')
+                              setVerifiedCurrency('CNY')
+                              setConfirmTradeNo(record.trade_no)
+                            }}
                             disabled={completing}
                           >
                             {t('Complete Order')}
@@ -322,33 +324,49 @@ export function BillingHistoryDialog({
         </div>
       </Dialog>
 
-      {/* Confirm Complete Order Dialog */}
-      <AlertDialog
+      <ConfirmDialog
         open={!!confirmTradeNo}
-        onOpenChange={(open) => !open && setConfirmTradeNo(null)}
+        onOpenChange={(open) => !open && !completing && setConfirmTradeNo(null)}
+        title={t('Complete Order')}
+        desc={t(
+          'Are you sure you want to manually complete this order? The user will be credited with the corresponding quota.'
+        )}
+        handleConfirm={handleConfirmComplete}
+        isLoading={completing}
+        disabled={!!verifiedAmount && !/^\d+(\.\d{1,2})?$/.test(verifiedAmount)}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('Complete Order')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t(
-                'Are you sure you want to manually complete this order? The user will be credited with the corresponding quota.'
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={completing}>
-              {t('Cancel')}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleConfirmComplete}
-              disabled={completing}
-            >
-              {completing ? t('Processing...') : t('Confirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        <div className='space-y-3'>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'For cashback orders, enter the verified payment amount excluding tax, including any separately charged processing fee.'
+            )}
+          </p>
+          <Label htmlFor='verified-payment'>
+            {t('Verified payment amount')}
+          </Label>
+          <Input
+            id='verified-payment'
+            inputMode='decimal'
+            value={verifiedAmount}
+            onChange={(event) => setVerifiedAmount(event.target.value)}
+            disabled={completing}
+          />
+          <Label htmlFor='verified-currency'>{t('Payment currency')}</Label>
+          <Select
+            value={verifiedCurrency}
+            onValueChange={(value) => setVerifiedCurrency(value ?? 'CNY')}
+            disabled={completing}
+          >
+            <SelectTrigger id='verified-currency'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='CNY'>CNY</SelectItem>
+              <SelectItem value='USD'>USD</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </ConfirmDialog>
     </>
   )
 }
