@@ -21,6 +21,7 @@ import { describe, expect, test } from 'vitest'
 import { PAYMENT_TYPES } from '../constants'
 import {
   dispatchSelectedPayment,
+  getDefaultPaymentType,
   isStripePayment,
   isWaffoPayment,
   isWaffoPancakePayment,
@@ -82,4 +83,24 @@ describe('payment dispatch', () => {
     expect(success).toBe(false)
     expect(called).toBe(false)
   })
+})
+
+test('starts in CNY recharge mode when GBP Stripe checkout is enabled', () => {
+  const info = {
+    enable_online_topup: true,
+    enable_stripe_topup: true,
+    stripe_gbp_enabled: true,
+    pay_methods: [
+      { name: 'Alipay', type: 'alipay' },
+      { name: 'Stripe', type: 'stripe' },
+    ],
+    min_topup: 1,
+    stripe_min_topup: 1,
+    amount_options: [100],
+    discount: {},
+  }
+  expect(getDefaultPaymentType(info)).toBe('stripe')
+  expect(getDefaultPaymentType({ ...info, stripe_gbp_enabled: false })).toBe(
+    'alipay'
+  )
 })

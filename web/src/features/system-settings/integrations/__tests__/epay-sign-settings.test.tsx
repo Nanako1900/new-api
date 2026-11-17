@@ -49,6 +49,12 @@ const defaults: PaymentValues = {
   StripeUnitPrice: 8,
   StripeMinTopUp: 1,
   StripePromotionCodesEnabled: false,
+  StripeGBPEnabled: false,
+  StripeGBPExchangeRate: 0,
+  StripeFeeFixedGBP: 0.2,
+  StripeFeeEnabled: false,
+  StripeFeePercent: 2.9,
+  StripeFeeFixedCNY: 0,
   CreemApiKey: '',
   CreemWebhookSecret: '',
   CreemTestMode: false,
@@ -196,4 +202,39 @@ describe('Epay signature type', () => {
     )
     expect(request).toHaveBeenCalledTimes(1)
   })
+})
+
+it('requires an exchange rate and saves GBP conversion settings before enabling checkout', async () => {
+  const request = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = await openEpayTab()
+  await user.click(screen.getByRole('tab', { name: 'Stripe' }))
+  await user.click(
+    screen.getByRole('switch', { name: 'Collect Stripe payments in GBP' })
+  )
+  expect(
+    screen.getByLabelText('Unit price (local currency / USD)')
+  ).toBeDisabled()
+  expect(
+    screen.queryByLabelText('Fixed processing fee (CNY)')
+  ).not.toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Save all settings' }))
+  expect(
+    await screen.findByText('Set a positive CNY per GBP exchange rate')
+  ).toBeVisible()
+  expect(request).not.toHaveBeenCalled()
+  const rate = screen.getByLabelText('CNY per GBP')
+  await user.clear(rate)
+  await user.type(rate, '8.4')
+  await user.click(
+    screen.getByRole('switch', { name: 'Stripe processing fee' })
+  )
+  await user.click(screen.getByRole('button', { name: 'Save all settings' }))
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(3))
+  expect(request.mock.calls.map((call) => call[1])).toEqual([
+    { key: 'payment_setting.stripe_gbp_exchange_rate', value: 8.4 },
+    { key: 'payment_setting.stripe_fee_enabled', value: true },
+    { key: 'payment_setting.stripe_gbp_enabled', value: true },
+  ])
 })

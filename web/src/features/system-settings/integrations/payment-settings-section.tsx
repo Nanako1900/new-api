@@ -161,6 +161,17 @@ const paymentSchema = z.object({
   StripeUnitPrice: z.coerce.number().min(0),
   StripeMinTopUp: z.coerce.number().min(0),
   StripePromotionCodesEnabled: z.boolean(),
+  StripeGBPEnabled: z.boolean().default(false),
+  StripeGBPExchangeRate: z.coerce
+    .number()
+    .finite()
+    .min(0)
+    .max(1000000)
+    .default(0),
+  StripeFeeFixedGBP: z.coerce.number().finite().min(0).max(100000).default(0.2),
+  StripeFeeEnabled: z.boolean(),
+  StripeFeePercent: z.coerce.number().min(0).max(100),
+  StripeFeeFixedCNY: z.coerce.number().min(0).max(100000),
   CreemApiKey: z.string(),
   CreemWebhookSecret: z.string(),
   CreemTestMode: z.boolean(),
@@ -431,6 +442,15 @@ export function PaymentSettingsSection({
   }, [defaultsSignature, form])
 
   const onSubmit = async (values: PaymentFormValues) => {
+    if (
+      values.StripeGBPEnabled &&
+      !(values.StripeGBPExchangeRate >= 0.000001)
+    ) {
+      form.setError('StripeGBPExchangeRate', {
+        message: t('Set a positive CNY per GBP exchange rate'),
+      })
+      return
+    }
     const sanitized = {
       PayAddress: removeTrailingSlash(values.PayAddress),
       EpayId: values.EpayId.trim(),
@@ -450,6 +470,12 @@ export function PaymentSettingsSection({
       StripeUnitPrice: values.StripeUnitPrice,
       StripeMinTopUp: values.StripeMinTopUp,
       StripePromotionCodesEnabled: values.StripePromotionCodesEnabled,
+      StripeGBPEnabled: values.StripeGBPEnabled ?? false,
+      StripeGBPExchangeRate: values.StripeGBPExchangeRate ?? 0,
+      StripeFeeFixedGBP: values.StripeFeeFixedGBP ?? 0.2,
+      StripeFeeEnabled: values.StripeFeeEnabled,
+      StripeFeePercent: values.StripeFeePercent,
+      StripeFeeFixedCNY: values.StripeFeeFixedCNY,
       CreemApiKey: values.CreemApiKey.trim(),
       CreemWebhookSecret: values.CreemWebhookSecret.trim(),
       CreemTestMode: values.CreemTestMode,
@@ -498,6 +524,12 @@ export function PaymentSettingsSection({
       StripeMinTopUp: initialRef.current.StripeMinTopUp,
       StripePromotionCodesEnabled:
         initialRef.current.StripePromotionCodesEnabled,
+      StripeGBPEnabled: initialRef.current.StripeGBPEnabled ?? false,
+      StripeGBPExchangeRate: initialRef.current.StripeGBPExchangeRate ?? 0,
+      StripeFeeFixedGBP: initialRef.current.StripeFeeFixedGBP ?? 0.2,
+      StripeFeeEnabled: initialRef.current.StripeFeeEnabled,
+      StripeFeePercent: initialRef.current.StripeFeePercent,
+      StripeFeeFixedCNY: initialRef.current.StripeFeeFixedCNY,
       CreemApiKey: initialRef.current.CreemApiKey.trim(),
       CreemWebhookSecret: initialRef.current.CreemWebhookSecret.trim(),
       CreemTestMode: initialRef.current.CreemTestMode,
@@ -644,6 +676,20 @@ export function PaymentSettingsSection({
         key: 'StripePromotionCodesEnabled',
         value: sanitized.StripePromotionCodesEnabled,
       })
+    }
+
+    for (const [field, key] of [
+      ['StripeGBPExchangeRate', 'payment_setting.stripe_gbp_exchange_rate'],
+      ['StripeFeeFixedGBP', 'payment_setting.stripe_fee_fixed_gbp'],
+      ['StripeFeePercent', 'payment_setting.stripe_fee_percent'],
+      ['StripeFeeFixedCNY', 'payment_setting.stripe_fee_fixed_cny'],
+      ['StripeFeeEnabled', 'payment_setting.stripe_fee_enabled'],
+      ['StripeGBPEnabled', 'payment_setting.stripe_gbp_enabled'],
+    ] as const) {
+      if (field === 'StripeGBPExchangeRate' && sanitized[field] === 0) continue
+      if (sanitized[field] !== initial[field]) {
+        updates.push({ key, value: sanitized[field] })
+      }
     }
 
     if (
@@ -1509,6 +1555,87 @@ export function PaymentSettingsSection({
                   />
                 </div>
 
+                <FormField
+                  control={form.control}
+                  name='StripeGBPEnabled'
+                  render={({ field }) => (
+                    <SettingsSwitchItem>
+                      <SettingsSwitchContent>
+                        <FormLabel>
+                          {t('Collect Stripe payments in GBP')}
+                        </FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Enter recharge amounts in CNY and collect GBP using a one-time GBP 0.01 price. Set the exchange rate before enabling.'
+                          )}
+                        </FormDescription>
+                      </SettingsSwitchContent>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={(enabled) => {
+                            field.onChange(enabled)
+                            if (enabled) {
+                              form.setValue(
+                                'StripePromotionCodesEnabled',
+                                false
+                              )
+                            }
+                          }}
+                        />
+                      </FormControl>
+                    </SettingsSwitchItem>
+                  )}
+                />
+                {form.watch('StripeGBPEnabled') && (
+                  <div className='grid gap-6 md:grid-cols-2'>
+                    <FormField
+                      control={form.control}
+                      name='StripeGBPExchangeRate'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('CNY per GBP')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={0.000001}
+                              max={1000000}
+                              step='0.000001'
+                              {...safeNumberFieldProps(field)}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Operator-set exchange rate. Wallet credit uses the existing CNY per USD rate. No automatic exchange-rate updates.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='StripeFeeFixedGBP'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t('Fixed processing fee (GBP)')}
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={0}
+                              max={100000}
+                              step='0.01'
+                              {...safeNumberFieldProps(field)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+                )}
                 <div className='grid gap-6 md:grid-cols-3'>
                   <FormField
                     control={form.control}
@@ -1520,6 +1647,7 @@ export function PaymentSettingsSection({
                         </FormLabel>
                         <FormControl>
                           <Input
+                            disabled={form.watch('StripeGBPEnabled')}
                             type='number'
                             step='0.01'
                             min={0}
@@ -1527,7 +1655,9 @@ export function PaymentSettingsSection({
                           />
                         </FormControl>
                         <FormDescription>
-                          {t('e.g., 8 means 8 local currency per USD')}
+                          {form.watch('StripeGBPEnabled')
+                            ? t('GBP checkout uses the CNY per GBP rate above.')
+                            : t('e.g., 8 means 8 local currency per USD')}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -1570,12 +1700,108 @@ export function PaymentSettingsSection({
                         <FormControl>
                           <Switch
                             checked={field.value}
+                            disabled={
+                              form.watch('StripeFeeEnabled') ||
+                              form.watch('StripeGBPEnabled')
+                            }
                             onCheckedChange={field.onChange}
                           />
                         </FormControl>
                       </SettingsSwitchItem>
                     )}
                   />
+                </div>
+                <div className='space-y-4 border-t pt-4'>
+                  <FormField
+                    control={form.control}
+                    name='StripeFeeEnabled'
+                    render={({ field }) => (
+                      <SettingsSwitchItem>
+                        <SettingsSwitchContent>
+                          <FormLabel>{t('Stripe processing fee')}</FormLabel>
+                          <FormDescription>
+                            {t(
+                              'Add processing fees to the Stripe payment. Only the top-up amount is credited to the wallet.'
+                            )}
+                          </FormDescription>
+                        </SettingsSwitchContent>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={(enabled) => {
+                              field.onChange(enabled)
+                              if (enabled) {
+                                form.setValue(
+                                  'StripePromotionCodesEnabled',
+                                  false
+                                )
+                              }
+                            }}
+                          />
+                        </FormControl>
+                      </SettingsSwitchItem>
+                    )}
+                  />
+                  <div className='grid gap-6 md:grid-cols-2'>
+                    <FormField
+                      control={form.control}
+                      name='StripeFeePercent'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Processing fee (%)')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={0}
+                              max={100}
+                              step='0.01'
+                              {...safeNumberFieldProps(field)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {!form.watch('StripeGBPEnabled') && (
+                      <FormField
+                        control={form.control}
+                        name='StripeFeeFixedCNY'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>
+                              {t('Fixed processing fee (CNY)')}
+                            </FormLabel>
+                            <FormControl>
+                              <Input
+                                type='number'
+                                min={0}
+                                max={100000}
+                                step='0.01'
+                                {...safeNumberFieldProps(field)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
+                  </div>
+                  <p className='text-muted-foreground text-sm'>
+                    {form.watch('StripeGBPEnabled')
+                      ? t(
+                          'GBP fee = converted subtotal × percentage + fixed GBP fee, rounded up to the nearest penny. Fees do not increase wallet credit. Promotion codes and Adaptive Pricing are disabled.'
+                        )
+                      : t(
+                          'Fee = Stripe top-up subtotal × percentage + fixed CNY fee, rounded up to the nearest fen. Requires a one-time CNY price. Promotion codes are unavailable when fees are enabled.'
+                        )}
+                  </p>
+                  {!form.watch('StripeGBPEnabled') && (
+                    <p className='text-muted-foreground text-sm'>
+                      {t(
+                        'UK Alipay standard pricing: 2.9% + GBP 0.20; add 2% if currency conversion is required. Convert the fixed fee to CNY using your own settlement rate and verify your Stripe account pricing.'
+                      )}
+                    </p>
+                  )}
                 </div>
               </div>
             </TabsContent>

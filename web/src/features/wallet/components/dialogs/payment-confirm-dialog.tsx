@@ -21,6 +21,8 @@ import { useTranslation } from 'react-i18next'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toIntlLocale } from '@/i18n/languages'
+import { formatCurrencyAmount } from '@/lib/currency'
+import { formatNumber } from '@/lib/format'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { DEFAULT_DISCOUNT_RATE } from '../../constants'
@@ -30,7 +32,7 @@ import {
   getPaymentIcon,
   isStripePayment,
 } from '../../lib'
-import type { PaymentMethod } from '../../types'
+import type { PaymentMethod, StripeGBPQuote } from '../../types'
 
 interface PaymentConfirmDialogProps {
   open: boolean
@@ -42,6 +44,11 @@ interface PaymentConfirmDialogProps {
   calculating: boolean
   processing: boolean
   discountRate?: number
+  stripeQuote?: StripeGBPQuote | null
+  stripeGBPEnabled?: boolean
+  stripeFeeEnabled?: boolean
+  stripeFeePercent?: number
+  stripeFeeFixedCNY?: number
 }
 
 export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
@@ -64,7 +71,13 @@ export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
       confirmText={t('Confirm Payment')}
       handleConfirm={props.onConfirm}
       isLoading={props.processing}
-      disabled={props.calculating}
+      disabled={
+        props.calculating ||
+        (isStripe &&
+          !!props.stripeGBPEnabled &&
+          (!props.stripeQuote ||
+            props.stripeQuote.amount_cny !== props.topupAmount))
+      }
       className='max-sm:w-[calc(100vw-1.5rem)] sm:max-w-md'
     >
       <div className='space-y-3 py-3 sm:space-y-4 sm:py-4'>
@@ -73,7 +86,9 @@ export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
             {t('Topup Amount')}
           </span>
           <span className='text-lg font-semibold'>
-            {formatTopupCredit(props.topupAmount, { locale })}
+            {isStripe && props.stripeGBPEnabled
+              ? formatCurrencyAmount(props.topupAmount, 'CNY', { locale })
+              : formatTopupCredit(props.topupAmount, { locale })}
           </span>
         </div>
 
@@ -99,10 +114,54 @@ export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
           </div>
         )}
 
-        {isStripe && (
+        {isStripe && props.stripeQuote && (
+          <div className='space-y-2 text-sm'>
+            <div className='flex justify-between gap-3'>
+              <span>{t('You Pay')}</span>
+              <strong>
+                {formatCurrencyAmount(Number(props.stripeQuote.total), 'GBP', {
+                  locale,
+                })}
+              </strong>
+            </div>
+            <p className='text-muted-foreground'>
+              {t('Exchange rate: 1 GBP = {{rate}} CNY', {
+                rate: props.stripeQuote.exchange_rate,
+              })}
+            </p>
+            <p className='text-muted-foreground'>
+              {t('Stripe processing fee')}:{' '}
+              {formatCurrencyAmount(Number(props.stripeQuote.fee), 'GBP', {
+                locale,
+              })}
+            </p>
+          </div>
+        )}
+        {isStripe && !props.stripeGBPEnabled && (
           <p className='text-muted-foreground text-sm'>
             {t('Final payment amount and currency are shown at checkout.')}
           </p>
+        )}
+
+        {isStripe && props.stripeFeeEnabled && !props.stripeGBPEnabled && (
+          <div className='bg-muted/50 space-y-1.5 rounded-lg p-3 text-sm'>
+            <div className='font-medium'>{t('Stripe processing fee')}</div>
+            <p>
+              {t('{{percent}}% + {{fixed}} per payment', {
+                percent: formatNumber(props.stripeFeePercent ?? 0, locale),
+                fixed: formatCurrencyAmount(
+                  props.stripeFeeFixedCNY ?? 0,
+                  'CNY',
+                  { locale }
+                ),
+              })}
+            </p>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Added at Stripe Checkout. Processing fees are not credited to your balance.'
+              )}
+            </p>
+          </div>
         )}
 
         {hasDiscount && !props.calculating && (

@@ -333,6 +333,12 @@ export type BillingSettings = {
   StripeUnitPrice: number
   StripeMinTopUp: number
   StripePromotionCodesEnabled: boolean
+  'payment_setting.stripe_gbp_enabled': boolean
+  'payment_setting.stripe_gbp_exchange_rate': number
+  'payment_setting.stripe_fee_fixed_gbp': number
+  'payment_setting.stripe_fee_enabled': boolean
+  'payment_setting.stripe_fee_percent': number
+  'payment_setting.stripe_fee_fixed_cny': number
   CreemApiKey: string
   CreemWebhookSecret: string
   CreemTestMode: boolean

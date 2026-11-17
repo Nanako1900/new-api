@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
@@ -116,6 +117,7 @@ func TestAffiliateDatabaseMatrix(t *testing.T) {
 				require.ErrorIs(t, SetAffiliateSettings(100, 0, 10001, 1, common.RoleRootUser), ErrAffiliateSettings)
 				require.ErrorIs(t, SetAffiliateSettings(100, 0, 1000, 101, common.RoleCommonUser), ErrUserQuotaPermission)
 				t.Run("payment providers and snapshots", testAffiliatePayments)
+				t.Run("GBP CNY recharge and fee snapshot", testAffiliateGBPRecharge)
 				t.Run("withdrawal and reversal", testAffiliateWithdrawal)
 				t.Run("concurrent duplicate callback", testAffiliateConcurrentCallback)
 				t.Run("ledger rollback and eligibility", testAffiliateAccountingBoundaries)
@@ -449,4 +451,36 @@ type affiliateReleasedTopUp struct {
 	CreateTime      int64   `json:"create_time"`
 	CompleteTime    int64   `json:"complete_time"`
 	Status          string  `json:"status"`
+}
+
+func testAffiliateGBPRecharge(t *testing.T) {
+	before, err := GetAffiliateSummary(100)
+	require.NoError(t, err)
+	var buyer User
+	require.NoError(t, DB.First(&buyer, 101).Error)
+	walletBefore := buyer.Quota
+	credit := decimal.NewFromInt(100).Div(decimal.NewFromFloat(7.3))
+	order := TopUp{UserId: 101, Amount: 100, Money: credit.InexactFloat64(), TradeNo: "gbp-cny-recharge", PaymentProvider: PaymentProviderStripe, PaymentMethod: PaymentMethodStripe, Status: common.TopUpStatusPending, AffiliateCurrency: "GBP", AffiliateExchangeRate: "8", AffiliateFeeCents: 57}
+	require.NoError(t, order.Insert())
+	var snapshot AffiliateOrder
+	require.NoError(t, DB.First(&snapshot, "trade_no = ?", order.TradeNo).Error)
+	assert.Equal(t, "8", snapshot.ExchangeRate)
+	oldRate := operation_setting.GetPaymentSetting().StripeGBPExchangeRate
+	operation_setting.GetPaymentSetting().StripeGBPExchangeRate = 9
+	t.Cleanup(func() { operation_setting.GetPaymentSetting().StripeGBPExchangeRate = oldRate })
+	payment := AffiliatePayment{Amount: "13.07", Currency: "GBP"}
+	require.Error(t, Recharge(order.TradeNo, "", "", AffiliatePayment{Amount: "13.07", Currency: "CNY"}))
+	assert.Equal(t, common.TopUpStatusPending, GetTopUpByTradeNo(order.TradeNo).Status)
+	require.NoError(t, Recharge(order.TradeNo, "", "", payment))
+	require.NoError(t, Recharge(order.TradeNo, "", "", payment))
+	require.NoError(t, DB.First(&buyer, 101).Error)
+	quota, err := common.WalletQuotaFromDecimalStrict(decimal.NewFromFloat(order.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
+	require.NoError(t, err)
+	assert.Equal(t, walletBefore+quota, buyer.Quota, "exactly one USD-equivalent recharge, excluding the GBP fee")
+	after, err := GetAffiliateSummary(100)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1000, after.BalanceCents-before.BalanceCents, "(1307 - 57) pence × CNY 8/GBP × 10% = CNY 10")
+	bad := TopUp{UserId: 101, Amount: 100, Money: 1, TradeNo: "gbp-no-fx", PaymentProvider: PaymentProviderStripe, AffiliateCurrency: "GBP"}
+	require.ErrorIs(t, bad.Insert(), ErrAffiliatePayment)
+	assert.Nil(t, GetTopUpByTradeNo(bad.TradeNo))
 }

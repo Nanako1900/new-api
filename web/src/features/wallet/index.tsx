@@ -65,6 +65,7 @@ export function Wallet(props: WalletProps) {
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
   const [topupAmount, setTopupAmount] = useState(0)
+  const [stripeAmountCNY, setStripeAmountCNY] = useState(100)
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] =
     useState<PaymentMethod>()
@@ -85,11 +86,13 @@ export function Wallet(props: WalletProps) {
 
   const {
     amount: paymentAmount,
+    stripeQuote,
+    invalidateQuote,
     calculating,
     processing,
     calculatePaymentAmount,
     processPayment,
-  } = usePayment()
+  } = usePayment(!!topupInfo?.stripe_gbp_enabled)
   const {
     affiliateLink,
     loading: affiliateLoading,
@@ -136,10 +139,26 @@ export function Wallet(props: WalletProps) {
       topupAmountInitializedRef.current = true
       const minTopup = getMinTopupAmount(topupInfo)
       setTopupAmount(minTopup)
+      if (topupInfo.stripe_gbp_enabled) {
+        setStripeAmountCNY(
+          Math.max(
+            100,
+            Math.ceil(
+              topupInfo.stripe_min_topup *
+                (topupInfo.stripe_usd_exchange_rate ?? 1)
+            )
+          )
+        )
+      }
 
       // Calculate initial payment amount with default payment type
       const defaultPaymentType = getDefaultPaymentType(topupInfo)
-      calculatePaymentAmount(minTopup, defaultPaymentType)
+      if (
+        !topupInfo.stripe_gbp_enabled ||
+        defaultPaymentType !== PAYMENT_TYPES.STRIPE
+      ) {
+        calculatePaymentAmount(minTopup, defaultPaymentType)
+      }
     }
   }, [topupInfo, calculatePaymentAmount])
 
@@ -148,36 +167,54 @@ export function Wallet(props: WalletProps) {
     return selectedPaymentMethod?.type || getDefaultPaymentType(topupInfo)
   }, [selectedPaymentMethod, topupInfo])
 
+  const stripeGBPCurrent =
+    !!topupInfo?.stripe_gbp_enabled &&
+    getCurrentPaymentType() === PAYMENT_TYPES.STRIPE
+  const currentTopupAmount = stripeGBPCurrent ? stripeAmountCNY : topupAmount
+
   // Handle preset selection
   const handleSelectPreset = (preset: PresetAmount) => {
-    setTopupAmount(preset.value)
+    if (stripeGBPCurrent) setStripeAmountCNY(preset.value)
+    else setTopupAmount(preset.value)
     setSelectedPreset(preset.value)
-    calculatePaymentAmount(preset.value, getCurrentPaymentType())
+    if (stripeGBPCurrent) invalidateQuote()
+    else calculatePaymentAmount(preset.value, getCurrentPaymentType())
   }
 
   // Handle topup amount change
   const handleTopupAmountChange = (amount: number) => {
-    setTopupAmount(amount)
+    if (stripeGBPCurrent) setStripeAmountCNY(amount)
+    else setTopupAmount(amount)
     setSelectedPreset(null)
-    calculatePaymentAmount(amount, getCurrentPaymentType())
+    if (stripeGBPCurrent) invalidateQuote()
+    else calculatePaymentAmount(amount, getCurrentPaymentType())
   }
 
   // Handle payment method selection
   const handlePaymentMethodSelect = async (method: PaymentMethod) => {
+    const isGBP =
+      !!topupInfo?.stripe_gbp_enabled && method.type === PAYMENT_TYPES.STRIPE
+    let requestedAmount = isGBP ? stripeAmountCNY : topupAmount
+    if (isGBP && !stripeGBPCurrent) {
+      requestedAmount = Math.round(
+        topupAmount * (topupInfo?.stripe_usd_exchange_rate ?? 1)
+      )
+      setStripeAmountCNY(requestedAmount)
+    } else if (!isGBP && stripeGBPCurrent) {
+      requestedAmount = Math.floor(
+        stripeAmountCNY / (topupInfo?.stripe_usd_exchange_rate ?? 1)
+      )
+      setTopupAmount(requestedAmount)
+    }
+    setSelectedPreset(null)
     setSelectedPaymentMethod(method)
     setSelectedWaffoMethodIndex(null)
     setPaymentLoading(method.type)
-
     try {
-      // Validate minimum topup
       const minTopup = getMinTopupAmount(topupInfo)
-      if (topupAmount < minTopup) {
-        return
-      }
-
-      // Calculate payment amount and show confirmation dialog
-      await calculatePaymentAmount(topupAmount, method.type)
-      setConfirmDialogOpen(true)
+      if (!isGBP && requestedAmount < minTopup) return
+      const total = await calculatePaymentAmount(requestedAmount, method.type)
+      if (!isGBP || total > 0) setConfirmDialogOpen(true)
     } finally {
       setPaymentLoading(null)
     }
@@ -189,7 +226,7 @@ export function Wallet(props: WalletProps) {
 
     const success = await dispatchSelectedPayment(
       selectedPaymentMethod,
-      topupAmount,
+      currentTopupAmount,
       selectedWaffoMethodIndex,
       {
         regular: processPayment,
@@ -246,6 +283,11 @@ export function Wallet(props: WalletProps) {
     method: WaffoPayMethod,
     index: number
   ) => {
+    const requestedAmount = stripeGBPCurrent
+      ? Math.floor(stripeAmountCNY / (topupInfo?.stripe_usd_exchange_rate ?? 1))
+      : topupAmount
+    setTopupAmount(requestedAmount)
+    setSelectedPreset(null)
     const loadingKey = `waffo-${index}`
     setSelectedPaymentMethod({
       name: method.name,
@@ -256,7 +298,7 @@ export function Wallet(props: WalletProps) {
     setPaymentLoading(loadingKey)
 
     try {
-      await calculatePaymentAmount(topupAmount, PAYMENT_TYPES.WAFFO)
+      await calculatePaymentAmount(requestedAmount, PAYMENT_TYPES.WAFFO)
       setConfirmDialogOpen(true)
     } finally {
       setPaymentLoading(null)
@@ -296,7 +338,8 @@ export function Wallet(props: WalletProps) {
                   presetAmounts={presetAmounts}
                   selectedPreset={selectedPreset}
                   onSelectPreset={handleSelectPreset}
-                  topupAmount={topupAmount}
+                  topupAmount={currentTopupAmount}
+                  cnyAmounts={stripeGBPCurrent}
                   onTopupAmountChange={handleTopupAmountChange}
                   onPaymentMethodSelect={handlePaymentMethodSelect}
                   paymentLoading={paymentLoading}
@@ -346,12 +389,17 @@ export function Wallet(props: WalletProps) {
         open={confirmDialogOpen}
         onOpenChange={setConfirmDialogOpen}
         onConfirm={handlePaymentConfirm}
-        topupAmount={topupAmount}
+        topupAmount={currentTopupAmount}
         paymentAmount={paymentAmount}
         paymentMethod={selectedPaymentMethod}
         calculating={calculating}
         processing={processing || waffoProcessing || pancakeProcessing}
         discountRate={getDiscountRate()}
+        stripeQuote={stripeQuote}
+        stripeGBPEnabled={topupInfo?.stripe_gbp_enabled}
+        stripeFeeEnabled={topupInfo?.stripe_fee_enabled}
+        stripeFeePercent={topupInfo?.stripe_fee_percent}
+        stripeFeeFixedCNY={topupInfo?.stripe_fee_fixed_cny}
       />
 
       <TransferDialog

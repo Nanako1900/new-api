@@ -154,6 +154,13 @@ const BILLING_SECTIONS = [
           StripeUnitPrice: settings.StripeUnitPrice,
           StripeMinTopUp: settings.StripeMinTopUp,
           StripePromotionCodesEnabled: settings.StripePromotionCodesEnabled,
+          StripeGBPEnabled: settings['payment_setting.stripe_gbp_enabled'],
+          StripeGBPExchangeRate:
+            settings['payment_setting.stripe_gbp_exchange_rate'],
+          StripeFeeFixedGBP: settings['payment_setting.stripe_fee_fixed_gbp'],
+          StripeFeeEnabled: settings['payment_setting.stripe_fee_enabled'],
+          StripeFeePercent: settings['payment_setting.stripe_fee_percent'],
+          StripeFeeFixedCNY: settings['payment_setting.stripe_fee_fixed_cny'],
           CreemApiKey: settings.CreemApiKey,
           CreemWebhookSecret: settings.CreemWebhookSecret,
           CreemTestMode: settings.CreemTestMode,

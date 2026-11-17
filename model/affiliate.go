@@ -147,7 +147,7 @@ func (a AffiliateAction) VerificationContext() map[string]any {
 var (
 	ErrAffiliateSettings = common.NewMessage("Invalid referral settings")
 	ErrAffiliateCycle    = common.NewMessage("An invitation relationship cannot contain a cycle")
-	ErrAffiliatePayment  = common.NewMessage("A verified CNY or USD payment amount is required for cashback")
+	ErrAffiliatePayment  = common.NewMessage("A valid payment amount, currency and exchange rate are required for cashback")
 	ErrAffiliateBalance  = common.NewMessage("The cashback balance changed. Refresh and try again.")
 	ErrAffiliateLimit    = common.NewMessage("Cashback amount exceeds the supported limit")
 )
@@ -289,6 +289,12 @@ func snapshotAffiliateOrder(tx *gorm.DB, topUp *TopUp) error {
 		}
 		rate = decimal.NewFromFloat(fx).Round(8)
 		if !rate.IsPositive() {
+			return ErrAffiliatePayment
+		}
+	} else if currency == "GBP" {
+		var err error
+		rate, err = decimal.NewFromString(topUp.AffiliateExchangeRate)
+		if err != nil || !rate.IsPositive() || rate.GreaterThan(decimal.NewFromInt(1000000)) {
 			return ErrAffiliatePayment
 		}
 	} else if currency != "CNY" {

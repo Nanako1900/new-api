@@ -1,6 +1,8 @@
 package operation_setting
 
 import (
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/Calcium-Ion/go-epay/epay"
@@ -9,8 +11,14 @@ import (
 )
 
 type PaymentSetting struct {
-	AmountOptions  []int           `json:"amount_options"`
-	AmountDiscount map[int]float64 `json:"amount_discount"` // 充值金额对应的折扣，例如 100 元 0.9 表示 100 元充值享受 9 折优惠
+	AmountOptions         []int           `json:"amount_options"`
+	AmountDiscount        map[int]float64 `json:"amount_discount"` // 充值金额对应的折扣，例如 100 元 0.9 表示 100 元充值享受 9 折优惠
+	StripeFeeEnabled      bool            `json:"stripe_fee_enabled"`
+	StripeFeePercent      float64         `json:"stripe_fee_percent"`
+	StripeFeeFixedCNY     float64         `json:"stripe_fee_fixed_cny"`
+	StripeGBPEnabled      bool            `json:"stripe_gbp_enabled"`
+	StripeGBPExchangeRate float64         `json:"stripe_gbp_exchange_rate"` // CNY per GBP; configured by the operator, never a live FX quote.
+	StripeFeeFixedGBP     float64         `json:"stripe_fee_fixed_gbp"`
 
 	ComplianceConfirmed    bool   `json:"compliance_confirmed"`
 	ComplianceTermsVersion string `json:"compliance_terms_version"`
@@ -37,8 +45,10 @@ const (
 
 // 默认配置
 var paymentSetting = PaymentSetting{
-	AmountOptions:  []int{10, 20, 50, 100, 200, 500},
-	AmountDiscount: map[int]float64{},
+	AmountOptions:     []int{10, 20, 50, 100, 200, 500},
+	AmountDiscount:    map[int]float64{},
+	StripeFeePercent:  2.9,
+	StripeFeeFixedGBP: 0.20,
 	// 没有保存过签名方式的站点按 MD5 运行，升级后行为不变。
 	EpaySignType: EpaySignTypeMD5,
 }
@@ -50,6 +60,34 @@ func init() {
 
 func GetPaymentSetting() *PaymentSetting {
 	return &paymentSetting
+}
+
+// ValidateStripeFeeOption bounds fees before they can become a payment multiplier.
+func ValidateStripeFeeOption(key, value string) error {
+	if key == "payment_setting.stripe_fee_enabled" || key == "payment_setting.stripe_gbp_enabled" {
+		if value != "true" && value != "false" {
+			return common.NewMessage("Invalid parameters")
+		}
+		return nil
+	}
+	if key != "payment_setting.stripe_fee_percent" && key != "payment_setting.stripe_fee_fixed_cny" && key != "payment_setting.stripe_gbp_exchange_rate" && key != "payment_setting.stripe_fee_fixed_gbp" {
+		return nil
+	}
+	number, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(number) || math.IsInf(number, 0) || number < 0 {
+		return common.NewMessage("Stripe processing fees must be finite, non-negative numbers")
+	}
+	if key == "payment_setting.stripe_fee_percent" && number > 100 {
+		return common.NewMessage("Stripe processing fee percentage cannot exceed 100")
+	}
+	if key == "payment_setting.stripe_fee_fixed_cny" && number > 100000 {
+		return common.NewMessage("Stripe fixed processing fee cannot exceed CNY 100000")
+	}
+	if (key == "payment_setting.stripe_gbp_exchange_rate" && (number < 0.000001 || number > 1000000)) ||
+		(key == "payment_setting.stripe_fee_fixed_gbp" && number > 100000) {
+		return common.NewMessage("Invalid parameters")
+	}
+	return nil
 }
 
 func IsPaymentComplianceConfirmed() bool {
