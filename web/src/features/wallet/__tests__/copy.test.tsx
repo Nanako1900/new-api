@@ -30,6 +30,7 @@ import {
   useSystemConfigStore,
 } from '@/stores/system-config-store'
 
+import { PaymentConfirmDialog } from '../components/dialogs/payment-confirm-dialog'
 import { RechargeFormCard } from '../components/recharge-form-card'
 
 const i18n = createInstance()
@@ -116,4 +117,47 @@ it('shows recharge amounts without payment estimates and updates labels when the
   expect(screen.queryByText('Amount to pay:')).not.toBeInTheDocument()
   expect(screen.queryByText(/Pay 730/)).not.toBeInTheDocument()
   expect(screen.getByPlaceholderText('Minimum 1')).toBeVisible()
+})
+
+it('shows CNY 100 and the GBP payment total independently of the global wallet display currency', async () => {
+  useSystemConfigStore.getState().setConfig({
+    currency: {
+      ...DEFAULT_CURRENCY_CONFIG,
+      quotaDisplayType: 'USD',
+      usdExchangeRate: 7.3,
+    },
+  })
+  await i18n.changeLanguage('en')
+  render(
+    <I18nextProvider i18n={i18n}>
+      <PaymentConfirmDialog
+        open
+        onOpenChange={vi.fn()}
+        onConfirm={vi.fn()}
+        topupAmount={100}
+        paymentAmount={13.07}
+        paymentMethod={{ name: 'Stripe', type: 'stripe' }}
+        calculating={false}
+        processing={false}
+        stripeGBPEnabled
+        stripeQuote={{
+          currency: 'GBP',
+          amount_cny: 100,
+          principal: '12.50',
+          fee: '0.57',
+          total: '13.07',
+          exchange_rate: '8',
+          quote_id: 'quote100',
+        }}
+      />
+    </I18nextProvider>
+  )
+  expect(screen.getByText('¥100')).toBeVisible()
+  expect(screen.getByText('£13.07')).toBeVisible()
+  expect(screen.getByText('Exchange rate: 1 GBP = 8 CNY')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Confirm Payment' })).toBeEnabled()
+  await act(() => i18n.changeLanguage('zh'))
+  expect(screen.getByText('¥100')).toBeVisible()
+  expect(screen.getByText('汇率：1 英镑 = 8 元人民币')).toBeVisible()
+  expect(screen.getByText(/Stripe 支付手续费/)).toBeVisible()
 })

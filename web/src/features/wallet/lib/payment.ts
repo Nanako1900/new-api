@@ -145,6 +145,10 @@ export function getDefaultPaymentType(topupInfo: TopupInfo | null): string {
     return DEFAULT_PAYMENT_TYPE
   }
 
+  if (topupInfo.enable_stripe_topup && topupInfo.stripe_gbp_enabled) {
+    return PAYMENT_TYPES.STRIPE
+  }
+
   // Return first available payment method or default
   if (topupInfo.pay_methods?.length > 0) {
     return topupInfo.pay_methods[0].type

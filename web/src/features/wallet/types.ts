@@ -34,7 +34,16 @@ export interface ApiResponse<T = unknown> {
  */
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
-export type AmountResponse = ApiResponse<string>
+export interface StripeGBPQuote {
+  currency: 'GBP'
+  amount_cny: number
+  principal: string
+  fee: string
+  total: string
+  exchange_rate: string
+  quote_id: string
+}
+export type AmountResponse = ApiResponse<string | StripeGBPQuote>
 export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
   url?: string
 }
@@ -130,6 +139,13 @@ export interface TopupInfo {
   min_topup: number
   /** Minimum topup amount for Stripe */
   stripe_min_topup: number
+  stripe_fee_enabled?: boolean
+  stripe_fee_percent?: number
+  stripe_fee_fixed_cny?: number
+  stripe_gbp_enabled?: boolean
+  stripe_gbp_exchange_rate?: number
+  stripe_usd_exchange_rate?: number
+  stripe_fee_fixed_gbp?: number
   /** Preset amount options */
   amount_options: number[]
   /** Discount rates by amount */
@@ -180,6 +196,8 @@ export interface RedemptionRequest {
  * Payment request parameters
  */
 export interface PaymentRequest {
+  amount_cny?: number
+  quote_id?: string
   /** Topup amount */
   amount: number
   /** Payment method identifier */
@@ -208,6 +226,7 @@ export interface WaffoPancakePaymentRequest {
  * Amount calculation request
  */
 export interface AmountRequest {
+  amount_cny?: number
   /** Topup amount to calculate */
   amount: number
 }
@@ -253,6 +272,7 @@ export type TopupStatus = 'success' | 'pending' | 'expired'
  * Topup billing record
  */
 export interface TopupRecord {
+  payment_provider?: string
   /** Record ID */
   id: number
   /** User ID */

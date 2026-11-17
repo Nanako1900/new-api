@@ -35,6 +35,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { toIntlLocale } from '@/i18n/languages'
+import { formatCurrencyAmount } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -54,6 +55,7 @@ import type {
 import { CreemProductsSection } from './creem-products-section'
 
 interface RechargeFormCardProps {
+  cnyAmounts?: boolean
   topupInfo: TopupInfo | null
   presetAmounts: PresetAmount[]
   selectedPreset: number | null
@@ -81,6 +83,7 @@ interface RechargeFormCardProps {
 
 export function RechargeFormCard({
   topupInfo,
+  cnyAmounts,
   presetAmounts,
   selectedPreset,
   onSelectPreset,
@@ -134,7 +137,12 @@ export function RechargeFormCard({
     Array.isArray(topupInfo?.pay_methods) && topupInfo.pay_methods.length > 0
   const hasWaffoPaymentMethods =
     Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
-  const minTopup = getMinTopupAmount(topupInfo)
+  const minTopup = cnyAmounts
+    ? Math.ceil(
+        (topupInfo?.stripe_min_topup ?? 1) *
+          (topupInfo?.stripe_usd_exchange_rate ?? 1)
+      )
+    : getMinTopupAmount(topupInfo)
   const redemptionEnabled = topupInfo?.enable_redemption !== false
 
   if (loading) {
@@ -226,7 +234,7 @@ export function RechargeFormCard({
                         preset.discount ||
                         topupInfo?.discount?.[preset.value] ||
                         1.0
-                      const hasDiscount = discount < 1
+                      const hasDiscount = !cnyAmounts && discount < 1
                       return (
                         <Button
                           key={preset.value}
@@ -242,7 +250,11 @@ export function RechargeFormCard({
                         >
                           <div className='flex w-full items-center justify-between'>
                             <div className='text-base font-semibold sm:text-lg'>
-                              {formatTopupCredit(preset.value, { locale })}
+                              {cnyAmounts
+                                ? formatCurrencyAmount(preset.value, 'CNY', {
+                                    locale,
+                                  })
+                                : formatTopupCredit(preset.value, { locale })}
                             </div>
                             {hasDiscount && (
                               <div className='text-xs font-medium text-green-600'>
@@ -262,7 +274,7 @@ export function RechargeFormCard({
                   htmlFor='topup-amount'
                   className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
                 >
-                  {t('Custom Amount')}
+                  {cnyAmounts ? t('Recharge amount (CNY)') : t('Custom Amount')}
                 </Label>
                 <div>
                   <Input
@@ -279,9 +291,15 @@ export function RechargeFormCard({
                     id='topup-balance-credit'
                     className='text-muted-foreground mt-2 text-xs'
                   >
-                    {t('Balance credit: {{amount}}', {
-                      amount: formatTopupCredit(topupAmount, { locale }),
-                    })}
+                    {cnyAmounts
+                      ? t('Recharge amount: {{amount}}', {
+                          amount: formatCurrencyAmount(topupAmount, 'CNY', {
+                            locale,
+                          }),
+                        })
+                      : t('Balance credit: {{amount}}', {
+                          amount: formatTopupCredit(topupAmount, { locale }),
+                        })}
                   </p>
                 </div>
               </div>
@@ -293,10 +311,15 @@ export function RechargeFormCard({
                 {hasStandardPaymentMethods ? (
                   <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
                     {topupInfo?.pay_methods?.map((method) => {
-                      const minTopup = Math.max(
+                      let minTopup = Math.max(
                         method.min_topup || 0,
                         getMinTopupAmount(topupInfo)
                       )
+                      if (cnyAmounts) {
+                        minTopup = Math.ceil(
+                          minTopup * (topupInfo?.stripe_usd_exchange_rate ?? 1)
+                        )
+                      }
                       const disabled = minTopup > topupAmount
                       const disabledReason = disabled
                         ? t('Minimum topup amount: {{amount}}', {

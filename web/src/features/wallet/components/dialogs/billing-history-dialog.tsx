@@ -243,24 +243,33 @@ export function BillingHistoryDialog({
                         </div>
                         <div className='space-y-1'>
                           <Label className='text-muted-foreground text-xs'>
-                            {t('Amount')}
+                            {record.payment_provider === 'stripe'
+                              ? t('Balance credit')
+                              : t('Amount')}
                           </Label>
                           <div className='text-sm font-semibold'>
-                            {formatCurrencyFromUSD(record.amount, {
-                              digitsLarge: 2,
-                              digitsSmall: 2,
-                              abbreviate: false,
-                            })}
+                            {formatCurrencyFromUSD(
+                              record.payment_provider === 'stripe'
+                                ? record.money
+                                : record.amount,
+                              {
+                                digitsLarge: 2,
+                                digitsSmall: 2,
+                                abbreviate: false,
+                              }
+                            )}
                           </div>
                         </div>
-                        <div className='space-y-1'>
-                          <Label className='text-muted-foreground text-xs'>
-                            {t('Payment')}
-                          </Label>
-                          <div className='text-sm font-semibold text-red-600'>
-                            {formatNumber(record.money)}
+                        {record.payment_provider !== 'stripe' && (
+                          <div className='space-y-1'>
+                            <Label className='text-muted-foreground text-xs'>
+                              {t('Payment')}
+                            </Label>
+                            <div className='text-sm font-semibold text-red-600'>
+                              {formatNumber(record.money)}
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
 
                       {/* Admin Actions */}
@@ -363,6 +372,7 @@ export function BillingHistoryDialog({
             <SelectContent>
               <SelectItem value='CNY'>CNY</SelectItem>
               <SelectItem value='USD'>USD</SelectItem>
+              <SelectItem value='GBP'>GBP</SelectItem>
             </SelectContent>
           </Select>
         </div>
