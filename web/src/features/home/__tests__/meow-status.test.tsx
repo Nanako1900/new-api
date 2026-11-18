@@ -24,11 +24,15 @@ import { api } from '@/lib/api'
 
 import { MeowStatus } from '../components/meow/meow-status'
 
-type PerfModel = { model_name: string; success_rate: number }
+type PerfModel = {
+  model_name: string
+  success_rate: number
+  avg_ttft_ms?: number
+}
 
 const HEALTHY: PerfModel[] = [
-  { model_name: 'claude-opus-5-5', success_rate: 99 },
-  { model_name: 'gpt-6.1-sol', success_rate: 98 },
+  { model_name: 'claude-opus-5-5', success_rate: 99, avg_ttft_ms: 420 },
+  { model_name: 'gpt-6.1-sol', success_rate: 98, avg_ttft_ms: 1250 },
 ]
 
 // A rarely used GPT model failing every request sits below the busy ones.
@@ -76,13 +80,28 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-test('healthy providers show the live success rates', async () => {
+test('healthy providers show live success rates and time to first token', async () => {
   mockApi(HEALTHY)
   renderStatus()
 
   const bar = await screen.findByRole('region', { name: 'Live status' })
   expect(await screen.findAllByText('Success rate')).toHaveLength(2)
+  expect(bar).toHaveTextContent('Time to first token 420ms')
+  expect(bar).toHaveTextContent('Time to first token 1.25s')
   expect(bar).not.toHaveTextContent('No charge for failed requests')
+})
+
+test('healthy providers without first-token measurements show dashes', async () => {
+  mockApi([
+    { model_name: 'claude-opus-5-5', success_rate: 99 },
+    { model_name: 'gpt-6.1-sol', success_rate: 98, avg_ttft_ms: 0 },
+  ])
+  renderStatus()
+
+  const bar = await screen.findByRole('region', { name: 'Live status' })
+  expect(await screen.findAllByText('Success rate')).toHaveLength(2)
+  expect(screen.getAllByText('—')).toHaveLength(2)
+  expect(bar).toHaveTextContent('Time to first token —')
 })
 
 test('a failing quiet model does not hide healthy live numbers', async () => {

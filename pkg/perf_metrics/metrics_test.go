@@ -230,9 +230,9 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			hour := now.Unix() - now.Unix()%3600 - 3600
 			// Historical counters remain usable without reclassification or migration.
 			for _, row := range []model.PerfMetric{
-				{ModelName: "test-model", Group: "a", BucketTs: hour, RequestCount: 100, SuccessCount: 100, TotalLatencyMs: 100000, TtftCount: 100, TtftSumMs: 10000, OutputTokens: 200, GenerationMs: 40000},
-				{ModelName: "test-model", Group: "inactive", BucketTs: hour, RequestCount: 100},
-				{ModelName: "test-model", Group: "a", BucketTs: start - 3600, RequestCount: 100},
+				{ModelName: "test-model", Group: "a", BucketTs: hour, RequestCount: 100, SuccessCount: 100, TotalLatencyMs: 100000, TtftCount: 99, TtftSumMs: 9900, OutputTokens: 200, GenerationMs: 40000},
+				{ModelName: "test-model", Group: "inactive", BucketTs: hour, RequestCount: 100, TtftCount: 100, TtftSumMs: 50000},
+				{ModelName: "test-model", Group: "a", BucketTs: start - 3600, RequestCount: 100, TtftCount: 100, TtftSumMs: 50000},
 			} {
 				require.NoError(t, model.UpsertPerfMetric(&row))
 			}
@@ -245,7 +245,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			assert.Equal(t, 100.0, businessRejected.Summary.SuccessRate)
 
 			failure := &atomicBucket{}
-			failure.add(Sample{LatencyMs: 2000})
+			failure.add(Sample{LatencyMs: 2000, TtftMs: 300, HasTtft: true})
 			hotBuckets.Store(bucketKey{model: "test-model", group: "b", bucketTs: hour}, failure)
 			before, err := Query(QueryParams{Model: "test-model", Hours: 24, AllowedGroups: groups})
 			require.NoError(t, err)
@@ -261,12 +261,16 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, before.Summary, summary.Summary)
 			require.Len(t, summary.Models, 1)
+			assert.Equal(t, int64(102), summary.Models[0].AvgTtftMs)
 			assert.Equal(t, 99.01, summary.Models[0].SuccessRate)
 			assert.Equal(t, 99.01, summary.Models[0].RecentSuccessSeries[0].SuccessRate)
 			encoded, err := common.Marshal(summary)
 			require.NoError(t, err)
+			assert.Contains(t, string(encoded), `"avg_ttft_ms"`)
 			assert.NotContains(t, string(encoded), "request_count")
 			assert.NotContains(t, string(encoded), "success_count")
+			assert.NotContains(t, string(encoded), "ttft_sum_ms")
+			assert.NotContains(t, string(encoded), "ttft_count")
 
 			flushCompletedBuckets()
 			flushCompletedBuckets()
@@ -274,6 +278,9 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, before.Summary, after.Summary)
 			assert.Equal(t, before.Series, after.Series)
+			flushed, err := QuerySummaryAll(24, groups)
+			require.NoError(t, err)
+			assert.Equal(t, summary.Models, flushed.Models)
 
 			RecordRelayResult(context.Background(), &relaycommon.RelayInfo{OriginModelName: "test-model", UsingGroup: "a", StartTime: now}, types.InitOpenAIError("context_length_exceeded", 400))
 			after, err = Query(QueryParams{Model: "test-model", Hours: 24, AllowedGroups: groups})
@@ -291,7 +298,9 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			combined, err := QuerySummaryAll(24, groups)
 			require.NoError(t, err)
 			assert.Equal(t, 98.04, combined.Summary.SuccessRate)
+			require.Len(t, combined.Models, 2)
 			assert.Equal(t, 99.01, combined.Models[0].SuccessRate)
+			assert.Zero(t, combined.Models[1].AvgTtftMs)
 
 			t.Run("recent models are summarized over their status sample hours", func(t *testing.T) {
 				for i := range 26 {
@@ -304,7 +313,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 					{ModelName: "history-model", Group: "a", BucketTs: hour + 60, RequestCount: 100, SuccessCount: 100},
 					{ModelName: "history-model", Group: "inactive", BucketTs: hour + 120, RequestCount: 100},
 					{ModelName: "history-model", Group: "a", BucketTs: hour + 2*3600, RequestCount: 1},
-					{ModelName: "history-idle", Group: "a", BucketTs: hour - 3*24*3600, RequestCount: 1},
+					{ModelName: "history-idle", Group: "a", BucketTs: hour - 3*24*3600, RequestCount: 1, TtftCount: 1, TtftSumMs: 275},
 					{ModelName: "history-hidden", Group: "inactive", BucketTs: hour - 3*24*3600, RequestCount: 1},
 				} {
 					require.NoError(t, model.UpsertPerfMetric(&row))
@@ -330,6 +339,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 				assert.Equal(t, 99.19, summaries["history-model"].SuccessRate)
 				assert.Equal(t, int64(1), summaries["history-idle"].RequestCount)
 				assert.Equal(t, 0.0, summaries["history-idle"].SuccessRate)
+				assert.Equal(t, int64(275), summaries["history-idle"].AvgTtftMs)
 				assert.NotContains(t, summaries, "history-hidden")
 				points := history.RecentSuccessSeries["history-model"]
 				require.Len(t, points, 24)

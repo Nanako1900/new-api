@@ -69,6 +69,7 @@ type SuccessRatePoint struct {
 type ModelSummary struct {
 	ModelName           string             `json:"model_name"`
 	AvgLatencyMs        int64              `json:"avg_latency_ms"`
+	AvgTtftMs           int64              `json:"avg_ttft_ms"`
 	SuccessRate         float64            `json:"success_rate"`
 	AvgTps              float64            `json:"avg_tps"`
 	RecentSuccessSeries []SuccessRatePoint `json:"recent_success_series,omitempty"`
