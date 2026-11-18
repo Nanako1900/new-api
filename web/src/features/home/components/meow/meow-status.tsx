@@ -60,8 +60,8 @@ const PROMISE_DOT_CLASS = [
 
 /**
  * The bar under the hero that the calico cat sleeps on. It shows live
- * Claude / GPT success rate and latency while both look healthy, and the
- * service promises when either one dips, has no data, or can't be loaded.
+ * Claude / GPT success rate and time to first token while both look healthy,
+ * and the service promises when either one dips, has no data, or can't be loaded.
  */
 export function MeowStatus() {
   const { t } = useTranslation()
@@ -99,7 +99,7 @@ type LiveStatusProps = {
   health: Record<HomeProvider, ProviderHealth>
 }
 
-/** Success rate and latency per provider over the home health window. */
+/** Success rate and time to first token per provider over the home health window. */
 function LiveStatus(props: LiveStatusProps) {
   const { t } = useTranslation()
 
@@ -137,9 +137,9 @@ function LiveStatus(props: LiveStatusProps) {
               </b>
             </span>
             <span className='text-muted-foreground'>
-              {t('Average latency')}{' '}
+              {t('Time to first token')}{' '}
               <b className='text-foreground font-extrabold'>
-                {formatLatency(item.avgLatencyMs)}
+                {formatLatency(item.avgTtftMs)}
               </b>
             </span>
           </span>

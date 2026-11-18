@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { PerfModelSummary } from '@/features/performance-metrics/types'
+
 import {
   HOME_PROVIDERS,
   type HomeProvider,
@@ -23,11 +25,10 @@ import {
   providerOf,
 } from './provider-models'
 
-type PerfModel = {
-  model_name: string
-  success_rate: number
-  avg_latency_ms: number
-}
+type PerfModel = Pick<
+  PerfModelSummary,
+  'model_name' | 'success_rate' | 'avg_ttft_ms'
+>
 
 type VendorModel = {
   model_name?: string
@@ -37,7 +38,7 @@ type VendorModel = {
 export type ProviderHealth = {
   /** 0-100 */
   successRate: number
-  avgLatencyMs: number
+  avgTtftMs: number
 }
 
 /** The lowest success rate (0-100) the home page still shows live numbers for. */
@@ -58,9 +59,9 @@ export function canShowLiveStatus(
 }
 
 /**
- * Per-provider success rate and latency, read from each provider's busiest
- * chat model, or its busiest image / audio / embedding model when it has no
- * chat traffic. The summary lists models busiest first
+ * Per-provider success rate and average time to first token, read from each
+ * provider's busiest chat model, or its busiest image / audio / embedding
+ * model when it has no chat traffic. The summary lists models busiest first
  * (pkg/perf_metrics QuerySummaryAll) but does not publish their request
  * counts, so averaging across models would let a rarely used model at 0%
  * sink a provider whose traffic is healthy. A provider with no measured
@@ -96,11 +97,11 @@ export function summarizeProviderHealth(
       result[provider] = null
       continue
     }
-    const hasLatency =
-      Number.isFinite(model.avg_latency_ms) && model.avg_latency_ms > 0
+    const avgTtftMs = model.avg_ttft_ms ?? Number.NaN
     result[provider] = {
       successRate: model.success_rate,
-      avgLatencyMs: hasLatency ? model.avg_latency_ms : Number.NaN,
+      avgTtftMs:
+        Number.isFinite(avgTtftMs) && avgTtftMs > 0 ? avgTtftMs : Number.NaN,
     }
   }
   return result
