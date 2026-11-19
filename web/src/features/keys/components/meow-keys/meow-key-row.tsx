@@ -24,24 +24,16 @@ import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { API_KEY_STATUS, API_KEY_STATUSES } from '../../constants'
-import {
-  keyModelScopes,
-  keyQuota,
-  type KeyModelScope,
-} from '../../lib/meow-keys'
+import { keyModelLimits, keyQuota } from '../../lib/meow-keys'
 import type { ApiKey } from '../../types'
+import type { ApiKeyGroupOption } from '../api-key-group-combobox'
 import { ApiKeyCell } from '../api-keys-cells'
 import { DataTableRowActions } from '../data-table-row-actions'
+import { MeowKeyGroupPicker } from './meow-key-group-picker'
 
 /** Shared column template for the header and each row. */
 export const KEY_ROW_GRID =
   'lg:grid lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.3fr)_6.5rem_12.75rem] lg:items-center lg:gap-4'
-
-const SCOPE_VIEW: Record<KeyModelScope, { label: string; dot: string }> = {
-  claude: { label: 'Claude', dot: 'bg-meow-orange' },
-  gpt: { label: 'GPT', dot: 'bg-meow-ink dark:bg-white' },
-  other: { label: 'Other', dot: 'bg-input' },
-}
 
 const STATUS_DOT: Record<number, string> = {
   [API_KEY_STATUS.ENABLED]: 'bg-success',
@@ -58,12 +50,18 @@ function Label(props: { children: string }) {
   )
 }
 
-/** One API key in the MeowAPI list: name, key, models, quota, status. */
-export function MeowKeyRow(props: { apiKey: ApiKey }) {
+/** One API key in the MeowAPI list: name, key, group, quota, status. */
+export function MeowKeyRow(props: {
+  apiKey: ApiKey
+  groups: ApiKeyGroupOption[]
+  /** The user's groups have loaded, so the key's group can be judged. */
+  groupsReady: boolean
+}) {
   const { t } = useTranslation()
   const key = props.apiKey
   const quota = keyQuota(key)
-  const scopes = keyModelScopes(key)
+  const modelLimits = keyModelLimits(key)
+  const groupPicked = props.groups.some((group) => group.value === key.group)
   const status = API_KEY_STATUSES[key.status]
   const enabled = key.status === API_KEY_STATUS.ENABLED
   const expiry =
@@ -92,30 +90,24 @@ export function MeowKeyRow(props: { apiKey: ApiKey }) {
       </div>
 
       <div
-        className={cn(
-          'flex flex-wrap items-center gap-1.5',
-          !enabled && 'opacity-60'
-        )}
+        className={cn('flex min-w-0 flex-col gap-1', !enabled && 'opacity-60')}
       >
-        <Label>{t('Models')}</Label>
-        {scopes === null ? (
-          <span className='text-muted-foreground text-[13px] font-semibold'>
-            {t('All models')}
+        <Label>{t('Group')}</Label>
+        {/* The onboarding tour asks for a group when the key has none. */}
+        <div
+          data-tour='key-row-group'
+          data-group-picked={props.groupsReady ? groupPicked : undefined}
+          className='w-full max-w-64 lg:max-w-none'
+        >
+          <MeowKeyGroupPicker apiKey={key} groups={props.groups} />
+        </div>
+        {modelLimits && (
+          <span
+            title={modelLimits.join(', ')}
+            className='text-muted-foreground truncate text-[12px]'
+          >
+            {t('Limited models: {{count}}', { count: modelLimits.length })}
           </span>
-        ) : (
-          scopes.map((scope) => (
-            <span
-              key={scope}
-              title={key.model_limits || undefined}
-              className='border-border inline-flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[12px] font-bold'
-            >
-              <span
-                aria-hidden='true'
-                className={cn('size-1.5 rounded-full', SCOPE_VIEW[scope].dot)}
-              />
-              {t(SCOPE_VIEW[scope].label)}
-            </span>
-          ))
         )}
       </div>
 
