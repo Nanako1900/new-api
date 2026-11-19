@@ -23,7 +23,8 @@ For commercial licensing, please contact support@quantumnous.com
  * with sample data, so console pages can be reviewed without logging in
  * (the live human verification only accepts the production hostname). Public
  * endpoints still go to the real backend. Nothing is written anywhere:
- * every write returns a "not saved" message.
+ * API key edits live in memory until the page reloads, and every other
+ * write returns a "not saved" message.
  *
  * Turn on with `?meow-preview=1`, off with `?meow-preview=0`.
  */
@@ -76,15 +77,21 @@ export function isMeowPreviewEnabled(): boolean {
 }
 
 let checkedInToday = false
+const keyEdits = new Map<number, Record<string, unknown>>()
 
 function ok(data: unknown, message = '') {
   return { success: true, message, data }
 }
 
+function sampleKeys() {
+  return previewKeys().map((key) => ({ ...key, ...keyEdits.get(key.id) }))
+}
+
 function mockResponse(
   method: string,
   path: string,
-  params: URLSearchParams
+  params: URLSearchParams,
+  body: unknown
 ): unknown {
   const page = Number(params.get('p') || 1)
   const size = Number(params.get('size') || params.get('page_size') || 10)
@@ -93,6 +100,13 @@ function mockResponse(
     if (path === '/api/user/checkin') {
       checkedInToday = true
       return ok({ quota_awarded: 100_000 })
+    }
+    if (method === 'put' && path === '/api/token/') {
+      const edit = (typeof body === 'string' ? JSON.parse(body) : body) as {
+        id: number
+      }
+      keyEdits.set(edit.id, { ...keyEdits.get(edit.id), ...edit })
+      return ok(sampleKeys().find((key) => key.id === edit.id))
     }
     if (/^\/api\/token\/\d+\/key$/.test(path)) {
       return ok({ key: 'sk-meowpreview0000000000000000' })
@@ -114,7 +128,7 @@ function mockResponse(
   }
   if (path === '/api/token/' || path === '/api/token/search') {
     const keyword = (params.get('keyword') ?? '').toLowerCase()
-    const keys = previewKeys().filter((key) =>
+    const keys = sampleKeys().filter((key) =>
       key.name.toLowerCase().includes(keyword)
     )
     return ok({ items: keys, total: keys.length, page, page_size: size })
@@ -122,7 +136,7 @@ function mockResponse(
   if (path === '/api/token/auto-groups') return ok([])
   const tokenMatch = /^\/api\/token\/(\d+)$/.exec(path)
   if (tokenMatch) {
-    return ok(previewKeys().find((key) => key.id === Number(tokenMatch[1])))
+    return ok(sampleKeys().find((key) => key.id === Number(tokenMatch[1])))
   }
   if (path.startsWith('/api/data/flow')) return ok([])
   if (path === '/api/data/self') return ok(previewQuotaData())
@@ -197,7 +211,12 @@ function installAdapter() {
       if (value !== undefined && value !== null) query.set(key, String(value))
     }
     return {
-      data: mockResponse((config.method ?? 'get').toLowerCase(), path, query),
+      data: mockResponse(
+        (config.method ?? 'get').toLowerCase(),
+        path,
+        query,
+        config.data
+      ),
       status: 200,
       statusText: 'OK',
       headers: {},

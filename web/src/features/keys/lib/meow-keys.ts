@@ -16,9 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { providerOf } from '@/features/home/lib/provider-models'
+import type { ApiKey, ApiKeyFormData } from '../types'
 
-import type { ApiKey } from '../types'
+/** Query key prefix of the MeowAPI key list pages. */
+export const MEOW_KEY_LIST_KEY = ['keys', 'meow'] as const
+
+export type MeowKeyList = { items: ApiKey[]; total: number }
 
 export type KeyQuota = {
   used: number
@@ -37,23 +40,41 @@ export function keyQuota(key: ApiKey): KeyQuota {
   return { used, limit, percent }
 }
 
-export type KeyModelScope = 'claude' | 'gpt' | 'other'
-
 /**
- * Model families a key may call, in display order, or null when the key is
- * not limited to specific models.
+ * Models the key is limited to on top of its group, or null when the group
+ * alone decides what it can call.
  */
-export function keyModelScopes(key: ApiKey): KeyModelScope[] | null {
+export function keyModelLimits(key: ApiKey): string[] | null {
   if (!key.model_limits_enabled) return null
   const models = (key.model_limits || '')
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean)
-  if (models.length === 0) return null
-  const scopes = new Set<KeyModelScope>(
-    models.map((model) => providerOf(model) ?? 'other')
-  )
-  return (['claude', 'gpt', 'other'] as const).filter((scope) =>
-    scopes.has(scope)
-  )
+  return models.length > 0 ? models : null
+}
+
+/**
+ * Full update body that moves a key to another group and keeps every other
+ * setting. Build it from a freshly fetched key: the update overwrites the
+ * remaining quota, which drops as the key is used.
+ */
+export function keyGroupUpdate(
+  key: ApiKey,
+  group: string
+): ApiKeyFormData & { id: number } {
+  const isAuto = group === 'auto'
+  return {
+    id: key.id,
+    name: key.name,
+    remain_quota: key.remain_quota,
+    expired_time: key.expired_time,
+    unlimited_quota: key.unlimited_quota,
+    model_limits_enabled: key.model_limits_enabled,
+    model_limits: key.model_limits ?? '',
+    allow_ips: key.allow_ips ?? '',
+    allow_user_quota_query: key.allow_user_quota_query,
+    group,
+    auto_groups: isAuto ? (key.auto_groups ?? []) : [],
+    cross_group_retry: isAuto && key.cross_group_retry,
+  }
 }

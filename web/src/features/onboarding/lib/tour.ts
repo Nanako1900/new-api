@@ -33,6 +33,7 @@ export const TOUR_STEPS = [
   'name-key',
   'pick-group',
   'save-key',
+  'pick-key-group',
   'open-cc-switch',
   'pick-app',
   'import',
@@ -53,6 +54,11 @@ const KEY_GROUP_TARGET = '[data-tour="key-group"]'
 export const KEY_NAME_INPUT = `${KEY_NAME_TARGET} input`
 export const KEY_GROUP_TRIGGER = `${KEY_GROUP_TARGET} button[role="combobox"]`
 
+// The group picker in each key list row, also with `data-group-picked`. The
+// first one belongs to the key whose CC Switch button the tour points at.
+const ROW_GROUP_TARGET = '[data-tour="key-row-group"]'
+const ROW_GROUP_TRIGGER = `${ROW_GROUP_TARGET} button[role="combobox"]`
+
 /**
  * The element each pointing step highlights. Steps without one are cards
  * in the middle of the screen.
@@ -63,6 +69,7 @@ export const TOUR_TARGETS: Partial<Record<TourStepId, string>> = {
   'name-key': KEY_NAME_TARGET,
   'pick-group': KEY_GROUP_TARGET,
   'save-key': SAVE_KEY_TARGET,
+  'pick-key-group': ROW_GROUP_TARGET,
   'open-cc-switch': '[data-tour="key-cc-switch"]',
   // The whole form, so the user can switch the tool and change models.
   'pick-app': '[data-tour="cc-switch-form"]',
@@ -148,8 +155,13 @@ export type TourPage = {
   /** One of the user's groups is chosen for the new key. */
   keyGroupPicked: boolean
   /**
-   * The group list is open. It opens inside the drawer's layer, which the
-   * tour covers, so the tour steps aside until it closes.
+   * The first key in the list is in one of the user's groups, or null
+   * until the list and the groups have loaded.
+   */
+  firstKeyGrouped: boolean | null
+  /**
+   * A group list is open, in the drawer or in a list row. The tour layer
+   * covers it, so the tour steps aside until it closes.
    */
   groupListOpen: boolean
   ccSwitchOpen: boolean
@@ -160,6 +172,8 @@ export function readTourPage(pathname: string): TourPage {
   const list = document.querySelector<HTMLElement>('[data-tour="key-list"]')
   const count = list?.dataset.keyCount
   const nameInput = document.querySelector<HTMLInputElement>(KEY_NAME_INPUT)
+  const firstKeyGroup =
+    document.querySelector<HTMLElement>(ROW_GROUP_TARGET)?.dataset.groupPicked
   return {
     onKeysPage: pathname === KEYS_PATH,
     keyCount: count === undefined ? null : Number(count),
@@ -172,10 +186,12 @@ export function readTourPage(pathname: string): TourPage {
       document.querySelector(
         `${KEY_GROUP_TARGET}[data-group-picked="true"]`
       ) !== null,
+    firstKeyGrouped:
+      firstKeyGroup === undefined ? null : firstKeyGroup === 'true',
     groupListOpen:
-      document
-        .querySelector(KEY_GROUP_TRIGGER)
-        ?.getAttribute('aria-expanded') === 'true',
+      document.querySelector(
+        `${KEY_GROUP_TRIGGER}[aria-expanded="true"], ${ROW_GROUP_TRIGGER}[aria-expanded="true"]`
+      ) !== null,
     ccSwitchOpen: document.querySelector(CC_SWITCH_OPEN_TARGET) !== null,
   }
 }
@@ -204,5 +220,8 @@ export function currentTourStep(
   }
   if (!page.onKeysPage) return 'open-keys'
   if (page.keyCount === null) return null
-  return page.keyCount > 0 ? 'open-cc-switch' : 'create-key'
+  if (page.keyCount === 0) return 'create-key'
+  if (page.groupListOpen || page.firstKeyGrouped === null) return null
+  // A key made before groups existed reaches no model in CC Switch either.
+  return page.firstKeyGrouped ? 'open-cc-switch' : 'pick-key-group'
 }

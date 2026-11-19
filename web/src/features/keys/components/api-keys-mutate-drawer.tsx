@@ -62,16 +62,12 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { channelUsageDescription } from '@/features/pricing/lib/meow-catalog'
 import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
 import { useStatus } from '@/hooks/use-status'
-import { getUserModels, getUserGroups } from '@/lib/api'
+import { getUserModels } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
-import {
-  requireServerSuccess,
-  translateServerText,
-} from '@/lib/server-error-message'
+import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import {
@@ -89,11 +85,8 @@ import {
   transformApiKeyToFormDefaults,
 } from '../lib'
 import type { ApiKey } from '../types'
-import { useGroupPriceComparisons } from '../use-group-price-comparisons'
-import {
-  ApiKeyGroupCombobox,
-  type ApiKeyGroupOption,
-} from './api-key-group-combobox'
+import { useApiKeyGroupOptions } from '../use-api-key-group-options'
+import { ApiKeyGroupCombobox } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
 
@@ -128,17 +121,11 @@ export function ApiKeysMutateDrawer({
     staleTime: 0,
   })
 
-  // Fetch groups
   const {
-    data: groupsData,
+    groups,
     isFetched: groupsFetched,
     isFetching: groupsFetching,
-  } = useQuery({
-    queryKey: ['user-groups'],
-    queryFn: async () => requireServerSuccess(await getUserGroups()),
-    enabled: open,
-    staleTime: 0,
-  })
+  } = useApiKeyGroupOptions(open)
 
   const {
     data: apiKeyData,
@@ -163,34 +150,7 @@ export function ApiKeysMutateDrawer({
     staleTime: 0,
   })
 
-  const groupRatios = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(groupsData?.data ?? {}).map(([group, info]) => [
-          group,
-          info.ratio,
-        ])
-      ),
-    [groupsData]
-  )
-  const comparisons = useGroupPriceComparisons(groupRatios, open)
   const models = modelsData?.data || []
-  const groups = useMemo<ApiKeyGroupOption[]>(
-    () =>
-      Object.entries(groupsData?.data || {}).map(([key, info]) => ({
-        value: key,
-        label: key,
-        desc: info.desc
-          ? channelUsageDescription({
-              description: translateServerText(t, info.desc),
-              ratio: typeof info.ratio === 'number' ? info.ratio : 1,
-            })
-          : key,
-        ratio: info.ratio,
-        comparison: comparisons[key],
-      })),
-    [groupsData, comparisons, t]
-  )
   const backendHasAuto = groups.some((g) => g.value === 'auto')
   const availableAutoGroupNames = useMemo(
     () => groups.filter((group) => group.value !== 'auto').map((g) => g.value),

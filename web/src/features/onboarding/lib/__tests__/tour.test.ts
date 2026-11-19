@@ -38,6 +38,7 @@ const ON_KEYS_PAGE: TourPage = {
   keyFormOpen: false,
   keyNamed: false,
   keyGroupPicked: false,
+  firstKeyGrouped: null,
   groupListOpen: false,
   ccSwitchOpen: false,
 }
@@ -72,8 +73,34 @@ describe('currentTourStep', () => {
   it('asks for a new key when the user has none and skips it when one exists', () => {
     expect(currentTourStep(PASSED_CARDS, ON_KEYS_PAGE)).toBe('create-key')
     expect(
-      currentTourStep(PASSED_CARDS, { ...ON_KEYS_PAGE, keyCount: 2 })
+      currentTourStep(PASSED_CARDS, {
+        ...ON_KEYS_PAGE,
+        keyCount: 2,
+        firstKeyGrouped: true,
+      })
     ).toBe('open-cc-switch')
+  })
+
+  it('asks for a group on the first key when it has none before CC Switch', () => {
+    expect(
+      currentTourStep(PASSED_CARDS, {
+        ...ON_KEYS_PAGE,
+        keyCount: 2,
+        firstKeyGrouped: false,
+      })
+    ).toBe('pick-key-group')
+  })
+
+  it('waits while the groups load or a row group list is open', () => {
+    const withKeys = { ...ON_KEYS_PAGE, keyCount: 1 }
+    expect(currentTourStep(PASSED_CARDS, withKeys)).toBeNull()
+    expect(
+      currentTourStep(PASSED_CARDS, {
+        ...withKeys,
+        firstKeyGrouped: false,
+        groupListOpen: true,
+      })
+    ).toBeNull()
   })
 
   it('asks for a name first when the key drawer opens', () => {
@@ -182,9 +209,30 @@ describe('readTourPage', () => {
       keyFormOpen: false,
       keyNamed: false,
       keyGroupPicked: false,
+      firstKeyGrouped: null,
       groupListOpen: false,
       ccSwitchOpen: true,
     })
+  })
+
+  it('reads the group state of the first key in the list', () => {
+    document.body.innerHTML = `
+      <div data-tour="key-row-group" data-group-picked="false"></div>
+      <div data-tour="key-row-group" data-group-picked="true"></div>`
+
+    expect(readTourPage('/keys').firstKeyGrouped).toBe(false)
+  })
+
+  it('reads the group list as open from an expanded row group picker', () => {
+    document.body.innerHTML = `
+      <div data-tour="key-row-group" data-group-picked="true">
+        <button role="combobox" aria-expanded="false"></button>
+      </div>
+      <div data-tour="key-row-group" data-group-picked="true">
+        <button role="combobox" aria-expanded="true"></button>
+      </div>`
+
+    expect(readTourPage('/keys').groupListOpen).toBe(true)
   })
 
   it('reads the group list as open from the expanded group field', () => {

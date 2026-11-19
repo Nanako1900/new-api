@@ -58,6 +58,10 @@ type ApiKeyGroupComboboxProps = {
   onValueChange: (value: string) => void
   placeholder?: string
   disabled?: boolean
+  /** `compact` fits a list row: the trigger shows only the group name. */
+  size?: 'default' | 'compact'
+  className?: string
+  'aria-label'?: string
 }
 
 export function ApiKeyGroupCombobox({
@@ -66,6 +70,9 @@ export function ApiKeyGroupCombobox({
   onValueChange,
   placeholder,
   disabled,
+  size = 'default',
+  className,
+  'aria-label': ariaLabel,
 }: ApiKeyGroupComboboxProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -73,6 +80,10 @@ export function ApiKeyGroupCombobox({
   const shouldReduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const selectedOption = options.find((option) => option.value === value)
   const isAutoSelected = selectedOption?.value === 'auto'
+  const isCompact = size === 'compact'
+  // A group the user can no longer pick still shows by name.
+  const triggerLabel =
+    selectedOption?.label || value || placeholder || t('Select a group')
 
   const filteredOptions = useMemo(() => {
     const search = searchValue.trim().toLowerCase()
@@ -102,15 +113,20 @@ export function ApiKeyGroupCombobox({
             variant='outline'
             role='combobox'
             aria-expanded={open}
+            aria-label={ariaLabel}
             data-auto-group-effect={isAutoSelected ? 'trigger' : undefined}
             disabled={disabled}
             className={cn(
-              'border-input bg-muted/40 hover:bg-muted/55 hover:text-foreground active:bg-background data-popup-open:border-ring data-popup-open:bg-background data-popup-open:ring-ring/20 relative h-auto min-h-14 w-full justify-between gap-2 rounded-lg px-3 py-2 text-start shadow-none transition-[background-color,border-color,box-shadow] duration-150 data-popup-open:ring-[3px] sm:min-h-20 sm:gap-3 sm:px-4 sm:py-3',
+              'border-input bg-muted/40 hover:bg-muted/55 hover:text-foreground active:bg-background data-popup-open:border-ring data-popup-open:bg-background data-popup-open:ring-ring/20 relative w-full justify-between text-start shadow-none transition-[background-color,border-color,box-shadow] duration-150 data-popup-open:ring-[3px]',
+              isCompact
+                ? 'h-8 gap-1.5 rounded-lg px-2.5 text-[13px] font-semibold'
+                : 'h-auto min-h-14 gap-2 rounded-lg px-3 py-2 sm:min-h-20 sm:gap-3 sm:px-4 sm:py-3',
               isAutoSelected &&
                 cn(
                   AUTO_GROUP_FRAME_CLASS_NAME,
                   'hover:border-primary/55 data-popup-open:border-primary/55 data-popup-open:ring-primary/20'
-                )
+                ),
+              className
             )}
           />
         }
@@ -118,33 +134,41 @@ export function ApiKeyGroupCombobox({
         {isAutoSelected && (
           <AutoGroupFlowBorder shouldReduceMotion={shouldReduceMotion} />
         )}
-        <span className='flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 sm:gap-3'>
-          <span className='min-w-0'>
-            <span className='block truncate font-medium'>
-              {selectedOption?.label || placeholder || t('Select a group')}
+        {isCompact ? (
+          <span className='min-w-0 flex-1 truncate'>{triggerLabel}</span>
+        ) : (
+          <span className='flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 sm:gap-3'>
+            <span className='min-w-0'>
+              <span className='block truncate font-medium'>{triggerLabel}</span>
+              {selectedOption?.desc && (
+                <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
+                  {selectedOption.desc}
+                </span>
+              )}
             </span>
-            {selectedOption?.desc && (
-              <span className='text-muted-foreground block truncate text-[11px] sm:text-xs'>
-                {selectedOption.desc}
-              </span>
-            )}
+            <span className='max-w-full'>
+              <ApiKeyGroupPriceBadge
+                ratio={selectedOption?.ratio}
+                comparison={selectedOption?.comparison}
+                isAuto={isAutoSelected}
+                shouldReduceMotion={shouldReduceMotion}
+              />
+            </span>
           </span>
-          <span className='max-w-full'>
-            <ApiKeyGroupPriceBadge
-              ratio={selectedOption?.ratio}
-              comparison={selectedOption?.comparison}
-              isAuto={isAutoSelected}
-              shouldReduceMotion={shouldReduceMotion}
-            />
-          </span>
-        </span>
+        )}
         <ChevronsUpDown
           aria-hidden='true'
           className='size-4 shrink-0 opacity-50'
         />
       </PopoverTrigger>
       <PopoverContent
-        className='data-closed:zoom-out-100 data-open:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0 w-[var(--anchor-width)] overflow-hidden rounded-xl p-0 shadow-lg data-closed:duration-75 data-open:duration-100'
+        className={cn(
+          'data-closed:zoom-out-100 data-open:zoom-in-100 data-[side=bottom]:slide-in-from-top-0 data-[side=left]:slide-in-from-right-0 data-[side=right]:slide-in-from-left-0 data-[side=top]:slide-in-from-bottom-0 overflow-hidden rounded-xl p-0 shadow-lg data-closed:duration-75 data-open:duration-100',
+          isCompact
+            ? 'w-[max(var(--anchor-width),20rem)]'
+            : 'w-[var(--anchor-width)]'
+        )}
+        align='start'
         onWheel={(event) => event.stopPropagation()}
         onTouchMove={(event) => event.stopPropagation()}
         onPointerDown={(event) => event.stopPropagation()}
@@ -200,7 +224,13 @@ export function ApiKeyGroupCombobox({
                     </span>
                     {(isAutoOption ||
                       (option.comparison && option.comparison.factor < 1)) && (
-                      <span className='max-w-full basis-full pl-7 sm:basis-auto sm:pl-0'>
+                      <span
+                        className={cn(
+                          'max-w-full basis-full pl-7',
+                          // The narrow list keeps the badge under the name.
+                          !isCompact && 'sm:basis-auto sm:pl-0'
+                        )}
+                      >
                         <ApiKeyGroupPriceBadge
                           ratio={option.ratio}
                           comparison={option.comparison}

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { expect, test } from 'vitest'
 
-import { keyModelScopes, keyQuota } from '../lib/meow-keys'
+import { keyGroupUpdate, keyModelLimits, keyQuota } from '../lib/meow-keys'
 import type { ApiKey } from '../types'
 
 function makeKey(overrides: Partial<ApiKey>): ApiKey {
@@ -64,19 +64,73 @@ test('a limited key with nothing left shows as fully used', () => {
   )
 })
 
-test('keys without model limits have no scopes', () => {
-  expect(keyModelScopes(makeKey({ model_limits: 'gpt-6-sol' }))).toBeNull()
+test('keys without enabled model limits leave the models to their group', () => {
+  expect(keyModelLimits(makeKey({ model_limits: 'gpt-6-sol' }))).toBeNull()
 })
 
-test('model limits are grouped into Claude, GPT and other, in that order', () => {
+test('enabled model limits list each model once trimmed', () => {
   const key = makeKey({
     model_limits_enabled: true,
     model_limits: 'gemini-pro, gpt-6-sol,claude-opus',
   })
-  expect(keyModelScopes(key)).toEqual(['claude', 'gpt', 'other'])
+  expect(keyModelLimits(key)).toEqual([
+    'gemini-pro',
+    'gpt-6-sol',
+    'claude-opus',
+  ])
 })
 
-test('enabled model limits with an empty list count as all models', () => {
+test('enabled model limits with an empty list leave the models to their group', () => {
   const key = makeKey({ model_limits_enabled: true, model_limits: ' , ' })
-  expect(keyModelScopes(key)).toBeNull()
+  expect(keyModelLimits(key)).toBeNull()
+})
+
+test('a group change keeps the quota, expiry, limits and IP settings of the key', () => {
+  const key = makeKey({
+    id: 7,
+    name: 'codex',
+    remain_quota: 1234,
+    expired_time: 1_900_000_000,
+    model_limits_enabled: true,
+    model_limits: 'gpt-6-sol',
+    allow_ips: '192.0.2.1',
+    allow_user_quota_query: true,
+    group: 'CC Max',
+  })
+  expect(keyGroupUpdate(key, 'GPT Pro号池')).toEqual({
+    id: 7,
+    name: 'codex',
+    remain_quota: 1234,
+    expired_time: 1_900_000_000,
+    unlimited_quota: false,
+    model_limits_enabled: true,
+    model_limits: 'gpt-6-sol',
+    allow_ips: '192.0.2.1',
+    allow_user_quota_query: true,
+    group: 'GPT Pro号池',
+    auto_groups: [],
+    cross_group_retry: false,
+  })
+})
+
+test('a move to auto keeps the stored auto order and cross-group retry', () => {
+  const key = makeKey({
+    group: 'auto',
+    auto_groups: ['CC Max', '其他'],
+    cross_group_retry: true,
+  })
+  const update = keyGroupUpdate(key, 'auto')
+  expect(update.auto_groups).toEqual(['CC Max', '其他'])
+  expect(update.cross_group_retry).toBe(true)
+})
+
+test('a move away from auto drops the auto order and cross-group retry', () => {
+  const key = makeKey({
+    group: 'auto',
+    auto_groups: ['CC Max'],
+    cross_group_retry: true,
+  })
+  const update = keyGroupUpdate(key, '其他')
+  expect(update.auto_groups).toEqual([])
+  expect(update.cross_group_retry).toBe(false)
 })

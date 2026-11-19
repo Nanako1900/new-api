@@ -37,6 +37,8 @@ import { cn } from '@/lib/utils'
 
 import { getApiKeys, searchApiKeys } from '../../api'
 import { ERROR_MESSAGES } from '../../constants'
+import { MEOW_KEY_LIST_KEY, type MeowKeyList } from '../../lib/meow-keys'
+import { useApiKeyGroupOptions } from '../../use-api-key-group-options'
 import { ApiKeysDialogs } from '../api-keys-dialogs'
 import { ApiKeysPrimaryButtons } from '../api-keys-primary-buttons'
 import { ApiKeysProvider, useApiKeys } from '../api-keys-provider'
@@ -62,8 +64,9 @@ function KeyList() {
   const [page, setPage] = useState(1)
   const keyword = useDebounce(search.trim(), 300)
 
+  const groupOptions = useApiKeyGroupOptions()
   const query = useQuery({
-    queryKey: ['keys', 'meow', page, PAGE_SIZE, keyword, refreshTrigger],
+    queryKey: [...MEOW_KEY_LIST_KEY, page, PAGE_SIZE, keyword, refreshTrigger],
     queryFn: async () => {
       const result = keyword
         ? await searchApiKeys({ keyword, p: page, size: PAGE_SIZE })
@@ -74,10 +77,11 @@ function KeyList() {
           t(keyword ? ERROR_MESSAGES.SEARCH_FAILED : ERROR_MESSAGES.LOAD_FAILED)
         )
       }
-      return {
+      const list: MeowKeyList = {
         items: result.data?.items ?? [],
         total: result.data?.total ?? 0,
       }
+      return list
     },
     placeholderData: keepPreviousData,
   })
@@ -94,7 +98,7 @@ function KeyList() {
             <PageTitle text={t('API Keys')} />
           </h1>
           <span className='text-muted-foreground text-sm'>
-            {t('One key per project, with its own quota and models.')}
+            {t('One key per project, with its own group and quota.')}
           </span>
         </div>
         <div className='flex w-full flex-wrap items-center gap-2 sm:w-auto'>
@@ -130,7 +134,7 @@ function KeyList() {
         >
           <span>{t('Name')}</span>
           <span>{t('Key')}</span>
-          <span>{t('Models')}</span>
+          <span>{t('Group')}</span>
           <span>{t('Quota')}</span>
           <span>{t('Status')}</span>
           <span />
@@ -170,14 +174,21 @@ function KeyList() {
           <TooltipProvider delay={100}>
             <ul className={cn(query.isFetching && 'opacity-70')}>
               {items.map((item) => (
-                <MeowKeyRow key={item.id} apiKey={item} />
+                <MeowKeyRow
+                  key={item.id}
+                  apiKey={item}
+                  groups={groupOptions.groups}
+                  groupsReady={groupOptions.isFetched}
+                />
               ))}
             </ul>
           </TooltipProvider>
         )}
 
         <div className='border-border text-muted-foreground flex flex-wrap items-center justify-between gap-3 border-t px-6 py-3.5 text-[13px]'>
-          <span>{t('Group, IP allowlist and expiry are set in Edit.')}</span>
+          <span>
+            {t('Model limits, IP allowlist and expiry are set in Edit.')}
+          </span>
           {pageCount > 1 && (
             <div className='flex items-center gap-1'>
               <Button
