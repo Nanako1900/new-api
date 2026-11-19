@@ -34,7 +34,14 @@ export interface ApiResponse<T = unknown> {
  */
 export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
-export interface StripeGBPQuote {
+export interface RechargePromotion {
+  bonus_cny?: number
+  pay_percent?: number
+}
+export interface RechargePromotionTier extends RechargePromotion {
+  threshold_cny: number
+}
+export interface StripeGBPQuote extends RechargePromotion {
   currency: 'GBP'
   amount_cny: number
   principal: string
@@ -129,6 +136,7 @@ export interface WaffoPayMethod {
  * Topup configuration information
  */
 export interface TopupInfo {
+  promotion_tiers?: RechargePromotionTier[] | null
   /** Whether online topup is enabled */
   enable_online_topup: boolean
   /** Whether Stripe topup is enabled */
@@ -272,6 +280,7 @@ export type TopupStatus = 'success' | 'pending' | 'expired'
  * Topup billing record
  */
 export interface TopupRecord {
+  bonus_quota?: number
   payment_provider?: string
   /** Record ID */
   id: number

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState, type ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -43,6 +43,7 @@ const defaults: PaymentValues = {
   PayMethods: '[]',
   AmountOptions: '[]',
   AmountDiscount: '{}',
+  TopUpPromotions: [],
   StripeApiSecret: '',
   StripeWebhookSecret: '',
   StripePriceId: '',
@@ -237,4 +238,38 @@ it('requires an exchange rate and saves GBP conversion settings before enabling 
     { key: 'payment_setting.stripe_fee_enabled', value: true },
     { key: 'payment_setting.stripe_gbp_enabled', value: true },
   ])
+})
+
+it('saves a threshold bonus and discount together, and disables promotions when the last tier is removed', async () => {
+  const request = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = await openEpayTab({
+    TopUpPromotions: [{ threshold_cny: 200, bonus_cny: 20 }],
+  })
+  await user.click(screen.getByRole('tab', { name: 'General' }))
+  await user.click(screen.getByRole('button', { name: 'Add promotion tier' }))
+  await user.type(screen.getAllByLabelText('Bonus balance (CNY)')[1], '10')
+  await user.type(screen.getAllByLabelText('Percentage to pay (%)')[1], '95')
+  await user.click(screen.getByRole('button', { name: 'Save all settings' }))
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('/api/option/', {
+      key: 'TopUpPromotions',
+      value:
+        '[{"threshold_cny":200,"bonus_cny":20},{"threshold_cny":100,"bonus_cny":10,"pay_percent":95}]',
+    })
+  )
+  const group = screen.getByRole('group', { name: 'Recharge promotions' })
+  for (const remove of within(group).getAllByRole('button', {
+    name: 'Remove',
+  })) {
+    await user.click(remove)
+  }
+  await user.click(screen.getByRole('button', { name: 'Save all settings' }))
+  await waitFor(() =>
+    expect(request).toHaveBeenCalledWith('/api/option/', {
+      key: 'TopUpPromotions',
+      value: '[]',
+    })
+  )
 })

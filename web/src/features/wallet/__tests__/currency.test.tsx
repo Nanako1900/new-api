@@ -241,3 +241,36 @@ it('updates currency formatting when the interface language changes', async () =
     '10 ¥'
   )
 })
+
+it('shows the qualified CNY bonus separately from the discounted GBP charge and fee', () => {
+  const quote = {
+    currency: 'GBP',
+    amount_cny: 100,
+    principal: '11.31',
+    fee: '0.53',
+    total: '11.84',
+    exchange_rate: '8.4',
+    quote_id: 'test',
+    bonus_cny: 10,
+    pay_percent: 95,
+  } as const
+  renderWallet(
+    <PaymentConfirmDialog
+      open
+      onOpenChange={vi.fn()}
+      onConfirm={vi.fn()}
+      topupAmount={100}
+      paymentAmount={11.84}
+      paymentMethod={{ name: 'Stripe', type: 'stripe' }}
+      calculating={false}
+      processing={false}
+      stripeGBPEnabled
+      stripeQuote={quote}
+      promotion={quote}
+    />
+  )
+  for (const label of ['¥100', 'Bonus: ¥10', 'Pay 95%', '£11.84']) {
+    expect(screen.getByText(label)).toBeVisible()
+  }
+  expect(screen.getByText(/Stripe processing fee/)).toHaveTextContent('£0.53')
+})

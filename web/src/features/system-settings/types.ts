@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { RechargePromotionTier } from '@/features/wallet/types'
+
 export type SystemOption = {
   key: string
   value: string
@@ -318,6 +320,7 @@ export type BillingSettings = {
   CustomCallbackAddress: string
   PayMethods: string
   'payment_setting.amount_options': string
+  TopUpPromotions: RechargePromotionTier[]
   'payment_setting.amount_discount': string
   'payment_setting.epay_sign_type': string
   'payment_setting.epay_merchant_private_key': string

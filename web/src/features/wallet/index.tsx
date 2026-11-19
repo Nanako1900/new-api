@@ -33,7 +33,7 @@ import { TransferDialog } from './components/dialogs/transfer-dialog'
 import { MeowWalletStatsCard as WalletStatsCard } from './components/meow-wallet-stats-card'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
-import { DEFAULT_DISCOUNT_RATE, PAYMENT_TYPES } from './constants'
+import { PAYMENT_TYPES } from './constants'
 import {
   useTopupInfo,
   usePayment,
@@ -45,6 +45,7 @@ import {
 } from './hooks'
 import {
   getDefaultPaymentType,
+  rechargePromotion,
   getMinTopupAmount,
   dispatchSelectedPayment,
 } from './lib'
@@ -305,10 +306,13 @@ export function Wallet(props: WalletProps) {
     }
   }
 
-  // Get discount rate for current topup amount
-  const getDiscountRate = useCallback(() => {
-    return topupInfo?.discount?.[topupAmount] || DEFAULT_DISCOUNT_RATE
-  }, [topupInfo, topupAmount])
+  const promotion = stripeGBPCurrent
+    ? stripeQuote
+    : rechargePromotion(topupInfo, currentTopupAmount, false)
+  const discountRate = Math.min(
+    topupInfo?.discount?.[topupAmount] || 1,
+    (promotion?.pay_percent ?? 100) / 100
+  )
 
   const handleSubscriptionAvailabilityChange = useCallback(
     (available: boolean) => {
@@ -394,7 +398,8 @@ export function Wallet(props: WalletProps) {
         paymentMethod={selectedPaymentMethod}
         calculating={calculating}
         processing={processing || waffoProcessing || pancakeProcessing}
-        discountRate={getDiscountRate()}
+        discountRate={discountRate}
+        promotion={promotion}
         stripeQuote={stripeQuote}
         stripeGBPEnabled={topupInfo?.stripe_gbp_enabled}
         stripeFeeEnabled={topupInfo?.stripe_fee_enabled}

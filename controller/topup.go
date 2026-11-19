@@ -112,7 +112,7 @@ func GetTopUpInfo(c *gin.Context) {
 			}
 			return nil
 		}(),
-		"creem_products":           setting.CreemProducts,
+		"creem_products":           creemWalletCatalog(),
 		"pay_methods":              payMethods,
 		"min_topup":                operation_setting.MinTopUp,
 		"stripe_min_topup":         setting.StripeMinTopUp,
@@ -126,6 +126,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"waffo_min_topup":          setting.WaffoMinTopUp,
 		"waffo_pancake_min_topup":  setting.WaffoPancakeMinTopUp,
 		"amount_options":           operation_setting.GetPaymentSetting().AmountOptions,
+		"promotion_tiers":          operation_setting.TopUpPromotionTiers(),
 		"discount":                 operation_setting.GetPaymentSetting().AmountDiscount,
 		"topup_link":               common.TopUpLink,
 	}
@@ -163,7 +164,7 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
-func getPayMoney(amount int64, group string) float64 {
+func getPayMoney(amount int64, group string, offer operation_setting.TopUpOffer) float64 {
 	dAmount := decimal.NewFromInt(amount)
 	// 充值金额以“展示类型”为准：
 	// - USD/CNY: 前端传 amount 为金额单位；TOKENS: 前端传 tokens，需要换成 USD 金额
@@ -180,12 +181,7 @@ func getPayMoney(amount int64, group string) float64 {
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
 	dPrice := decimal.NewFromFloat(operation_setting.Price)
 	// apply optional preset discount by the original request amount (if configured), default 1.0
-	discount := 1.0
-	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
-		if ds > 0 {
-			discount = ds
-		}
-	}
+	discount := offer.WalletDiscountRate(amount)
 	dDiscount := decimal.NewFromFloat(discount)
 
 	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
@@ -283,8 +279,19 @@ func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decima
 	return false
 }
 
-func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
+func rechargeAmountOffer(amount int64) (operation_setting.TopUpOffer, error) {
+	face := decimal.NewFromInt(amount)
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		face = face.Div(decimal.NewFromFloat(common.QuotaPerUnit))
+	}
+	return operation_setting.QuoteTopUpOffer(face, false)
+}
+
+func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64, bonus int) bool {
 	creditedQuota, err := validateTopUpQuota(amount)
+	if err == nil {
+		creditedQuota, err = common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(int64(creditedQuota)).Add(decimal.NewFromInt(int64(bonus))))
+	}
 	if err == nil {
 		err = model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
 	}
@@ -307,7 +314,12 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 	id := c.GetInt("id")
-	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+	offer, err := rechargeAmountOffer(req.Amount)
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
+	if rejectInvalidTopUpQuota(c, id, req.Amount, offer.BonusQuota) {
 		return
 	}
 
@@ -316,7 +328,7 @@ func RequestEpay(c *gin.Context) {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
 		return
 	}
-	payMoney := getPayMoney(req.Amount, group)
+	payMoney := getPayMoney(req.Amount, group, offer)
 	if payMoney < 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
@@ -359,6 +371,7 @@ func RequestEpay(c *gin.Context) {
 	}
 	topUp := &model.TopUp{
 		UserId:            id,
+		BonusQuota:        offer.BonusQuota,
 		Amount:            amount,
 		Money:             payMoney,
 		TradeNo:           tradeNo,
@@ -525,7 +538,12 @@ func RequestAmount(c *gin.Context) {
 		return
 	}
 	id := c.GetInt("id")
-	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+	offer, err := rechargeAmountOffer(req.Amount)
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
+	if rejectInvalidTopUpQuota(c, id, req.Amount, offer.BonusQuota) {
 		return
 	}
 	group, err := model.GetUserGroup(id, true)
@@ -533,7 +551,7 @@ func RequestAmount(c *gin.Context) {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
 		return
 	}
-	payMoney := getPayMoney(req.Amount, group)
+	payMoney := getPayMoney(req.Amount, group, offer)
 	if payMoney <= 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return

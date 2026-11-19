@@ -103,6 +103,7 @@ func TestAffiliateDatabaseMatrix(t *testing.T) {
 					assert.Equal(t, 1000, user.AffHistoryQuota)
 					assert.Equal(t, 100, user.InviterId)
 					assert.False(t, GetTopUpByTradeNo("legacy-paid").AffiliateEligible)
+					assert.Zero(t, GetTopUpByTradeNo("legacy-paid").BonusQuota)
 					err := db.Create(&User{Id: 98, Username: "unique-test", AffCode: "legacy"}).Error
 					require.Error(t, err)
 				}
@@ -190,7 +191,7 @@ func testAffiliatePayments(t *testing.T) {
 		})
 	}
 	// Manual completion requires verified money for eligible orders and uses Creem's quota units.
-	manual := TopUp{UserId: 101, Amount: 123, Money: 10, TradeNo: "cashback-manual", PaymentProvider: PaymentProviderCreem, Status: common.TopUpStatusPending, AffiliateCurrency: "CNY"}
+	manual := TopUp{UserId: 101, Amount: 123, BonusQuota: 17, Money: 10, TradeNo: "cashback-manual", PaymentProvider: PaymentProviderCreem, Status: common.TopUpStatusPending, AffiliateCurrency: "CNY"}
 	require.NoError(t, manual.Insert())
 	require.Error(t, ManualCompleteTopUp(manual.TradeNo, ""))
 	var buyer User
@@ -198,7 +199,7 @@ func testAffiliatePayments(t *testing.T) {
 	before := buyer.Quota
 	require.NoError(t, ManualCompleteTopUp(manual.TradeNo, "", AffiliatePayment{Amount: "10.00", Currency: "CNY"}))
 	require.NoError(t, DB.First(&buyer, 101).Error)
-	assert.Equal(t, before+123, buyer.Quota)
+	assert.Equal(t, before+123+17, buyer.Quota)
 	legacy := TopUp{UserId: 101, Amount: 1, TradeNo: "legacy-pending", PaymentProvider: PaymentProviderEpay, Status: common.TopUpStatusPending}
 	require.NoError(t, DB.Create(&legacy).Error)
 	require.NoError(t, ManualCompleteTopUp(legacy.TradeNo, ""))
@@ -460,7 +461,7 @@ func testAffiliateGBPRecharge(t *testing.T) {
 	require.NoError(t, DB.First(&buyer, 101).Error)
 	walletBefore := buyer.Quota
 	credit := decimal.NewFromInt(100).Div(decimal.NewFromFloat(7.3))
-	order := TopUp{UserId: 101, Amount: 100, Money: credit.InexactFloat64(), TradeNo: "gbp-cny-recharge", PaymentProvider: PaymentProviderStripe, PaymentMethod: PaymentMethodStripe, Status: common.TopUpStatusPending, AffiliateCurrency: "GBP", AffiliateExchangeRate: "8", AffiliateFeeCents: 57}
+	order := TopUp{UserId: 101, Amount: 100, Money: credit.InexactFloat64(), TradeNo: "gbp-cny-recharge", BonusQuota: 12345, PaymentProvider: PaymentProviderStripe, PaymentMethod: PaymentMethodStripe, Status: common.TopUpStatusPending, AffiliateCurrency: "GBP", AffiliateExchangeRate: "8", AffiliateFeeCents: 57}
 	require.NoError(t, order.Insert())
 	var snapshot AffiliateOrder
 	require.NoError(t, DB.First(&snapshot, "trade_no = ?", order.TradeNo).Error)
@@ -476,7 +477,7 @@ func testAffiliateGBPRecharge(t *testing.T) {
 	require.NoError(t, DB.First(&buyer, 101).Error)
 	quota, err := common.WalletQuotaFromDecimalStrict(decimal.NewFromFloat(order.Money).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
 	require.NoError(t, err)
-	assert.Equal(t, walletBefore+quota, buyer.Quota, "exactly one USD-equivalent recharge, excluding the GBP fee")
+	assert.Equal(t, walletBefore+quota+12345, buyer.Quota, "exactly one USD-equivalent recharge, excluding the GBP fee")
 	after, err := GetAffiliateSummary(100)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1000, after.BalanceCents-before.BalanceCents, "(1307 - 57) pence × CNY 8/GBP × 10% = CNY 10")
