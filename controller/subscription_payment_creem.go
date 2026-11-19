@@ -118,7 +118,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		Quota:     0,
 	}
 
-	checkoutUrl, err := genCreemLink(c.Request.Context(), referenceId, product, user.Email, user.Username)
+	checkoutUrl, err := genCreemLink(c.Request.Context(), referenceId, product, user.Email, user.Username, 0)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Creem failed to create subscription payment link trade_no=%s product_id=%s error=%q", referenceId, product.ProductId, err.Error()))
 		paymentError(c, common.NewMessage("Failed to start payment"))

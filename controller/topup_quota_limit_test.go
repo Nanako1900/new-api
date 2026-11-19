@@ -237,6 +237,7 @@ func TestStripeGBPCNYCheckout(t *testing.T) {
 	require.NoError(t, db.Create(&model.User{Id: 42, Username: "gbp-buyer", Group: "default", Status: common.UserStatusEnabled}).Error)
 	priceJSON := `{"id":"price_gbp_penny","object":"price","active":true,"currency":"gbp","type":"one_time","billing_scheme":"per_unit","unit_amount":1,"unit_amount_decimal":"1"}`
 	created := 0
+	wantPrincipal, wantFee, wantTotal := "1250", "57", 1307
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
@@ -246,13 +247,13 @@ func TestStripeGBPCNYCheckout(t *testing.T) {
 		created++
 		require.NoError(t, r.ParseForm())
 		assert.Equal(t, "price_gbp_penny", r.Form.Get("line_items[0][price]"))
-		assert.Equal(t, "1250", r.Form.Get("line_items[0][quantity]"), "GBP 0.01 × 1250 = GBP 12.50")
-		assert.Equal(t, "57", r.Form.Get("line_items[1][price_data][unit_amount]"))
+		assert.Equal(t, wantPrincipal, r.Form.Get("line_items[0][quantity]"))
+		assert.Equal(t, wantFee, r.Form.Get("line_items[1][price_data][unit_amount]"))
 		assert.Equal(t, "gbp", r.Form.Get("line_items[1][price_data][currency]"))
 		assert.Equal(t, "false", r.Form.Get("adaptive_pricing[enabled]"))
 		assert.Equal(t, "false", r.Form.Get("allow_promotion_codes"))
 		assert.Equal(t, "payment", r.Form.Get("mode"))
-		_, _ = w.Write([]byte(`{"id":"cs_local","object":"checkout.session","currency":"gbp","amount_total":1307,"url":"https://checkout.stripe.com/local"}`))
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"id":"cs_local","object":"checkout.session","currency":"gbp","amount_total":%d,"url":"https://checkout.stripe.com/local"}`, wantTotal)))
 	}))
 	defer server.Close()
 	stripe.SetBackend(stripe.APIBackend, stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{URL: stripe.String(server.URL), MaxNetworkRetries: stripe.Int64(0)}))
@@ -322,4 +323,81 @@ func TestStripeGBPCNYCheckout(t *testing.T) {
 	rounded, err := calculateStripeGBPQuote(100, "default")
 	require.NoError(t, err)
 	assert.Equal(t, "11.91", rounded.Total)
+	require.NoError(t, operation_setting.SetTopUpPromotions(`[{"threshold_cny":100,"bonus_cny":10,"pay_percent":95}]`))
+	t.Cleanup(func() { require.NoError(t, operation_setting.SetTopUpPromotions("[]")) })
+	settings.StripeFeeEnabled = true
+	priceJSON = `{"id":"price_gbp_penny","object":"price","active":true,"currency":"gbp","type":"one_time","billing_scheme":"per_unit","unit_amount":1,"unit_amount_decimal":"1"}`
+	wantPrincipal, wantFee, wantTotal = "1131", "53", 1184
+	promoted, err := calculateStripeGBPQuote(100, "default")
+	require.NoError(t, err)
+	paid := httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(paid)
+	ctx.Set("id", 42)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/stripe/pay", nil)
+	stripeAdaptor.RequestPay(ctx, &StripePayRequest{AmountCNY: 100, PaymentMethod: "stripe", QuoteID: promoted.QuoteID})
+	assert.Contains(t, paid.Body.String(), "https://checkout.stripe.com/local")
+	assert.Equal(t, 2, created)
+	var giftOrder model.TopUp
+	require.NoError(t, db.Last(&giftOrder).Error)
+	assert.Equal(t, promoted.BonusQuota, giftOrder.BonusQuota)
+	assert.Positive(t, giftOrder.BonusQuota)
+	assert.Equal(t, order.Money, giftOrder.Money)
+
+}
+
+func TestRechargePromotionThresholds(t *testing.T) {
+	settings := operation_setting.GetPaymentSetting()
+	prev, fx, unit, display := *settings, operation_setting.USDExchangeRate, common.QuotaPerUnit, operation_setting.GetGeneralSetting().QuotaDisplayType
+	t.Cleanup(func() {
+		*settings = prev
+		operation_setting.USDExchangeRate = fx
+		common.QuotaPerUnit = unit
+		operation_setting.GetGeneralSetting().QuotaDisplayType = display
+		require.NoError(t, operation_setting.SetTopUpPromotions("[]"))
+	})
+	operation_setting.USDExchangeRate = 8
+	common.QuotaPerUnit = 500000
+	settings.StripeGBPExchangeRate = 8.4
+	settings.StripeFeeEnabled = true
+	settings.StripeFeeFixedGBP = 0.20
+	settings.StripeFeePercent = 2.9
+	settings.AmountDiscount = map[int]float64{25: 0.9}
+	require.NoError(t, operation_setting.SetTopUpPromotions(`[{"threshold_cny":300,"bonus_cny":40},{"threshold_cny":100,"bonus_cny":10,"pay_percent":95}]`))
+	for _, invalid := range []string{`null`, `{}`, `[{"threshold_cny":100}]`, `[{"threshold_cny":100,"bonus_cny":1},{"threshold_cny":100,"pay_percent":95}]`, `[{"threshold_cny":0,"bonus_cny":2}]`, `[{"threshold_cny":100,"pay_percent":-5}]`, `[{"threshold_cny":100,"bonus_cny":0.001}]`, `[{"threshold_cny":100,"bonus_cny":10,"pay_percen":95}]`} {
+		require.Error(t, operation_setting.SetTopUpPromotions(invalid))
+	}
+	for _, tc := range []struct {
+		face       string
+		bonus, pct float64
+	}{{"99.99", 0, 0}, {"100", 10, 95}, {"299.99", 10, 95}, {"300", 40, 95}, {"400", 40, 95}} {
+		face, err := decimal.NewFromString(tc.face)
+		require.NoError(t, err)
+		offer, err := operation_setting.QuoteTopUpOffer(face, true)
+		require.NoError(t, err)
+		assert.Equal(t, tc.bonus, offer.BonusCNY)
+		assert.Equal(t, tc.pct, offer.PayPercent)
+		assert.Equal(t, int(tc.bonus*62500), offer.BonusQuota)
+	}
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
+	tokenOffer, err := rechargeAmountOffer(6250000)
+	require.NoError(t, err)
+	assert.Equal(t, 625000, tokenOffer.BonusQuota)
+	assert.Equal(t, 0.9, tokenOffer.WalletDiscountRate(25))
+	quote, err := calculateStripeGBPQuote(100, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "11.31", quote.Principal)
+	assert.Equal(t, "0.53", quote.Fee)
+	assert.Equal(t, "11.84", quote.Total)
+	assert.Equal(t, 625000, quote.BonusQuota)
+	offer, cents, err := creemWalletOffer(CreemProduct{Price: 10, Quota: 6250000})
+	require.NoError(t, err)
+	assert.EqualValues(t, 950, cents)
+	assert.Equal(t, 625000, offer.BonusQuota)
+	_, _, err = creemWalletOffer(CreemProduct{Price: 1, Quota: 6250000})
+	require.Error(t, err)
+	require.NoError(t, operation_setting.SetTopUpPromotions(`[{"threshold_cny":100,"bonus_cny":5,"pay_percent":95}]`))
+	changed, err := calculateStripeGBPQuote(100, "default")
+	require.NoError(t, err)
+	assert.Equal(t, quote.Total, changed.Total)
+	assert.NotEqual(t, quote.QuoteID, changed.QuoteID)
 }

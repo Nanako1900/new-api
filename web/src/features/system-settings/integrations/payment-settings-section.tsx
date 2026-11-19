@@ -20,7 +20,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Code2, Eye, ShieldAlert } from 'lucide-react'
 import * as React from 'react'
-import { useForm, type Resolver } from 'react-hook-form'
+import { useFieldArray, useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
@@ -142,6 +142,36 @@ const paymentSchema = z.object({
       })
     }
   }),
+  TopUpPromotions: z
+    .array(
+      z.object({
+        threshold_cny: z.number(),
+        bonus_cny: z.number().optional(),
+        pay_percent: z.number().optional(),
+      })
+    )
+    .refine(
+      (tiers) =>
+        tiers.length <= 50 &&
+        new Set(tiers.map((t) => t.threshold_cny)).size === tiers.length &&
+        tiers.every((t) => {
+          const bonus = t.bonus_cny ?? 0,
+            pct = t.pay_percent ?? 0
+          return (
+            t.threshold_cny > 0 &&
+            t.threshold_cny <= 1000000 &&
+            bonus >= 0 &&
+            bonus <= 1000000 &&
+            pct >= 0 &&
+            pct < 100 &&
+            (bonus > 0 || pct > 0) &&
+            [t.threshold_cny, bonus, pct].every(
+              (n) => Number(n.toFixed(2)) === n
+            )
+          )
+        }),
+      'Invalid recharge promotion tiers'
+    ),
   AmountDiscount: z.string().superRefine((value, ctx) => {
     const error = getJsonError(
       value,
@@ -384,6 +414,10 @@ export function PaymentSettingsSection({
     },
   })
 
+  const promotionRows = useFieldArray({
+    control: form.control,
+    name: 'TopUpPromotions',
+  })
   const { isSubmitting } = form.formState
 
   const setPaymentValue = React.useCallback(
@@ -626,6 +660,16 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'payment_setting.amount_options',
         value: sanitized.AmountOptions,
+      })
+    }
+
+    if (
+      JSON.stringify(values.TopUpPromotions) !==
+      JSON.stringify(initialRef.current.TopUpPromotions)
+    ) {
+      updates.push({
+        key: 'TopUpPromotions',
+        value: JSON.stringify(values.TopUpPromotions),
       })
     }
 
@@ -1226,6 +1270,66 @@ export function PaymentSettingsSection({
                   />
                 </div>
               </div>
+              <fieldset className='mt-6 space-y-3'>
+                <legend className='font-medium'>
+                  {t('Recharge promotions')}
+                </legend>
+                <p className='text-muted-foreground text-sm'>
+                  {t(
+                    'Use the face value of one recharge before fees. The highest qualifying bonus and discount tiers apply together. Leave one benefit blank if unused. Enter 95 to charge 95%.'
+                  )}
+                </p>
+                {promotionRows.fields.map((row, i) => (
+                  <div
+                    key={row.id}
+                    className='grid gap-2 rounded-md border p-3 sm:grid-cols-[1fr_1fr_1fr_auto] sm:items-end'
+                  >
+                    {(
+                      [
+                        ['threshold_cny', t('Minimum recharge (CNY)')],
+                        ['bonus_cny', t('Bonus balance (CNY)')],
+                        ['pay_percent', t('Percentage to pay (%)')],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className='space-y-1 text-sm'>
+                        {label}
+                        <Input
+                          type='number'
+                          step='0.01'
+                          min={key === 'threshold_cny' ? 0.01 : 0}
+                          max={key === 'pay_percent' ? 99.99 : 1000000}
+                          {...form.register(`TopUpPromotions.${i}.${key}`, {
+                            setValueAs: (v) =>
+                              v === '' ? undefined : Number(v),
+                          })}
+                        />
+                      </label>
+                    ))}
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      type='button'
+                      onClick={() => promotionRows.remove(i)}
+                    >
+                      {t('Remove')}
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  variant='outline'
+                  size='sm'
+                  type='button'
+                  disabled={promotionRows.fields.length >= 50}
+                  onClick={() => promotionRows.append({ threshold_cny: 100 })}
+                >
+                  {t('Add promotion tier')}
+                </Button>
+                {form.formState.errors.TopUpPromotions && (
+                  <p role='alert' className='text-destructive text-sm'>
+                    {t('Invalid recharge promotion tiers')}
+                  </p>
+                )}
+              </fieldset>
             </TabsContent>
 
             <TabsContent value='epay' className={paymentTabContentClassName}>

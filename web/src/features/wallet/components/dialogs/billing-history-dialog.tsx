@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { formatCurrencyFromUSD } from '@/lib/currency'
+import { formatCurrencyFromUSD, formatQuotaWithCurrency } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 
 import { useBillingHistory } from '../../hooks/use-billing-history'
@@ -248,18 +248,30 @@ export function BillingHistoryDialog({
                               : t('Amount')}
                           </Label>
                           <div className='text-sm font-semibold'>
-                            {formatCurrencyFromUSD(
-                              record.payment_provider === 'stripe'
-                                ? record.money
-                                : record.amount,
-                              {
-                                digitsLarge: 2,
-                                digitsSmall: 2,
-                                abbreviate: false,
-                              }
-                            )}
+                            {record.payment_provider === 'creem'
+                              ? formatQuotaWithCurrency(record.amount)
+                              : formatCurrencyFromUSD(
+                                  record.payment_provider === 'stripe'
+                                    ? record.money
+                                    : record.amount,
+                                  {
+                                    digitsLarge: 2,
+                                    digitsSmall: 2,
+                                    abbreviate: false,
+                                  }
+                                )}
                           </div>
                         </div>
+                        {!!record.bonus_quota && (
+                          <div className='space-y-1'>
+                            <Label className='text-muted-foreground text-xs'>
+                              {t('Bonus credit')}
+                            </Label>
+                            <div className='text-sm font-semibold'>
+                              {formatQuotaWithCurrency(record.bonus_quota)}
+                            </div>
+                          </div>
+                        )}
                         {record.payment_provider !== 'stripe' && (
                           <div className='space-y-1'>
                             <Label className='text-muted-foreground text-xs'>

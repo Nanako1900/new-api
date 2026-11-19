@@ -86,7 +86,7 @@ func formatWaffoAmount(amount float64, currency string) string {
 // getWaffoPayMoney converts the user-facing amount to USD for Waffo payment.
 // Waffo only accepts USD, so this function handles the conversion from different
 // display types (USD/CNY/TOKENS) to the actual USD amount to charge.
-func getWaffoPayMoney(amount float64, group string) float64 {
+func getWaffoPayMoney(amount float64, group string, offer operation_setting.TopUpOffer) float64 {
 	originalAmount := amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		amount = amount / common.QuotaPerUnit
@@ -95,12 +95,7 @@ func getWaffoPayMoney(amount float64, group string) float64 {
 	if topupGroupRatio == 0 {
 		topupGroupRatio = 1
 	}
-	discount := 1.0
-	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(originalAmount)]; ok {
-		if ds > 0 {
-			discount = ds
-		}
-	}
+	discount := offer.WalletDiscountRate(int64(originalAmount))
 	return amount * setting.WaffoUnitPrice * topupGroupRatio * discount
 }
 
@@ -124,7 +119,12 @@ func RequestWaffoAmount(c *gin.Context) {
 		return
 	}
 	id := c.GetInt("id")
-	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+	offer, err := rechargeAmountOffer(req.Amount)
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
+	if rejectInvalidTopUpQuota(c, id, req.Amount, offer.BonusQuota) {
 		return
 	}
 
@@ -134,7 +134,7 @@ func RequestWaffoAmount(c *gin.Context) {
 		return
 	}
 
-	payMoney := getWaffoPayMoney(float64(req.Amount), group)
+	payMoney := getWaffoPayMoney(float64(req.Amount), group, offer)
 	if payMoney <= 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
@@ -161,7 +161,12 @@ func RequestWaffoPay(c *gin.Context) {
 		return
 	}
 	id := c.GetInt("id")
-	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+	offer, err := rechargeAmountOffer(req.Amount)
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
+	if rejectInvalidTopUpQuota(c, id, req.Amount, offer.BonusQuota) {
 		return
 	}
 
@@ -204,7 +209,7 @@ func RequestWaffoPay(c *gin.Context) {
 	// resolvedPayMethodType/Name 为空时，Waffo 自动选择支付方式
 
 	group, _ := model.GetUserGroup(id, true)
-	payMoney := getWaffoPayMoney(float64(req.Amount), group)
+	payMoney := getWaffoPayMoney(float64(req.Amount), group, offer)
 	if payMoney < 0.01 {
 		paymentError(c, common.NewMessage("Payment amount is too low"))
 		return
@@ -223,6 +228,7 @@ func RequestWaffoPay(c *gin.Context) {
 	// 创建本地订单
 	topUp := &model.TopUp{
 		UserId:            id,
+		BonusQuota:        offer.BonusQuota,
 		Amount:            amount,
 		Money:             payMoney,
 		TradeNo:           merchantOrderId,

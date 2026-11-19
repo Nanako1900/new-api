@@ -26,6 +26,7 @@ import {
 } from '@/lib/currency'
 
 import { DEFAULT_DISCOUNT_RATE } from '../constants'
+import type { RechargePromotion, TopupInfo } from '../types'
 
 // ============================================================================
 // Wallet-specific Formatting Functions
@@ -120,4 +121,25 @@ export function calculatePresetPricing(
     savedAmount,
     hasDiscount,
   }
+}
+
+/** Mirror the published tiers for previews. GBP confirmation uses the server quote. */
+export function rechargePromotion(
+  info: TopupInfo | null,
+  amount: number,
+  inCNY: boolean
+): RechargePromotion {
+  if (!info?.promotion_tiers?.length) return {}
+  const { config, meta } = getCurrencyDisplay()
+  const face = inCNY
+    ? amount
+    : (meta.kind === 'tokens' ? amount / config.quotaPerUnit : amount) *
+      (info.stripe_usd_exchange_rate ?? config.usdExchangeRate)
+  const result: RechargePromotion = {}
+  for (const tier of info.promotion_tiers) {
+    if (face + Number.EPSILON * Math.max(1, face) < tier.threshold_cny) break
+    if (tier.bonus_cny) result.bonus_cny = tier.bonus_cny
+    if (tier.pay_percent) result.pay_percent = tier.pay_percent
+  }
+  return result
 }

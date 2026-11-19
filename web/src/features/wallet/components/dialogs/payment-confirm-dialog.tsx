@@ -32,7 +32,11 @@ import {
   getPaymentIcon,
   isStripePayment,
 } from '../../lib'
-import type { PaymentMethod, StripeGBPQuote } from '../../types'
+import type {
+  PaymentMethod,
+  StripeGBPQuote,
+  RechargePromotion,
+} from '../../types'
 
 interface PaymentConfirmDialogProps {
   open: boolean
@@ -43,6 +47,7 @@ interface PaymentConfirmDialogProps {
   paymentMethod: PaymentMethod | undefined
   calculating: boolean
   processing: boolean
+  promotion?: RechargePromotion | null
   discountRate?: number
   stripeQuote?: StripeGBPQuote | null
   stripeGBPEnabled?: boolean
@@ -92,6 +97,24 @@ export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
           </span>
         </div>
 
+        {!!props.promotion?.bonus_cny && (
+          <p className='text-sm font-medium'>
+            {t('Bonus: {{amount}}', {
+              amount: formatCurrencyAmount(props.promotion.bonus_cny, 'CNY', {
+                locale,
+              }),
+            })}
+          </p>
+        )}
+        {isStripe && !!props.promotion?.pay_percent && (
+          <p className='text-sm'>
+            {t('Pay {{percent}}%', {
+              percent: props.stripeGBPEnabled
+                ? props.promotion.pay_percent
+                : Math.min(props.promotion.pay_percent, discountRate * 100),
+            })}
+          </p>
+        )}
         {!isStripe && (
           <div className='flex items-center justify-between gap-3'>
             <span className='text-muted-foreground text-sm'>

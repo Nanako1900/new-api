@@ -42,6 +42,7 @@ import { useSystemConfigStore } from '@/stores/system-config-store'
 import {
   formatTopupCredit,
   getDiscountLabel,
+  rechargePromotion,
   getPaymentIcon,
   getMinTopupAmount,
 } from '../lib'
@@ -143,6 +144,13 @@ export function RechargeFormCard({
           (topupInfo?.stripe_usd_exchange_rate ?? 1)
       )
     : getMinTopupAmount(topupInfo)
+  const currentOffer = rechargePromotion(topupInfo, topupAmount, !!cnyAmounts)
+  const currentPayPercent = cnyAmounts
+    ? currentOffer.pay_percent
+    : Math.min(
+        currentOffer.pay_percent ?? 100,
+        100 * (topupInfo?.discount?.[topupAmount] || 1)
+      )
   const redemptionEnabled = topupInfo?.enable_redemption !== false
 
   if (loading) {
@@ -221,6 +229,43 @@ export function RechargeFormCard({
       {/* Online Topup Section */}
       {hasAnyTopup ? (
         <div className='space-y-4 sm:space-y-6'>
+          {!!topupInfo?.promotion_tiers?.length && (
+            <div className='space-y-1 rounded-md border p-3 text-sm'>
+              <p className='font-semibold'>{t('Recharge promotions')}</p>
+              <ul className='space-y-1'>
+                {topupInfo.promotion_tiers.map((tier) => (
+                  <li
+                    key={tier.threshold_cny}
+                    className='flex flex-wrap gap-x-2'
+                  >
+                    <span>
+                      {t('From {{amount}}', {
+                        amount: formatCurrencyAmount(
+                          tier.threshold_cny,
+                          'CNY',
+                          { locale }
+                        ),
+                      })}
+                    </span>
+                    {!!tier.bonus_cny && (
+                      <span>
+                        {t('Bonus: {{amount}}', {
+                          amount: formatCurrencyAmount(tier.bonus_cny, 'CNY', {
+                            locale,
+                          }),
+                        })}
+                      </span>
+                    )}
+                    {!!tier.pay_percent && (
+                      <span>
+                        {t('Pay {{percent}}%', { percent: tier.pay_percent })}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {hasConfigurableTopup && (
             <>
               {presetAmounts.length > 0 && (
@@ -230,11 +275,20 @@ export function RechargeFormCard({
                   </Label>
                   <div className='grid grid-cols-2 gap-1.5 sm:gap-3 md:grid-cols-4'>
                     {presetAmounts.map((preset) => {
-                      const discount =
-                        preset.discount ||
-                        topupInfo?.discount?.[preset.value] ||
-                        1.0
-                      const hasDiscount = !cnyAmounts && discount < 1
+                      const promo = rechargePromotion(
+                        topupInfo,
+                        preset.value,
+                        !!cnyAmounts
+                      )
+                      const discount = Math.min(
+                        cnyAmounts
+                          ? 1
+                          : preset.discount ||
+                              topupInfo?.discount?.[preset.value] ||
+                              1,
+                        (promo.pay_percent ?? 100) / 100
+                      )
+                      const hasDiscount = discount < 1
                       return (
                         <Button
                           key={preset.value}
@@ -300,6 +354,22 @@ export function RechargeFormCard({
                       : t('Balance credit: {{amount}}', {
                           amount: formatTopupCredit(topupAmount, { locale }),
                         })}
+                    {!!currentOffer.bonus_cny && (
+                      <span className='ms-2'>
+                        {t('Bonus: {{amount}}', {
+                          amount: formatCurrencyAmount(
+                            currentOffer.bonus_cny,
+                            'CNY',
+                            { locale }
+                          ),
+                        })}
+                      </span>
+                    )}
+                    {!!currentOffer.pay_percent && (
+                      <span className='ms-2'>
+                        {t('Pay {{percent}}%', { percent: currentPayPercent })}
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>

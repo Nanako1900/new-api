@@ -6,13 +6,13 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"io"
 	"net/http"
 	"time"
@@ -61,6 +61,58 @@ type CreemProduct struct {
 	Quota     int64   `json:"quota"`
 }
 
+// creemWalletOffer prices a one-time product from the configured quota, not the checkout currency.
+func creemWalletOffer(p CreemProduct) (operation_setting.TopUpOffer, int64, error) {
+	var offer operation_setting.TopUpOffer
+	if len(operation_setting.TopUpPromotionTiers()) == 0 {
+		return offer, 0, nil
+	}
+	if common.QuotaPerUnit <= 0 || p.Quota <= 0 {
+		return offer, 0, common.NewMessage("Invalid top-up amount")
+	}
+	offer, err := operation_setting.QuoteTopUpOffer(decimal.NewFromInt(p.Quota).Div(decimal.NewFromFloat(common.QuotaPerUnit)), false)
+	if err != nil || offer.PayPercent == 0 {
+		return offer, 0, err
+	}
+	cents := offer.Discounted(decimal.NewFromFloat(p.Price)).Shift(2).Round(0)
+	if cents.LessThan(decimal.NewFromInt(100)) || cents.GreaterThan(decimal.NewFromInt(99999999)) {
+		return offer, 0, common.NewMessage("Creem promotional price must be between 1 and 999999.99 in the product currency")
+	}
+	return offer, cents.IntPart(), nil
+}
+
+// Keep the catalogue's existing wire format; exclude offers that the gateway cannot sell.
+func creemWalletCatalog() string {
+	if len(operation_setting.TopUpPromotionTiers()) == 0 {
+		return setting.CreemProducts
+	}
+	var products []CreemProduct
+	if common.UnmarshalJsonStr(setting.CreemProducts, &products) != nil {
+		return "[]"
+	}
+	visible := make([]CreemProduct, 0, len(products))
+	for _, p := range products {
+		offer, cents, err := creemWalletOffer(p)
+		if err != nil {
+			continue
+		}
+		quota, err := common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(p.Quota).Add(decimal.NewFromInt(int64(offer.BonusQuota))))
+		if err != nil {
+			continue
+		}
+		p.Quota = int64(quota)
+		if cents > 0 {
+			p.Price = decimal.NewFromInt(cents).Shift(-2).InexactFloat64()
+		}
+		visible = append(visible, p)
+	}
+	data, err := common.Marshal(visible)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
 type CreemAdaptor struct {
 }
 
@@ -77,7 +129,7 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 
 	// 解析产品列表
 	var products []CreemProduct
-	err := json.Unmarshal([]byte(setting.CreemProducts), &products)
+	err := common.Unmarshal([]byte(setting.CreemProducts), &products)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Creem failed to parse product config user_id=%d error=%q", c.GetInt("id"), err.Error()))
 		paymentError(c, common.NewMessage("Product configuration error"))
@@ -99,7 +151,15 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	}
 
 	id := c.GetInt("id")
-	if rejectInvalidCreditedQuota(c, id, decimal.NewFromInt(selectedProduct.Quota)) {
+	offer, cents, err := creemWalletOffer(*selectedProduct)
+	if err != nil {
+		paymentError(c, err)
+		return
+	}
+	if cents > 0 {
+		selectedProduct.Price = decimal.NewFromInt(cents).Shift(-2).InexactFloat64()
+	}
+	if rejectInvalidCreditedQuota(c, id, decimal.NewFromInt(selectedProduct.Quota).Add(decimal.NewFromInt(int64(offer.BonusQuota)))) {
 		return
 	}
 
@@ -116,6 +176,7 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	// 先创建订单记录，使用产品配置的金额和充值额度
 	topUp := &model.TopUp{
 		UserId:            id,
+		BonusQuota:        offer.BonusQuota,
 		Amount:            selectedProduct.Quota, // 充值额度
 		Money:             selectedProduct.Price, // 支付金额
 		TradeNo:           referenceId,
@@ -133,7 +194,7 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	}
 
 	// 创建支付链接，传入用户邮箱
-	checkoutUrl, err := genCreemLink(c.Request.Context(), referenceId, selectedProduct, user.Email, user.Username)
+	checkoutUrl, err := genCreemLink(c.Request.Context(), referenceId, selectedProduct, user.Email, user.Username, cents)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Creem failed to create payment link user_id=%d trade_no=%s product_id=%s error=%q", id, referenceId, selectedProduct.ProductId, err.Error()))
 		paymentError(c, common.NewMessage("Failed to start payment"))
@@ -369,9 +430,10 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 }
 
 type CreemCheckoutRequest struct {
-	ProductId string `json:"product_id"`
-	RequestId string `json:"request_id"`
-	Customer  struct {
+	CustomPrice int64  `json:"custom_price,omitempty"`
+	ProductId   string `json:"product_id"`
+	RequestId   string `json:"request_id"`
+	Customer    struct {
 		Email string `json:"email"`
 	} `json:"customer"`
 	Metadata map[string]string `json:"metadata,omitempty"`
@@ -382,7 +444,7 @@ type CreemCheckoutResponse struct {
 	Id          string `json:"id"`
 }
 
-func genCreemLink(ctx context.Context, referenceId string, product *CreemProduct, email string, username string) (string, error) {
+func genCreemLink(ctx context.Context, referenceId string, product *CreemProduct, email string, username string, customPrice int64) (string, error) {
 	if setting.CreemApiKey == "" {
 		return "", errors.New("Creem API key is not configured")
 	}
@@ -396,8 +458,9 @@ func genCreemLink(ctx context.Context, referenceId string, product *CreemProduct
 
 	// 构建请求数据，确保包含用户邮箱
 	requestData := CreemCheckoutRequest{
-		ProductId: product.ProductId,
-		RequestId: referenceId, // 这个作为订单ID传递给Creem
+		ProductId:   product.ProductId,
+		CustomPrice: customPrice,
+		RequestId:   referenceId, // 这个作为订单ID传递给Creem
 		Customer: struct {
 			Email string `json:"email"`
 		}{
@@ -412,7 +475,7 @@ func genCreemLink(ctx context.Context, referenceId string, product *CreemProduct
 	}
 
 	// 序列化请求数据
-	jsonData, err := json.Marshal(requestData)
+	jsonData, err := common.Marshal(requestData)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request data: %v", err)
 	}
@@ -453,7 +516,7 @@ func genCreemLink(ctx context.Context, referenceId string, product *CreemProduct
 	}
 	// 解析响应
 	var checkoutResp CreemCheckoutResponse
-	err = json.Unmarshal(body, &checkoutResp)
+	err = common.Unmarshal(body, &checkoutResp)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse response: %v", err)
 	}

@@ -61,7 +61,7 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 			paymentError(c, err)
 			return
 		}
-		if rejectInvalidCreditedQuota(c, id, quote.credit.Mul(decimal.NewFromFloat(common.QuotaPerUnit))) {
+		if rejectInvalidCreditedQuota(c, id, quote.credit.Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Add(decimal.NewFromInt(int64(quote.BonusQuota)))) {
 			return
 		}
 		if err := validateStripeGBPPrice(); err != nil {
@@ -85,18 +85,30 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 		paymentError(c, common.NewMessage("Failed to get the user group"))
 		return
 	}
-	if rejectInvalidCreditedQuota(c, id, getStripeCreditedQuota(req.Amount, group)) {
+	offer, err := rechargeAmountOffer(req.Amount)
+	if err != nil {
+		paymentError(c, err)
 		return
 	}
-	if operation_setting.GetPaymentSetting().StripeFeeEnabled {
-		configuredPrice, fee, err := getStripeProcessingFee(req.Amount)
+	if rejectInvalidCreditedQuota(c, id, getStripeCreditedQuota(req.Amount, group).Add(decimal.NewFromInt(int64(offer.BonusQuota)))) {
+		return
+	}
+	if operation_setting.GetPaymentSetting().StripeFeeEnabled || offer.PayPercent > 0 {
+		p, principal, fee, err := stripeCheckoutAmounts(req.Amount, offer)
 		if err != nil {
 			paymentError(c, common.NewMessage("Failed to calculate Stripe processing fee"))
 			return
 		}
-		total := decimal.NewFromInt(configuredPrice.UnitAmount).Mul(decimal.NewFromInt(req.Amount)).
-			Add(decimal.NewFromInt(fee)).Div(decimal.NewFromInt(100))
-		c.JSON(http.StatusOK, gin.H{"message": "success", "data": total.StringFixed(2)})
+		// Stripe charges most currencies with two decimals, including ISK and UGX.
+		scale := int32(2)
+		switch p.Currency {
+		case "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf", "vnd", "vuv", "xaf", "xof", "xpf":
+			scale = 0
+		case "bhd", "jod", "kwd", "omr", "tnd":
+			scale = 3
+		}
+		total := decimal.NewFromInt(principal + fee).Shift(-scale)
+		c.JSON(http.StatusOK, gin.H{"message": "success", "data": total.StringFixed(scale)})
 		return
 	}
 	payMoney := getStripePayMoney(float64(req.Amount), group)
@@ -138,6 +150,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		return
 	}
 	chargedMoney := GetChargedAmount(float64(req.Amount), *user)
+	var offer operation_setting.TopUpOffer
 	var quote *stripeGBPQuote
 	if operation_setting.GetPaymentSetting().StripeGBPEnabled {
 		quote, err = calculateStripeGBPQuote(req.AmountCNY, user.Group)
@@ -150,9 +163,16 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 			return
 		}
 		chargedMoney = quote.credit.InexactFloat64()
+		offer = quote.TopUpOffer
+	} else {
+		offer, err = rechargeAmountOffer(req.Amount)
+		if err != nil {
+			paymentError(c, err)
+			return
+		}
 	}
 	if rejectInvalidCreditedQuota(c, id,
-		decimal.NewFromFloat(chargedMoney).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+		decimal.NewFromFloat(chargedMoney).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).Add(decimal.NewFromInt(int64(offer.BonusQuota))),
 	) {
 		return
 	}
@@ -160,7 +180,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	reference := fmt.Sprintf("new-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "ref_" + common.Sha1([]byte(reference))
 
-	checkout, feeCents, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.Amount, req.SuccessURL, req.CancelURL, quote)
+	checkout, feeCents, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.Amount, req.SuccessURL, req.CancelURL, quote, offer)
 	if err != nil {
 		logger.LogError(c.Request.Context(), common.LogText("Stripe failed to create Checkout Session user_id=%d trade_no=%s amount=%d error=%q", id, referenceId, req.Amount, err.Error()))
 		paymentError(c, common.NewMessage("Failed to start payment"))
@@ -176,6 +196,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		PaymentProvider:   model.PaymentProviderStripe,
 		AffiliateCurrency: string(checkout.Currency),
 		AffiliateFeeCents: feeCents,
+		BonusQuota:        offer.BonusQuota,
 		CreateTime:        time.Now().Unix(),
 		Status:            common.TopUpStatusPending,
 	}
@@ -431,7 +452,7 @@ func sessionExpired(ctx context.Context, event stripe.Event) {
 //   - cancelURL: custom URL to redirect when payment is canceled (empty for default)
 //
 // Returns the checkout session and separately charged processing fee in cents.
-func genStripeLink(referenceId string, customerId string, email string, amount int64, successURL string, cancelURL string, quote *stripeGBPQuote) (*stripe.CheckoutSession, int64, error) {
+func genStripeLink(referenceId string, customerId string, email string, amount int64, successURL string, cancelURL string, quote *stripeGBPQuote, offer operation_setting.TopUpOffer) (*stripe.CheckoutSession, int64, error) {
 	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
 		return nil, 0, errors.New("invalid Stripe API key")
 	}
@@ -471,18 +492,26 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 		params.LineItems[0].Quantity = stripe.Int64(quote.principalPence)
 		feeCents = quote.feePence
 	}
-	feeSettings := operation_setting.GetPaymentSetting()
-	if feeSettings.StripeFeeEnabled && quote == nil {
-		// A coupon could discount the fee line as well as the principal. Do not
-		// create a checkout whose fee differs from the disclosed calculation.
-		if setting.StripePromotionCodesEnabled {
-			return nil, 0, common.NewMessage("Disable Stripe promotion codes before enabling processing fees")
-		}
-		_, fee, err := getStripeProcessingFee(amount)
+	if quote == nil && (operation_setting.GetPaymentSetting().StripeFeeEnabled || offer.PayPercent > 0) {
+		configured, principal, fee, err := stripeCheckoutAmounts(amount, offer)
 		if err != nil {
 			return nil, 0, err
 		}
 		feeCents = fee
+		if offer.PayPercent > 0 {
+			if configured.Product == nil || configured.Product.ID == "" {
+				return nil, 0, errors.New("Stripe price has no product")
+			}
+			data := &stripe.CheckoutSessionLineItemPriceDataParams{Currency: stripe.String(string(configured.Currency)), Product: stripe.String(configured.Product.ID), UnitAmount: stripe.Int64(principal)}
+			if configured.TaxBehavior == stripe.PriceTaxBehaviorInclusive || configured.TaxBehavior == stripe.PriceTaxBehaviorExclusive {
+				data.TaxBehavior = stripe.String(string(configured.TaxBehavior))
+			}
+			params.LineItems[0] = &stripe.CheckoutSessionLineItemParams{PriceData: data, Quantity: stripe.Int64(1)}
+			params.AllowPromotionCodes = stripe.Bool(false)
+			params.AdaptivePricing = &stripe.CheckoutSessionAdaptivePricingParams{Enabled: stripe.Bool(false)}
+		} else if setting.StripePromotionCodesEnabled {
+			return nil, 0, common.NewMessage("Disable Stripe promotion codes before enabling processing fees")
+		}
 	}
 	if feeCents > 0 {
 		currency := "cny"
@@ -519,46 +548,47 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 	return result, feeCents, nil
 }
 
-func getStripeProcessingFee(amount int64) (*stripe.Price, int64, error) {
-	priceClient := price.Client{B: stripe.GetBackend(stripe.APIBackend), Key: setting.StripeApiSecret}
-	configuredPrice, err := priceClient.Get(setting.StripePriceId, nil)
+// Compute the charge in the configured price's minor units. Fees, when enabled,
+// use the discounted principal and the existing CNY fee schedule.
+func stripeCheckoutAmounts(amount int64, offer operation_setting.TopUpOffer) (*stripe.Price, int64, int64, error) {
+	client := price.Client{B: stripe.GetBackend(stripe.APIBackend), Key: setting.StripeApiSecret}
+	p, err := client.Get(setting.StripePriceId, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
-	feeSettings := operation_setting.GetPaymentSetting()
-	fee, err := calculateStripeProcessingFee(configuredPrice, amount, feeSettings.StripeFeePercent, feeSettings.StripeFeeFixedCNY)
-	return configuredPrice, fee, err
-}
-
-// calculateStripeProcessingFee returns CNY minor units, separately from wallet
-// credit. The fee is principal * percentage / 100 + fixed CNY, rounded up to a
-// whole fen. Use the actual Stripe price, never the console's display rate.
-func calculateStripeProcessingFee(configuredPrice *stripe.Price, amount int64, percent, fixedCNY float64) (int64, error) {
-	for key, value := range map[string]float64{
-		"payment_setting.stripe_fee_percent":   percent,
-		"payment_setting.stripe_fee_fixed_cny": fixedCNY,
-	} {
-		if err := operation_setting.ValidateStripeFeeOption(key, strconv.FormatFloat(value, 'f', -1, 64)); err != nil {
-			return 0, err
+	if amount <= 0 || amount > 10000 || !p.Active || p.Type != stripe.PriceTypeOneTime || p.BillingScheme != stripe.PriceBillingSchemePerUnit || p.TransformQuantity != nil || p.CustomUnitAmount != nil || p.UnitAmount <= 0 || (p.UnitAmountDecimal != 0 && p.UnitAmountDecimal != float64(p.UnitAmount)) {
+		return nil, 0, 0, common.NewMessage("Invalid parameters")
+	}
+	principal := decimal.NewFromInt(p.UnitAmount).Mul(decimal.NewFromInt(amount))
+	if offer.PayPercent > 0 {
+		principal = principal.Mul(decimal.NewFromFloat(offer.WalletDiscountRate(amount))).Round(0)
+		switch p.Currency {
+		case "isk", "ugx":
+			principal = principal.Round(-2)
+		case "bhd", "jod", "kwd", "omr", "tnd":
+			principal = principal.Round(-1)
 		}
 	}
-	if configuredPrice == nil || !configuredPrice.Active || configuredPrice.Currency != stripe.CurrencyCNY ||
-		configuredPrice.Type != stripe.PriceTypeOneTime || configuredPrice.BillingScheme != stripe.PriceBillingSchemePerUnit ||
-		configuredPrice.TransformQuantity != nil || configuredPrice.UnitAmount <= 0 ||
-		(configuredPrice.UnitAmountDecimal != 0 && configuredPrice.UnitAmountDecimal != float64(configuredPrice.UnitAmount)) {
-		return 0, common.NewMessage("Stripe processing fees require an active, one-time CNY price with a fixed unit amount")
+	fee := decimal.Zero
+	settings := operation_setting.GetPaymentSetting()
+	if settings.StripeFeeEnabled {
+		if p.Currency != stripe.CurrencyCNY {
+			return nil, 0, 0, common.NewMessage("Stripe processing fees require an active, one-time CNY price with a fixed unit amount")
+		}
+		for key, value := range map[string]float64{"payment_setting.stripe_fee_percent": settings.StripeFeePercent, "payment_setting.stripe_fee_fixed_cny": settings.StripeFeeFixedCNY} {
+			if err := operation_setting.ValidateStripeFeeOption(key, strconv.FormatFloat(value, 'f', -1, 64)); err != nil {
+				return nil, 0, 0, err
+			}
+		}
+		fee = principal.Mul(decimal.NewFromFloat(settings.StripeFeePercent)).Shift(-2).Add(decimal.NewFromFloat(settings.StripeFeeFixedCNY).Shift(2)).Ceil()
 	}
-	if amount <= 0 || amount > 10000 {
-		return 0, common.NewMessage("Invalid parameters")
+	if !principal.IsPositive() {
+		return nil, 0, 0, common.NewMessage("Payment amount is too low")
 	}
-	principal := decimal.NewFromInt(configuredPrice.UnitAmount).Mul(decimal.NewFromInt(amount))
-	fee := principal.Mul(decimal.NewFromFloat(percent)).Div(decimal.NewFromInt(100)).
-		Add(decimal.NewFromFloat(fixedCNY).Mul(decimal.NewFromInt(100))).Ceil()
-	// Stripe amounts support at most eight digits. Bound before integer conversion.
 	if principal.Add(fee).GreaterThan(decimal.NewFromInt(99_999_999)) {
-		return 0, common.NewMessage("Stripe payment amount exceeds the supported limit")
+		return nil, 0, 0, common.NewMessage("Stripe payment amount exceeds the supported limit")
 	}
-	return fee.IntPart(), nil
+	return p, principal.IntPart(), fee.IntPart(), nil
 }
 
 func GetChargedAmount(count float64, user model.User) float64 {
@@ -612,6 +642,7 @@ func getStripeMinTopup() int64 {
 // stripeGBPQuote separates the CNY wallet principal from GBP presentment and fees.
 // All amounts sent to Stripe are bounded integer pence; wallet credit remains USD-equivalent.
 type stripeGBPQuote struct {
+	operation_setting.TopUpOffer
 	Currency       string `json:"currency"`
 	AmountCNY      int64  `json:"amount_cny"`
 	Principal      string `json:"principal"`
@@ -641,7 +672,11 @@ func calculateStripeGBPQuote(amountCNY int64, group string) (*stripeGBPQuote, er
 	if usd.LessThan(decimal.NewFromInt(int64(setting.StripeMinTopUp))) {
 		return nil, common.NewMessage("Top-up amount cannot be less than {{min}}", map[string]any{"min": decimal.NewFromInt(int64(setting.StripeMinTopUp)).Mul(decimal.NewFromFloat(usdFX)).Ceil().String()})
 	}
-	principal := decimal.NewFromInt(amountCNY).Mul(decimal.NewFromInt(100)).Div(decimal.NewFromFloat(fx)).Ceil()
+	offer, err := operation_setting.QuoteTopUpOffer(decimal.NewFromInt(amountCNY), true)
+	if err != nil {
+		return nil, err
+	}
+	principal := offer.Discounted(decimal.NewFromInt(amountCNY)).Mul(decimal.NewFromInt(100)).Div(decimal.NewFromFloat(fx)).Ceil()
 	fee := decimal.Zero
 	if settings.StripeFeeEnabled {
 		for key, value := range map[string]float64{"payment_setting.stripe_fee_percent": settings.StripeFeePercent, "payment_setting.stripe_fee_fixed_gbp": settings.StripeFeeFixedGBP} {
@@ -665,9 +700,12 @@ func calculateStripeGBPQuote(amountCNY int64, group string) (*stripeGBPQuote, er
 	if _, err := common.WalletQuotaFromDecimalStrict(credit.Mul(decimal.NewFromFloat(common.QuotaPerUnit))); err != nil {
 		return nil, err
 	}
-	quote := &stripeGBPQuote{Currency: "GBP", AmountCNY: amountCNY, Principal: principal.Div(decimal.NewFromInt(100)).StringFixed(2), Fee: fee.Div(decimal.NewFromInt(100)).StringFixed(2), Total: principal.Add(fee).Div(decimal.NewFromInt(100)).StringFixed(2), ExchangeRate: decimal.NewFromFloat(fx).String(), credit: credit, principalPence: principal.IntPart(), feePence: fee.IntPart()}
+	quote := &stripeGBPQuote{TopUpOffer: offer, Currency: "GBP", AmountCNY: amountCNY, Principal: principal.Div(decimal.NewFromInt(100)).StringFixed(2), Fee: fee.Div(decimal.NewFromInt(100)).StringFixed(2), Total: principal.Add(fee).Div(decimal.NewFromInt(100)).StringFixed(2), ExchangeRate: decimal.NewFromFloat(fx).String(), credit: credit, principalPence: principal.IntPart(), feePence: fee.IntPart()}
 	// Recomputed at payment creation: a rate, wallet-credit, fee or price change requires a fresh confirmation.
 	quote.QuoteID = common.Sha1([]byte(fmt.Sprintf("%d|%s|%s|%s|%s|%s", amountCNY, quote.Total, quote.ExchangeRate, credit.String(), setting.StripePriceId, quote.Fee)))
+	if offer.BonusCNY > 0 || offer.PayPercent > 0 {
+		quote.QuoteID = common.Sha1([]byte(fmt.Sprintf("%s|%v|%d|%v", quote.QuoteID, offer.BonusCNY, offer.BonusQuota, offer.PayPercent)))
+	}
 	return quote, nil
 }
 
