@@ -315,6 +315,27 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	require.NotEmpty(t, fields["expr_b64"])
 }
 
+// A channel test's consume log counts its whole input like a relayed request:
+// Anthropic usage leaves cache reads and writes out of prompt_tokens.
+func TestBuildTestLogOtherRecordsInputTokensWithCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+	details := dto.InputTokenDetails{CachedTokens: 600, CachedCreationTokens: 100}
+	for _, tc := range []struct {
+		semantic     string
+		promptTokens int
+		want         int
+	}{
+		{"openai", 1000, 1000},
+		{"anthropic", 300, 1000},
+	} {
+		usage := &dto.Usage{PromptTokens: tc.promptTokens, UsageSemantic: tc.semantic, PromptTokensDetails: details}
+		other := buildTestLogOther(ctx, info, types.PriceData{}, usage, nil)
+		assert.Equal(t, tc.want, other.Snapshot()["input_tokens_with_cache"], tc.semantic)
+	}
+}
+
 func TestResolveChannelTestUserIDUsesRequestUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

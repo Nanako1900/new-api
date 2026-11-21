@@ -1,9 +1,13 @@
 package model
 
 import (
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -190,4 +194,48 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 	require.Equal(t, 60, rows[0].TokenUsed)
 	require.Equal(t, "default", rows[1].UseGroup)
 	require.Equal(t, 25, rows[1].Quota)
+}
+
+// A consume log's quota_data row counts the request's whole input: the
+// cache-inclusive total when the request recorded one, otherwise its prompt
+// tokens. A later flush adds to the stored row.
+func TestRecordConsumeLogQuotaDataCountsWholeInput(t *testing.T) {
+	truncateTables(t)
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+	previousExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() { common.DataExportEnabled = previousExport })
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "alice")
+
+	// Anthropic usage: 300 uncached prompt tokens + 600 cache reads + 100 writes.
+	withCache := NewLogOther()
+	withCache.SetPublic("cache_tokens", 600)
+	withCache.SetPublic("cache_write_tokens", 100)
+	withCache.SetPublic("input_tokens_with_cache", 1000)
+	for _, flush := range [][]RecordConsumeLogParams{
+		{{PromptTokens: 300, CompletionTokens: 20, Other: withCache}, {PromptTokens: 250, CompletionTokens: 5, Other: NewLogOther()}},
+		{{PromptTokens: 300, CompletionTokens: 20, Other: withCache}},
+	} {
+		for _, params := range flush {
+			params.ChannelId, params.ModelName, params.Group, params.Quota = 3, "claude-a", "default", 10
+			RecordConsumeLog(ctx, 1, params)
+		}
+		SaveQuotaDataCache()
+	}
+
+	rows, err := GetQuotaDataByUserId(1, 0, time.Now().Unix()+3600)
+	require.NoError(t, err)
+	var total QuotaData
+	for _, row := range rows {
+		total.Count += row.Count
+		total.TokenUsed += row.TokenUsed
+		total.InputTokens += row.InputTokens
+		total.CacheReadTokens += row.CacheReadTokens
+		total.CacheCreationTokens += row.CacheCreationTokens
+	}
+	assert.Equal(t, QuotaData{Count: 3, TokenUsed: 895, InputTokens: 2250, CacheReadTokens: 1200, CacheCreationTokens: 200}, total)
 }

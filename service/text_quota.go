@@ -61,6 +61,7 @@ type textQuotaSummary struct {
 	CacheCreationRatio12h  float64
 	Quota                  int
 	IsClaudeUsageSemantic  bool
+	LegacyClaudeDerived    bool
 	UsageSemantic          string
 	AudioInputPrice        float64
 	ToolSurchargeItems     []ToolSurchargeItem
@@ -263,6 +264,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	summary.ImageTokens = usage.PromptTokensDetails.ImageTokens
 	summary.AudioTokens = usage.PromptTokensDetails.AudioTokens
 	legacyClaudeDerived := isLegacyClaudeDerivedOpenAIUsage(relayInfo, usage)
+	summary.LegacyClaudeDerived = legacyClaudeDerived
 	if !summary.IsClaudeUsageSemantic && !legacyClaudeDerived {
 		summary.CacheCreationTokens12h = usage.PromptTokensDetails.CacheWrite12hTokens()
 	}
@@ -528,6 +530,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		// to cache_creation_tokens.
 		other.SetPublic("cache_write_tokens", cacheWriteTokens)
 	}
+	AppendInputTokensWithCache(other, summary.PromptTokens, summary.CacheTokens, cacheWriteTokens,
+		summary.IsClaudeUsageSemantic || summary.LegacyClaudeDerived)
 	if relayInfo.GetFinalRequestRelayFormat() != types.RelayFormatClaude && billingUsage != nil && billingUsage.UsageSource != "" && billingUsage.InputTokens > 0 {
 		// input_tokens_total: explicit normalized total input used by the usage log UI.
 		// Only write this field when upstream/current conversion has already provided a
