@@ -18,8 +18,9 @@ import (
 
 const (
 	// monitorGlobalCacheTTL is how stale the site-wide overview may be. The
-	// console polls every 30 s, so a node reads the log table at most twice a
-	// minute per window however many root consoles are open.
+	// console polls every 30 s, so a node reads the log table (and quota_data
+	// for cache use) at most twice a minute per window however many root
+	// consoles are open.
 	monitorGlobalCacheTTL = 30 * time.Second
 	monitorGlobalTopLimit = 10
 	monitorGlobalRateSpan = 60 * time.Second
@@ -95,8 +96,8 @@ var (
 )
 
 // GetMonitorGlobalOverview returns the site-wide usage of window, read from
-// the log table at most once per monitorGlobalCacheTTL; concurrent callers
-// share one read.
+// the log table, with cache use from quota_data in the main database, at most
+// once per monitorGlobalCacheTTL; concurrent callers share one read.
 func GetMonitorGlobalOverview(window string) (*MonitorGlobalOverview, error) {
 	span, ok := MonitorGlobalWindows[window]
 	if !ok {

@@ -224,6 +224,9 @@ func TestGlobalCacheUsageDatabaseMatrix(t *testing.T) {
 				{UserID: 2, Username: "bob", ModelName: "gpt-a", CreatedAt: 7200, ChannelID: 9, Count: 1, InputTokens: 1600},
 				// Written before input totals were recorded: no input, so it does not count.
 				{UserID: 3, Username: "carol", ModelName: "claude-a", CreatedAt: 7200, ChannelID: 3, Count: 9, CacheReadTokens: 900},
+				// Upgrade hour: the old version's cache reads plus the new version's input in one row.
+				// More reads than input, so it does not count either.
+				{UserID: 2, Username: "bob", ModelName: "claude-a", CreatedAt: 7200, ChannelID: 4, Count: 6, InputTokens: 100, CacheReadTokens: 5000, CacheCreationTokens: 300},
 				// Before since (a zero created_at would be filled with the current time).
 				{UserID: 1, Username: "alice", ModelName: "claude-a", CreatedAt: 1, ChannelID: 3, Count: 1, InputTokens: 5000, CacheReadTokens: 5000},
 			}).Error)

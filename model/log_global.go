@@ -8,8 +8,10 @@ import (
 )
 
 // Site-wide usage for the root user's monitor console, read from the log
-// table. Aliases never repeat a column name: ClickHouse resolves aliases
-// before columns, so `MAX(username) AS username` would refer to itself.
+// table, except the prompt cache use (GetGlobalCacheUsage), which comes from
+// quota_data in the main database. Aliases never repeat a column name:
+// ClickHouse resolves aliases before columns, so `MAX(username) AS username`
+// would refer to itself.
 
 // GlobalLogTotals sums the consume and error rows of a time window.
 type GlobalLogTotals struct {
@@ -196,11 +198,15 @@ const globalCacheColumns = "COALESCE(SUM(input_tokens), 0) AS input_total, " +
 // limit channels by input tokens, and the sums of each of userIds that has
 // rows, keyed by user id. Only rows that recorded their whole input count:
 // rows written before input_tokens existed keep 0 there and would inflate the
-// hit rate.
+// hit rate. The hour of an in-place upgrade can mix both into one row (cache
+// reads saved by the old version, input added by the new one), so a row with
+// more cache reads than input is left out too; a mixed row that still passes
+// is bounded at a 100% hit rate and lasts only for the upgrade hour.
 func GetGlobalCacheUsage(ctx context.Context, since int64, userIds []int, limit int) (*GlobalCacheUsage, map[int]GlobalCacheTokens, error) {
 	db := DB.WithContext(ctx)
 	recorded := func() *gorm.DB {
-		return db.Table("quota_data").Where("created_at >= ? AND input_tokens > 0", since)
+		return db.Table("quota_data").
+			Where("created_at >= ? AND input_tokens > 0 AND cache_read_tokens <= input_tokens", since)
 	}
 	// Empty list, not null, when no row counts.
 	usage := &GlobalCacheUsage{Since: since, Channels: []GlobalCacheChannelUsage{}}
