@@ -47,7 +47,7 @@ func setupMonitorRouterTest(t *testing.T) *monitorTestEnv {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, i18n.Init())
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}, &model.Log{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}, &model.Log{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{}, &model.QuotaData{}))
 
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
