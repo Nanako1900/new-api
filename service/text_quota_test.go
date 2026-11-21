@@ -974,10 +974,11 @@ func TestPostTextConsumeQuotaBillsOpenAI12hCacheWrites(t *testing.T) {
 	}
 }
 
-// input_tokens_with_cache is every input token as billing counted them, the
-// denominator of the cache hit rate. OpenAI prompt_tokens already include
-// cache reads and writes; Anthropic usage, legacy Claude-derived OpenAI usage
-// and OpenRouter Claude billing leave them out and bill them on top. Recording
+// input_tokens_with_cache is every input token of the request, the
+// denominator of the cache hit rate. It follows the usage semantic, as ratio
+// billing does: OpenAI prompt_tokens already include cache reads and writes;
+// Anthropic usage, legacy Claude-derived OpenAI usage and OpenRouter Claude
+// billing leave them out. With tiered billing it is the same total. Recording
 // it does not change the charge.
 func TestPostTextConsumeQuotaLogsInputTokensWithCache(t *testing.T) {
 	truncate(t)
@@ -992,6 +993,7 @@ func TestPostTextConsumeQuotaLogsInputTokensWithCache(t *testing.T) {
 		format      types.RelayFormat
 		channelType int
 		usage       dto.Usage
+		expr        string
 		wantPrompt  int
 		wantInput   int
 		wantQuota   int
@@ -1025,6 +1027,16 @@ func TestPostTextConsumeQuotaLogsInputTokensWithCache(t *testing.T) {
 				PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 2432}},
 			wantPrompt: 172, wantInput: 2604, wantQuota: 798,
 		},
+		{
+			// The 60 writes split 40 5m (20 + unlabelled 20) and 20 1h.
+			// $(1000*3 + 200*15 + 100*0.3 + 40*3.75 + 20*6) / 1M = $0.0063 = 3150 quota
+			name: "anthropic with tiered billing", format: types.RelayFormatClaude,
+			usage: dto.Usage{PromptTokens: 1000, CompletionTokens: 200, UsageSemantic: "anthropic",
+				PromptTokensDetails:         dto.InputTokenDetails{CachedTokens: 100, CachedCreationTokens: 60},
+				ClaudeCacheCreation5mTokens: 20, ClaudeCacheCreation1hTokens: 20},
+			expr:       `tier("base", p * 3 + c * 15 + cr * 0.3 + cc * 3.75 + cc1h * 6)`,
+			wantPrompt: 1000, wantInput: 1160, wantQuota: 3150,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -1037,6 +1049,9 @@ func TestPostTextConsumeQuotaLogsInputTokensWithCache(t *testing.T) {
 				RelayFormat:     tc.format,
 				ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID, ChannelType: tc.channelType},
 				PriceData:       price,
+			}
+			if tc.expr != "" {
+				info.TieredBillingSnapshot = makeSnapshot(tc.expr, 1, 0, 0)
 			}
 			usage := tc.usage
 
