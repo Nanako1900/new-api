@@ -271,7 +271,7 @@ func TestSettleTestQuotaUsesTieredBilling(t *testing.T) {
 		CompletionRatio: 2,
 	}, &dto.Usage{
 		PromptTokens: 1000,
-	})
+	}, false)
 
 	require.Equal(t, 1500, quota)
 	require.NotNil(t, result)
@@ -306,13 +306,40 @@ func TestBuildTestLogOtherInjectsTieredInfo(t *testing.T) {
 	other := buildTestLogOther(ctx, info, priceData, usage, &billingexpr.TieredResult{
 		MatchedTier:  "base",
 		RequestRules: requestRules,
-	})
+	}, false)
 
 	fields := other.Snapshot()
 	require.Equal(t, "tiered_expr", fields["billing_mode"])
 	require.Equal(t, "base", fields["matched_tier"])
 	require.Equal(t, requestRules, fields["request_rules"])
 	require.NotEmpty(t, fields["expr_b64"])
+}
+
+// A channel test's consume log counts its whole input like a relayed request:
+// Anthropic usage leaves cache reads and writes out of prompt_tokens. The
+// write total is normalized the way the relay logs it, the 5m/1h split when it
+// is larger than the reported total.
+func TestBuildTestLogOtherRecordsInputTokensWithCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+	details := dto.InputTokenDetails{CachedTokens: 600, CachedCreationTokens: 100}
+	for _, tc := range []struct {
+		name                string
+		usage               dto.Usage
+		promptExcludesCache bool
+		wantInput           int
+		wantCacheWrite      int
+	}{
+		{"openai", dto.Usage{PromptTokens: 1000, PromptTokensDetails: details}, false, 1000, 100},
+		{"anthropic with a larger split", dto.Usage{PromptTokens: 300, PromptTokensDetails: details,
+			ClaudeCacheCreation5mTokens: 80, ClaudeCacheCreation1hTokens: 40}, true, 1020, 120},
+	} {
+		other := buildTestLogOther(ctx, info, types.PriceData{}, &tc.usage, nil, tc.promptExcludesCache)
+		fields := other.Snapshot()
+		assert.Equal(t, tc.wantInput, fields["input_tokens_with_cache"], tc.name)
+		assert.Equal(t, tc.wantCacheWrite, fields["cache_write_tokens"], tc.name)
+	}
 }
 
 func TestResolveChannelTestUserIDUsesRequestUser(t *testing.T) {

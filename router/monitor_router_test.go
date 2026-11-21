@@ -47,7 +47,7 @@ func setupMonitorRouterTest(t *testing.T) *monitorTestEnv {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, i18n.Init())
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}, &model.Log{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.AuthFlow{}, &model.Log{}, &model.AuditLog{}, &model.UserAccessToken{}, &model.Option{}, &model.QuotaData{}))
 
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
@@ -586,7 +586,11 @@ func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
 	data := responseJSON(t, overview)["data"].(map[string]any)
 	assert.Equal(t, "3h", data["window"])
 	assert.Equal(t, map[string]any{"quota": 700.0, "requests": 1.0, "tokens": 42.0, "errors": 1.0, "active_users": 1.0}, data["totals"])
-	assert.Equal(t, []any{map[string]any{"user_id": 900.0, "username": "busy-user", "quota": 700.0, "requests": 1.0, "tokens": 42.0}}, data["top_users"])
+	assert.Equal(t, []any{map[string]any{"user_id": 900.0, "username": "busy-user", "quota": 700.0, "requests": 1.0, "tokens": 42.0,
+		"input_tokens": 0.0, "cache_read_tokens": 0.0, "cache_creation_tokens": 0.0}}, data["top_users"])
+	start := int64(data["start"].(float64))
+	assert.Equal(t, map[string]any{"since": float64(start - start%3600), "input_tokens": 0.0, "cache_read_tokens": 0.0, "cache_creation_tokens": 0.0,
+		"channels": []any{}}, data["cache"], "no quota_data rows: no cache use, and an empty channel list rather than null")
 	assert.Equal(t, []any{map[string]any{"channel_id": 8.0, "channel_name": "upstream-8", "requests": 1.0, "errors": 1.0}}, data["channels"])
 	assert.Equal(t, []any{}, data["spikes"], "700 quota points is below the $0.10 floor")
 	assert.Equal(t, []any{map[string]any{"status_code": 502.0, "error_code": "bad_response_status_code", "error_type": "upstream_error",

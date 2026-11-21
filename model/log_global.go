@@ -8,8 +8,10 @@ import (
 )
 
 // Site-wide usage for the root user's monitor console, read from the log
-// table. Aliases never repeat a column name: ClickHouse resolves aliases
-// before columns, so `MAX(username) AS username` would refer to itself.
+// table, except the prompt cache use (GetGlobalCacheUsage), which comes from
+// quota_data in the main database. Aliases never repeat a column name:
+// ClickHouse resolves aliases before columns, so `MAX(username) AS username`
+// would refer to itself.
 
 // GlobalLogTotals sums the consume and error rows of a time window.
 type GlobalLogTotals struct {
@@ -26,12 +28,16 @@ type GlobalLogRate struct {
 	Tpm int64 `json:"tpm" gorm:"column:total_tokens"`
 }
 
+// GlobalUserUsage is a user's usage from the log table; the monitor overview
+// fills GlobalCacheTokens from quota_data (GetGlobalCacheUsage).
 type GlobalUserUsage struct {
 	UserId   int    `json:"user_id" gorm:"column:user_id"`
 	Username string `json:"username" gorm:"column:user_name"`
 	Quota    int64  `json:"quota" gorm:"column:total_quota"`
 	Requests int64  `json:"requests" gorm:"column:request_count"`
 	Tokens   int64  `json:"tokens" gorm:"column:total_tokens"`
+
+	GlobalCacheTokens `gorm:"-"`
 }
 
 type GlobalModelUsage struct {
@@ -157,6 +163,86 @@ func GetGlobalLogUsage(ctx context.Context, start, end, rateSince int64, limit i
 		}
 	}
 	return usage, nil
+}
+
+// GlobalCacheTokens sums the input and prompt cache tokens of quota_data
+// rows; the cache hit rate is CacheReadTokens / InputTokens.
+type GlobalCacheTokens struct {
+	InputTokens         int64 `json:"input_tokens" gorm:"column:input_total"`
+	CacheReadTokens     int64 `json:"cache_read_tokens" gorm:"column:cache_read_total"`
+	CacheCreationTokens int64 `json:"cache_creation_tokens" gorm:"column:cache_creation_total"`
+}
+
+// GlobalCacheChannelUsage is a channel's prompt cache use; Requests sums the
+// rows' request counts.
+type GlobalCacheChannelUsage struct {
+	ChannelId   int    `json:"channel_id" gorm:"column:channel_id"`
+	ChannelName string `json:"channel_name" gorm:"-"`
+	Requests    int64  `json:"requests" gorm:"column:request_count"`
+	GlobalCacheTokens
+}
+
+// GlobalCacheUsage is the site-wide prompt cache use since an hour boundary.
+type GlobalCacheUsage struct {
+	Since int64 `json:"since"`
+	GlobalCacheTokens
+	Channels []GlobalCacheChannelUsage `json:"channels"`
+}
+
+const globalCacheColumns = "COALESCE(SUM(input_tokens), 0) AS input_total, " +
+	"COALESCE(SUM(cache_read_tokens), 0) AS cache_read_total, " +
+	"COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_total"
+
+// GetGlobalCacheUsage reads the prompt cache use of the quota_data rows (main
+// database, hourly) created at or after since: the site-wide sums, the top
+// limit channels by input tokens, and the sums of each of userIds that has
+// rows, keyed by user id. Only rows that recorded their whole input count:
+// rows written before input_tokens existed keep 0 there and would inflate the
+// hit rate. The hour of an in-place upgrade can mix both into one row (cache
+// reads saved by the old version, input added by the new one), so a row with
+// more cache reads than input is left out too; a mixed row that still passes
+// is bounded at a 100% hit rate and lasts only for the upgrade hour.
+func GetGlobalCacheUsage(ctx context.Context, since int64, userIds []int, limit int) (*GlobalCacheUsage, map[int]GlobalCacheTokens, error) {
+	db := DB.WithContext(ctx)
+	recorded := func() *gorm.DB {
+		return db.Table("quota_data").
+			Where("created_at >= ? AND input_tokens > 0 AND cache_read_tokens <= input_tokens", since)
+	}
+	// Empty list, not null, when no row counts.
+	usage := &GlobalCacheUsage{Since: since, Channels: []GlobalCacheChannelUsage{}}
+	if err := recorded().Select(globalCacheColumns).Scan(&usage.GlobalCacheTokens).Error; err != nil {
+		return nil, nil, err
+	}
+	if err := recorded().Select("channel_id, SUM(count) AS request_count, " + globalCacheColumns).
+		Group("channel_id").Order("input_total DESC, channel_id ASC").Limit(limit).
+		Scan(&usage.Channels).Error; err != nil {
+		return nil, nil, err
+	}
+	for i := range usage.Channels {
+		if usage.Channels[i].ChannelId == 0 {
+			continue
+		}
+		if channel, err := CacheGetChannel(usage.Channels[i].ChannelId); err == nil {
+			usage.Channels[i].ChannelName = channel.Name
+		}
+	}
+	users := map[int]GlobalCacheTokens{}
+	if len(userIds) == 0 {
+		return usage, users, nil
+	}
+	type userCacheTokens struct {
+		UserId int `gorm:"column:user_id"`
+		GlobalCacheTokens
+	}
+	var rows []userCacheTokens
+	if err := recorded().Where("user_id IN ?", userIds).Select("user_id, " + globalCacheColumns).
+		Group("user_id").Scan(&rows).Error; err != nil {
+		return nil, nil, err
+	}
+	for _, row := range rows {
+		users[row.UserId] = row.GlobalCacheTokens
+	}
+	return usage, users, nil
 }
 
 // GlobalUserSpend is what a user spent in a recent span and in the whole

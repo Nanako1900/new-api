@@ -205,3 +205,57 @@ func TestGlobalLogUsageDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+// TestGlobalCacheUsageDatabaseMatrix checks the root console's cache hit rate
+// sums over quota_data on every supported main database.
+func TestGlobalCacheUsageDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := openGlobalLogTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&QuotaData{}, &Channel{}))
+			previousDB, previousMemoryCache := DB, common.MemoryCacheEnabled
+			DB, common.MemoryCacheEnabled = db, false
+			t.Cleanup(func() { DB, common.MemoryCacheEnabled = previousDB, previousMemoryCache })
+			require.NoError(t, db.Create(&[]Channel{{Id: 3, Name: "upstream-3", Key: "k3"}, {Id: 4, Name: "upstream-4", Key: "k4"}}).Error)
+			require.NoError(t, db.Create(&[]QuotaData{
+				{UserID: 1, Username: "alice", ModelName: "claude-a", CreatedAt: 3600, ChannelID: 3, Count: 2, InputTokens: 1000, CacheReadTokens: 600, CacheCreationTokens: 100},
+				{UserID: 1, Username: "alice", ModelName: "gpt-a", CreatedAt: 7200, ChannelID: 4, Count: 1, InputTokens: 400, CacheReadTokens: 100},
+				{UserID: 2, Username: "bob", ModelName: "gpt-a", CreatedAt: 7200, ChannelID: 4, Count: 3, InputTokens: 600},
+				{UserID: 2, Username: "bob", ModelName: "gpt-a", CreatedAt: 7200, ChannelID: 9, Count: 1, InputTokens: 1600},
+				// Written before input totals were recorded: no input, so it does not count.
+				{UserID: 3, Username: "carol", ModelName: "claude-a", CreatedAt: 7200, ChannelID: 3, Count: 9, CacheReadTokens: 900},
+				// Upgrade hour: the old version's cache reads plus the new version's input in one row.
+				// More reads than input, so it does not count either.
+				{UserID: 2, Username: "bob", ModelName: "claude-a", CreatedAt: 7200, ChannelID: 4, Count: 6, InputTokens: 100, CacheReadTokens: 5000, CacheCreationTokens: 300},
+				// Before since (a zero created_at would be filled with the current time).
+				{UserID: 1, Username: "alice", ModelName: "claude-a", CreatedAt: 1, ChannelID: 3, Count: 1, InputTokens: 5000, CacheReadTokens: 5000},
+			}).Error)
+
+			usage, users, err := GetGlobalCacheUsage(context.Background(), 3600, []int{1, 2, 3}, 10)
+			require.NoError(t, err)
+			assert.Equal(t, int64(3600), usage.Since)
+			assert.Equal(t, GlobalCacheTokens{InputTokens: 3600, CacheReadTokens: 700, CacheCreationTokens: 100}, usage.GlobalCacheTokens)
+			assert.Equal(t, []GlobalCacheChannelUsage{
+				{ChannelId: 9, Requests: 1, GlobalCacheTokens: GlobalCacheTokens{InputTokens: 1600}},
+				{ChannelId: 3, ChannelName: "upstream-3", Requests: 2, GlobalCacheTokens: GlobalCacheTokens{InputTokens: 1000, CacheReadTokens: 600, CacheCreationTokens: 100}},
+				{ChannelId: 4, ChannelName: "upstream-4", Requests: 4, GlobalCacheTokens: GlobalCacheTokens{InputTokens: 1000, CacheReadTokens: 100}},
+			}, usage.Channels, "most input first; equal input by channel id")
+			assert.Equal(t, map[int]GlobalCacheTokens{
+				1: {InputTokens: 1400, CacheReadTokens: 700, CacheCreationTokens: 100},
+				2: {InputTokens: 2200},
+			}, users, "a user with no counted row is left out")
+
+			limited, _, err := GetGlobalCacheUsage(context.Background(), 3600, nil, 1)
+			require.NoError(t, err)
+			require.Len(t, limited.Channels, 1)
+			assert.Equal(t, 9, limited.Channels[0].ChannelId)
+
+			empty, noUsers, err := GetGlobalCacheUsage(context.Background(), 10800, []int{1}, 10)
+			require.NoError(t, err)
+			assert.Equal(t, GlobalCacheTokens{}, empty.GlobalCacheTokens)
+			assert.NotNil(t, empty.Channels, "no counted row lists no channels rather than null")
+			assert.Empty(t, empty.Channels)
+			assert.Empty(t, noUsers)
+		})
+	}
+}

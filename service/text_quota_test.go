@@ -974,6 +974,100 @@ func TestPostTextConsumeQuotaBillsOpenAI12hCacheWrites(t *testing.T) {
 	}
 }
 
+// input_tokens_with_cache is every input token of the request, the
+// denominator of the cache hit rate. It follows the usage semantic, as ratio
+// billing does: OpenAI prompt_tokens already include cache reads and writes;
+// Anthropic usage, legacy Claude-derived OpenAI usage and OpenRouter Claude
+// billing leave them out. With tiered billing it is the same total. Recording
+// it does not change the charge.
+func TestPostTextConsumeQuotaLogsInputTokensWithCache(t *testing.T) {
+	truncate(t)
+	const userID, channelID = 64, 64
+	seedUser(t, userID, 1_000_000)
+	seedChannel(t, channelID)
+	gin.SetMode(gin.TestMode)
+	price := hosttypes.PriceData{ModelRatio: 1, CompletionRatio: 1, CacheRatio: 0.1, CacheCreationRatio: 1.25,
+		CacheCreation5mRatio: 1.25, CacheCreation1hRatio: 2, GroupRatioInfo: hosttypes.GroupRatioInfo{GroupRatio: 1}}
+	for _, tc := range []struct {
+		name        string
+		format      types.RelayFormat
+		channelType int
+		usage       dto.Usage
+		expr        string
+		wantPrompt  int
+		wantInput   int
+		wantQuota   int
+	}{
+		{
+			// (2604-2432-100) + 2432*0.1 + 100*1.25 + 383 = 823.2
+			name: "openai prompt includes cache", format: types.RelayFormatOpenAI,
+			usage: dto.Usage{PromptTokens: 2604, CompletionTokens: 383,
+				PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 2432, CacheWriteTokens: 100}},
+			wantPrompt: 2604, wantInput: 2604, wantQuota: 823,
+		},
+		{
+			// 1000 + 100*0.1 + (60-20-20)*1.25 + 20*1.25 + 20*2 + 200 = 1300
+			name: "anthropic adds cache reads and writes", format: types.RelayFormatClaude,
+			usage: dto.Usage{PromptTokens: 1000, CompletionTokens: 200,
+				PromptTokensDetails:         dto.InputTokenDetails{CachedTokens: 100, CachedCreationTokens: 60},
+				ClaudeCacheCreation5mTokens: 20, ClaudeCacheCreation1hTokens: 20},
+			wantPrompt: 1000, wantInput: 1160, wantQuota: 1300,
+		},
+		{
+			// 62 + 3540*0.1 + 584*1.25 + 95 = 1241
+			name: "legacy claude-derived openai usage", format: types.RelayFormatOpenAI,
+			usage: dto.Usage{PromptTokens: 62, CompletionTokens: 95,
+				PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 3540}, ClaudeCacheCreation5mTokens: 584},
+			wantPrompt: 62, wantInput: 4186, wantQuota: 1241,
+		},
+		{
+			// prompt 2604-2432 = 172; 172 + 2432*0.1 + 383 = 798.2
+			name: "openrouter claude", format: types.RelayFormatClaude, channelType: constant.ChannelTypeOpenRouter,
+			usage: dto.Usage{PromptTokens: 2604, CompletionTokens: 383,
+				PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 2432}},
+			wantPrompt: 172, wantInput: 2604, wantQuota: 798,
+		},
+		{
+			// The 60 writes split 40 5m (20 + unlabelled 20) and 20 1h.
+			// $(1000*3 + 200*15 + 100*0.3 + 40*3.75 + 20*6) / 1M = $0.0063 = 3150 quota
+			name: "anthropic with tiered billing", format: types.RelayFormatClaude,
+			usage: dto.Usage{PromptTokens: 1000, CompletionTokens: 200, UsageSemantic: "anthropic",
+				PromptTokensDetails:         dto.InputTokenDetails{CachedTokens: 100, CachedCreationTokens: 60},
+				ClaudeCacheCreation5mTokens: 20, ClaudeCacheCreation1hTokens: 20},
+			expr:       `tier("base", p * 3 + c * 15 + cr * 0.3 + cc * 3.75 + cc1h * 6)`,
+			wantPrompt: 1000, wantInput: 1160, wantQuota: 3150,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			info := &relaycommon.RelayInfo{
+				UserId:          userID,
+				OriginModelName: "cache-hit-model",
+				UsingGroup:      "default",
+				StartTime:       time.Now(),
+				RelayFormat:     tc.format,
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID, ChannelType: tc.channelType},
+				PriceData:       price,
+			}
+			if tc.expr != "" {
+				info.TieredBillingSnapshot = makeSnapshot(tc.expr, 1, 0, 0)
+			}
+			usage := tc.usage
+
+			PostTextConsumeQuota(ctx, info, &usage, nil)
+
+			log := getLastLog(t)
+			require.NotNil(t, log)
+			assert.Equal(t, tc.wantQuota, log.Quota)
+			assert.Equal(t, tc.wantPrompt, log.PromptTokens)
+			var other map[string]any
+			require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+			assert.Equal(t, float64(tc.wantInput), other["input_tokens_with_cache"])
+		})
+	}
+}
+
 func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheReadFromPromptBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -1704,4 +1798,5 @@ func TestPostTextConsumeQuotaLogsMissingUsageAsStructuredContent(t *testing.T) {
 	assert.Equal(t, []any{
 		map[string]any{"key": "Upstream returned no usage, so nothing was charged (possibly an upstream timeout)"},
 	}, other["content_parts"])
+	assert.NotContains(t, other, "input_tokens_with_cache", "no input, no input total")
 }

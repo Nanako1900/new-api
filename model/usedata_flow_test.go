@@ -1,9 +1,13 @@
 package model
 
 import (
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -190,4 +194,66 @@ func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 	require.Equal(t, 60, rows[0].TokenUsed)
 	require.Equal(t, "default", rows[1].UseGroup)
 	require.Equal(t, 25, rows[1].Quota)
+}
+
+// A consume log's quota_data row counts the request's whole input: the
+// cache-inclusive total when the request recorded one, otherwise its prompt
+// tokens. The first flush creates the row and a later flush into the same row
+// adds to it, on every supported main database.
+func TestRecordConsumeLogQuotaDataCountsWholeInput(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := openGlobalLogTestDB(t, dialect)
+			require.NoError(t, db.AutoMigrate(&QuotaData{}, &User{}))
+			previousDB, previousExport := DB, common.DataExportEnabled
+			DB, common.DataExportEnabled = db, true
+			CacheQuotaDataLock.Lock()
+			CacheQuotaData = make(map[string]*QuotaData)
+			CacheQuotaDataLock.Unlock()
+			t.Cleanup(func() { DB, common.DataExportEnabled = previousDB, previousExport })
+			gin.SetMode(gin.TestMode)
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Set("username", "alice")
+
+			// Anthropic usage: 300 uncached prompt tokens + 600 cache reads + 100 writes.
+			withCache := NewLogOther()
+			withCache.SetPublic("cache_tokens", 600)
+			withCache.SetPublic("cache_write_tokens", 100)
+			withCache.SetPublic("input_tokens_with_cache", 1000)
+			for _, params := range []RecordConsumeLogParams{
+				{PromptTokens: 300, CompletionTokens: 20, Other: withCache},
+				{PromptTokens: 250, CompletionTokens: 5, Other: NewLogOther()},
+			} {
+				params.ChannelId, params.ModelName, params.Group, params.Quota = 3, "claude-a", "default", 10
+				RecordConsumeLog(ctx, 1, params)
+			}
+			SaveQuotaDataCache()
+			var stored []QuotaData
+			require.NoError(t, DB.Order("id").Find(&stored).Error)
+			require.NotEmpty(t, stored)
+
+			// The second flush has the first stored row's key, so it updates that row.
+			row := stored[0]
+			LogQuotaData(QuotaDataLogParams{UserID: row.UserID, Username: row.Username, ModelName: row.ModelName, CreatedAt: row.CreatedAt,
+				UseGroup: row.UseGroup, TokenID: row.TokenID, ChannelID: row.ChannelID, NodeName: row.NodeName,
+				Quota: 10, TokenUsed: 320, InputTokens: 1000, CacheReadTokens: 600, CacheCreationTokens: 100})
+			SaveQuotaDataCache()
+			var rowCount int64
+			require.NoError(t, DB.Model(&QuotaData{}).Count(&rowCount).Error)
+			assert.EqualValues(t, len(stored), rowCount, "the second flush adds to the stored row instead of inserting one")
+
+			rows, err := GetQuotaDataByUserId(1, 0, time.Now().Unix()+3600)
+			require.NoError(t, err)
+			var total QuotaData
+			for _, row := range rows {
+				total.Count += row.Count
+				total.Quota += row.Quota
+				total.TokenUsed += row.TokenUsed
+				total.InputTokens += row.InputTokens
+				total.CacheReadTokens += row.CacheReadTokens
+				total.CacheCreationTokens += row.CacheCreationTokens
+			}
+			assert.Equal(t, QuotaData{Count: 3, Quota: 30, TokenUsed: 895, InputTokens: 2250, CacheReadTokens: 1200, CacheCreationTokens: 200}, total)
+		})
+	}
 }

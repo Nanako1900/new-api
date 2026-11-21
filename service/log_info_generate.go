@@ -332,6 +332,22 @@ func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo,
 	return info
 }
 
+// AppendInputTokensWithCache records input_tokens_with_cache, every input
+// token of the request, so the cache hit rate is cache reads over it. It
+// follows the usage semantic, as ratio billing does: Anthropic usage (and
+// legacy Claude-derived OpenAI usage) leaves cache reads and writes out of
+// prompt_tokens, while OpenAI usage already includes them. It is the true
+// total even when tiered billing normalizes the tokens differently.
+func AppendInputTokensWithCache(other *model.LogOther, promptTokens, cacheReadTokens, cacheWriteTokens int, promptExcludesCache bool) {
+	inputTokens := promptTokens
+	if promptExcludesCache {
+		inputTokens += cacheReadTokens + cacheWriteTokens
+	}
+	if inputTokens > 0 {
+		other.SetPublic("input_tokens_with_cache", inputTokens)
+	}
+}
+
 func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData hosttypes.PriceData) *model.LogOther {
 	other := model.NewLogOther()
 	other.SetPublic("model_price", priceData.ModelPrice)

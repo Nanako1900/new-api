@@ -18,8 +18,9 @@ import (
 
 const (
 	// monitorGlobalCacheTTL is how stale the site-wide overview may be. The
-	// console polls every 30 s, so a node reads the log table at most twice a
-	// minute per window however many root consoles are open.
+	// console polls every 30 s, so a node reads the log table (and quota_data
+	// for cache use) at most twice a minute per window however many root
+	// consoles are open.
 	monitorGlobalCacheTTL = 30 * time.Second
 	monitorGlobalTopLimit = 10
 	monitorGlobalRateSpan = 60 * time.Second
@@ -60,9 +61,10 @@ type MonitorGlobalOverview struct {
 	End         int64  `json:"end"`
 	GeneratedAt int64  `json:"generated_at"`
 	*model.GlobalLogUsage
-	Spikes        []MonitorUserSpike   `json:"spikes"`
-	ErrorReasons  []MonitorErrorReason `json:"error_reasons"`
-	ErrorRowsRead int                  `json:"error_rows_read"`
+	Cache         model.GlobalCacheUsage `json:"cache"`
+	Spikes        []MonitorUserSpike     `json:"spikes"`
+	ErrorReasons  []MonitorErrorReason   `json:"error_reasons"`
+	ErrorRowsRead int                    `json:"error_rows_read"`
 }
 
 // MonitorUserSpike is a user whose recent spend is far above their usual.
@@ -94,8 +96,8 @@ var (
 )
 
 // GetMonitorGlobalOverview returns the site-wide usage of window, read from
-// the log table at most once per monitorGlobalCacheTTL; concurrent callers
-// share one read.
+// the log table, with cache use from quota_data in the main database, at most
+// once per monitorGlobalCacheTTL; concurrent callers share one read.
 func GetMonitorGlobalOverview(window string) (*MonitorGlobalOverview, error) {
 	span, ok := MonitorGlobalWindows[window]
 	if !ok {
@@ -131,8 +133,24 @@ func GetMonitorGlobalOverview(window string) (*MonitorGlobalOverview, error) {
 			common.SysError(common.LogText("failed to read monitor error reasons: %s", err.Error()))
 			samples = nil
 		}
+		// Cache use is an extra too. quota_data is hourly, so it starts at the
+		// window's first hour.
+		since := start - start%3600
+		userIds := make([]int, 0, len(usage.TopUsers))
+		for _, user := range usage.TopUsers {
+			userIds = append(userIds, user.UserId)
+		}
+		cache, userCache, err := model.GetGlobalCacheUsage(ctx, since, userIds, monitorGlobalTopLimit)
+		if err != nil {
+			common.SysError(common.LogText("failed to read monitor cache usage: %s", err.Error()))
+			cache = &model.GlobalCacheUsage{Since: since, Channels: []model.GlobalCacheChannelUsage{}}
+		}
+		for i := range usage.TopUsers {
+			usage.TopUsers[i].GlobalCacheTokens = userCache[usage.TopUsers[i].UserId]
+		}
 		// Fresh from when the read finished, so a slow read is not stale on arrival.
 		overview := &MonitorGlobalOverview{Window: window, Start: start, End: end, GeneratedAt: time.Now().Unix(), GlobalLogUsage: usage,
+			Cache:         *cache,
 			Spikes:        monitorUserSpikes(spends, span, floor),
 			ErrorReasons:  monitorErrorReasons(samples),
 			ErrorRowsRead: len(samples),
