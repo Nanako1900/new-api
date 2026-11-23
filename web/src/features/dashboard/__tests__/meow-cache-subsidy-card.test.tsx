@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { toast } from 'sonner'
@@ -227,6 +227,19 @@ describe('Meow cache subsidy card', () => {
     expect(panel).toHaveTextContent('Cache cost$2')
     expect(panel).toHaveTextContent('2026-11-13 00:00 – 2026-11-20 12:00')
     expect(panel).toHaveTextContent('Claim by2100-01-01')
+  })
+
+  it('keeps usage figures whole instead of cutting them off in a narrow card', async () => {
+    renderCard()
+
+    const panel = await screen.findByRole('article', {
+      name: 'November cache refund',
+    })
+    for (const value of ['1.5M tokens', '200K tokens', '$2']) {
+      const figure = within(panel).getByText(value)
+      expect(figure.tagName).toBe('DD')
+      expect(figure).not.toHaveClass('truncate')
+    }
   })
 
   it('claims the subsidy, then shows it as claimed and refreshes the balance', async () => {

@@ -195,21 +195,18 @@ export function MeowCacheSubsidyCard() {
               {formatQuotaWithCurrency(item.grant.subsidy_quota)}
             </p>
 
-            <dl
-              className={cn(
-                'grid gap-2',
-                stats.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
-              )}
-            >
+            {/* One row per figure: the card column is too narrow for side-by-side
+                tiles, which cut token counts off even on wide screens. */}
+            <dl className='bg-muted/60 flex flex-col gap-1.5 rounded-xl px-3 py-2.5 text-xs'>
               {stats.map(([label, value]) => (
                 <div
                   key={label}
-                  className='bg-muted/60 flex min-w-0 flex-col-reverse gap-0.5 rounded-xl px-3 py-2'
+                  className='flex items-baseline justify-between gap-3'
                 >
-                  <dt className='text-muted-foreground truncate text-[11px] font-semibold'>
+                  <dt className='text-muted-foreground font-semibold'>
                     {label}
                   </dt>
-                  <dd className='truncate text-sm font-extrabold tabular-nums'>
+                  <dd className='text-right text-sm font-extrabold whitespace-nowrap tabular-nums'>
                     {value}
                   </dd>
                 </div>

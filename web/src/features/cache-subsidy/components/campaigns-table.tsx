@@ -41,6 +41,8 @@ export function CampaignsTable() {
   const {
     globalFilter,
     onGlobalFilterChange,
+    columnFilters,
+    onColumnFiltersChange,
     pagination,
     onPaginationChange,
     ensurePageInRange,
@@ -83,6 +85,9 @@ export function CampaignsTable() {
     columns,
     getRowId: (row) => String(row.id),
     globalFilter,
+    // The shared toolbar reads the filter state even without filter columns.
+    columnFilters,
+    onColumnFiltersChange,
     pagination,
     onPaginationChange,
     onGlobalFilterChange,
