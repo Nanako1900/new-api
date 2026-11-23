@@ -95,6 +95,10 @@ function renderDialog(
   )
 }
 
+const ANTIGRAVITY = 'Antigravity (Gemini)'
+const ANTIGRAVITY_HINT =
+  'Antigravity starts from the terminal button on its CC Switch card. Running agy on its own still signs in with Google.'
+
 function primaryModel() {
   return screen.getByRole('combobox', { name: 'Primary Model' })
 }
@@ -148,47 +152,66 @@ describe('CC Switch client picked by the key group', () => {
     expect(
       screen.queryByRole('combobox', { name: 'Haiku Model' })
     ).not.toBeInTheDocument()
+    expect(screen.queryByText(ANTIGRAVITY_HINT)).not.toBeInTheDocument()
   })
 
   it('grays out the clients the key group has no models for and says why', () => {
     renderDialog(GPT_KEY)
 
-    expect(screen.getByRole('radio', { name: 'Claude' })).toHaveAttribute(
-      'aria-disabled',
-      'true'
-    )
-    expect(screen.getByRole('radio', { name: 'Gemini' })).toHaveAttribute(
-      'aria-disabled',
-      'true'
-    )
+    for (const app of ['Claude', 'Gemini', ANTIGRAVITY]) {
+      expect(screen.getByRole('radio', { name: app })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      )
+    }
     expect(screen.getByRole('radio', { name: 'Codex' })).not.toHaveAttribute(
       'aria-disabled',
       'true'
     )
     expect(screen.getByRole('radiogroup')).toHaveAccessibleDescription(
-      'Not available with this key: Claude, Gemini. Its group has no models for them.'
+      'Not available with this key: Claude, Gemini, Antigravity (Gemini). Its group has no models for them.'
     )
   })
 
-  it('lets a Gemini group key use Codex on its Gemini models', async () => {
+  it('grays out Codex for a Gemini group key and offers Gemini CLI and Antigravity', () => {
     renderDialog(GEMINI_KEY)
 
-    expect(screen.getByRole('radio', { name: 'Claude' })).toHaveAttribute(
-      'aria-disabled',
-      'true'
+    for (const app of ['Claude', 'Codex']) {
+      expect(screen.getByRole('radio', { name: app })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      )
+    }
+    for (const app of ['Gemini', ANTIGRAVITY]) {
+      expect(screen.getByRole('radio', { name: app })).not.toHaveAttribute(
+        'aria-disabled',
+        'true'
+      )
+    }
+    expect(screen.getByRole('radiogroup')).toHaveAccessibleDescription(
+      'Not available with this key: Claude, Codex. Its group has no models for them.'
     )
-    await userEvent.setup().click(screen.getByRole('radio', { name: 'Codex' }))
-    expect(primaryModel()).toHaveValue('gemini-4-neon')
-    expect(await listedModels('Codex')).toEqual([
-      'gemini-3.8-flash',
-      'gemini-4-neon',
-    ])
   })
 
-  it('keeps Codex off Gemini models the key group does not serve', async () => {
-    renderDialog(GPT_KEY)
+  it('names the Antigravity import and explains how it starts when Antigravity is picked', async () => {
+    renderDialog(GEMINI_KEY)
 
-    expect(await listedModels('Codex')).toEqual(['gpt-6-astra', 'gpt-6.1-sol'])
+    await userEvent
+      .setup()
+      .click(screen.getByRole('radio', { name: ANTIGRAVITY }))
+
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue(
+      'MeowAPI Antigravity'
+    )
+    expect(primaryModel()).toHaveValue('gemini-4-neon')
+    expect(screen.getByText(ANTIGRAVITY_HINT)).toBeVisible()
+  })
+
+  it('lets the four client options wrap onto a second line in a narrow dialog', () => {
+    renderDialog(EVERY_FAMILY_KEY)
+
+    expect(screen.getAllByRole('radio')).toHaveLength(4)
+    expect(screen.getByRole('radiogroup')).toHaveClass('flex-wrap')
   })
 
   it('takes the models of every group of an Auto key', () => {
@@ -231,7 +254,7 @@ describe('CC Switch client picked by the key group', () => {
   it('disables every client and the import when the key group has no supported model', () => {
     renderDialog({ group: '其他' })
 
-    for (const app of ['Claude', 'Codex', 'Gemini']) {
+    for (const app of ['Claude', 'Codex', 'Gemini', ANTIGRAVITY]) {
       expect(screen.getByRole('radio', { name: app })).toHaveAttribute(
         'aria-disabled',
         'true'
@@ -255,7 +278,7 @@ describe('CC Switch client picked by the key group', () => {
 
     await waitFor(() => expect(primaryModel()).toHaveValue('claude-opus-5-5'))
     expect(screen.getByRole('radio', { name: 'Claude' })).toBeChecked()
-    for (const app of ['Claude', 'Codex', 'Gemini']) {
+    for (const app of ['Claude', 'Codex', 'Gemini', ANTIGRAVITY]) {
       expect(screen.getByRole('radio', { name: app })).not.toHaveAttribute(
         'aria-disabled',
         'true'
@@ -297,6 +320,25 @@ describe('CC Switch link', () => {
     expect(url.searchParams.get('endpoint')).toBe(window.location.origin)
     expect(url.searchParams.get('apiKey')).toBe('sk-test-only')
     expect(url.searchParams.get('model')).toBe('gemini-4-neon')
+    expect(url.searchParams.get('enabled')).toBe('true')
+  })
+
+  it('sends Antigravity as agy in the Gemini format with the High display name and no enable flag', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    renderDialog(GEMINI_KEY)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('radio', { name: ANTIGRAVITY }))
+
+    await user.click(screen.getByRole('button', { name: 'Open CC Switch' }))
+
+    const url = new URL(String(open.mock.calls[0][0]))
+    expect(url.searchParams.get('app')).toBe('agy')
+    expect(url.searchParams.get('name')).toBe('MeowAPI Antigravity')
+    expect(url.searchParams.get('endpoint')).toBe(window.location.origin)
+    expect(url.searchParams.get('apiKey')).toBe('sk-test-only')
+    expect(url.searchParams.get('model')).toBe('Gemini 4 Neon (High)')
+    expect(url.searchParams.get('apiFormat')).toBe('gemini_native')
+    expect(url.searchParams.has('enabled')).toBe(false)
   })
 })
 
@@ -305,6 +347,7 @@ describe('CC Switch model selection', () => {
     ['Claude', 'claude-sonnet-5-5'],
     ['Codex', 'gpt-6-astra'],
     ['Gemini', 'gemini-3.8-flash'],
+    [ANTIGRAVITY, 'gemini-3.8-flash'],
   ])(
     'opens %s models outside the clipping dialog and keeps the dialog open after selection',
     async (app, option) => {
@@ -330,11 +373,9 @@ describe('CC Switch model selection', () => {
 
   it.each([
     ['Claude', ['claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5']],
-    [
-      'Codex',
-      ['gemini-3.8-flash', 'gemini-4-neon', 'gpt-6-astra', 'gpt-6.1-sol'],
-    ],
+    ['Codex', ['gpt-6-astra', 'gpt-6.1-sol']],
     ['Gemini', ['gemini-3.8-flash', 'gemini-4-neon']],
+    [ANTIGRAVITY, ['gemini-3.8-flash', 'gemini-4-neon']],
   ])('lists only the models %s can run', async (app, expected) => {
     renderDialog(EVERY_FAMILY_KEY)
 

@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-/** The clients the CC Switch import offers. */
-export type CCSwitchApp = 'claude' | 'codex' | 'gemini'
+/** The clients the CC Switch import offers; `agy` is the Antigravity CLI. */
+export type CCSwitchApp = 'claude' | 'codex' | 'gemini' | 'agy'
 
 /** Model fields of a CC Switch import, keyed by its deep-link parameter. */
 export type CCSwitchModels = Record<string, string>
@@ -33,8 +33,8 @@ const CLAUDE_HAIKU = /^claude-haiku(?:-(\d{1,2}(?:[-.]\d{1,2})*))?$/
 const GPT_SOL = /^gpt-(\d+(?:\.\d+)*)-sol$/
 /** A GPT chat model with a version and an optional tier: `gpt-6.1-terra`. */
 export const GPT_MODEL = /^gpt-(\d+(?:\.\d+)*)(?:-[a-z]+)?$/
-// Gemini CLI prefers the newest `neon` tier, then the newest Gemini model of
-// any tier (`gemini-4-carbon`, `gemini-3.8-flash`).
+// Gemini CLI and Antigravity prefer the newest `neon` tier, then the newest
+// Gemini model of any tier (`gemini-4-carbon`, `gemini-3.8-flash`).
 const GEMINI_NEON = /^gemini-(\d+(?:\.\d+)*)-neon$/
 const GEMINI_MODEL = /^gemini-(\d+(?:\.\d+)*)(?:-[a-z]+)?$/
 
@@ -69,17 +69,19 @@ export const CC_SWITCH_APPS: readonly CCSwitchApp[] = [
   'claude',
   'codex',
   'gemini',
+  'agy',
 ]
 
 // The model families each client can run, its own family first. Claude Code
-// speaks the Anthropic API and keeps to Claude models. Codex speaks the
-// OpenAI Responses API, which the gateway also converts for Gemini channels,
-// so it may pick Gemini models after its GPT ones. Gemini CLI speaks the
-// Gemini API and keeps to Gemini models.
+// speaks the Anthropic API and keeps to Claude models. Codex keeps to GPT and
+// codex models: Gemini models did not work in Codex in testing, so they are
+// not offered. Gemini CLI and the Antigravity CLI speak the Gemini API and
+// keep to Gemini models.
 const APP_MODELS: Record<CCSwitchApp, readonly RegExp[]> = {
   claude: [/^claude-/],
-  codex: [/^(?:gpt|codex)-/, /^gemini-/],
+  codex: [/^(?:gpt|codex)-/],
   gemini: [/^gemini-/],
+  agy: [/^gemini-/],
 }
 
 /** The models of `models` that a CC Switch import may pick for `app`. */
@@ -149,8 +151,9 @@ export function keyModels(
 
 /**
  * The client a key's models suit: the first whose own family the key can
- * call (Claude, then GPT, then Gemini), else the first with any model it can
- * run. Null when the key reaches no model any client runs.
+ * call (Claude, then GPT, then Gemini, which goes to Gemini CLI before
+ * Antigravity), else the first with any model it can run. Null when the key
+ * reaches no model any client runs.
  */
 export function defaultCCSwitchApp(
   models: readonly string[]
@@ -171,24 +174,24 @@ export function defaultCCSwitchApp(
  * Models a CC Switch import starts with, picked from the user's models so a
  * new model version is chosen without a code change: Claude runs on Opus
  * and fills each family slot with its newest model; Codex runs on the newest
- * GPT `sol` model, or the Gemini CLI default when it has no GPT model; Gemini
- * CLI on the newest Gemini `neon` model. A field is empty when no model fits.
+ * GPT `sol` model; Gemini CLI and Antigravity on the newest Gemini `neon`
+ * model. A field is empty when no model fits.
  */
 export function defaultCCSwitchModels(
   app: CCSwitchApp,
   models: readonly string[]
 ): CCSwitchModels {
-  const gemini =
-    newestModel(models, GEMINI_NEON) || newestModel(models, GEMINI_MODEL)
   if (app === 'codex') {
     return {
-      model:
-        newestModel(models, GPT_SOL) ||
-        newestModel(models, GPT_MODEL) ||
-        gemini,
+      model: newestModel(models, GPT_SOL) || newestModel(models, GPT_MODEL),
     }
   }
-  if (app === 'gemini') return { model: gemini }
+  if (app === 'gemini' || app === 'agy') {
+    return {
+      model:
+        newestModel(models, GEMINI_NEON) || newestModel(models, GEMINI_MODEL),
+    }
+  }
 
   const opus = newestModel(models, CLAUDE_OPUS)
   const sonnet = newestModel(models, CLAUDE_SONNET)
@@ -199,4 +202,19 @@ export function defaultCCSwitchModels(
     sonnetModel: sonnet,
     opusModel: opus,
   }
+}
+
+/**
+ * The name the Antigravity CLI knows a Gemini model by. It lists models by
+ * display name with a reasoning effort (`Gemini 4 Neon (High)`) and ignores
+ * a model ID, so a CC Switch import for it carries that name. Every Gemini
+ * model it lists has a High effort. Anything that is not a Gemini model ID,
+ * such as a display name the user typed, is kept as it is.
+ */
+export function antigravityModelName(model: string): string {
+  if (!/^gemini-[a-z0-9.-]+$/.test(model)) return model
+  const words = model
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+  return `${words.join(' ')} (High)`
 }

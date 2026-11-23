@@ -38,6 +38,7 @@ import { useOnboardingStore } from '@/stores/onboarding-store'
 
 import { getTokenAutoGroups } from '../../api'
 import {
+  antigravityModelName,
   CC_SWITCH_APPS,
   ccSwitchModelChoices,
   defaultCCSwitchApp,
@@ -71,12 +72,18 @@ const APP_CONFIGS = {
     defaultName: 'MeowAPI Gemini',
     modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
   },
+  // The Antigravity CLI (`agy`) also speaks the Gemini API from the site root.
+  agy: {
+    label: 'Antigravity (Gemini)',
+    defaultName: 'MeowAPI Antigravity',
+    modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
+  },
 } as const satisfies Record<CCSwitchApp, unknown>
 
 type AppType = CCSwitchApp
 
 function buildCCSwitchURL(
-  app: string,
+  app: AppType,
   name: string,
   models: Record<string, string>,
   apiKey: string
@@ -90,10 +97,17 @@ function buildCCSwitchURL(
   params.set('endpoint', endpoint)
   params.set('apiKey', apiKey)
   for (const [k, v] of Object.entries(models)) {
-    if (v) params.set(k, v)
+    if (!v) continue
+    params.set(k, app === 'agy' ? antigravityModelName(v) : v)
   }
   params.set('homepage', window.location.origin)
-  params.set('enabled', 'true')
+  if (app === 'agy') {
+    // CC Switch takes Antigravity providers in the Gemini format only, and
+    // an import just adds the card: Antigravity has no active provider.
+    params.set('apiFormat', 'gemini_native')
+  } else {
+    params.set('enabled', 'true')
+  }
   return `ccswitch://v1/import?${params.toString()}`
 }
 
@@ -255,7 +269,7 @@ export function CCSwitchDialog(props: Props) {
           <RadioGroup
             value={app}
             onValueChange={handleAppChange}
-            className='flex gap-4'
+            className='flex flex-wrap gap-x-4 gap-y-2'
             aria-describedby={
               unusableApps.length > 0 ? 'cc-switch-app-note' : undefined
             }
@@ -300,6 +314,13 @@ export function CCSwitchDialog(props: Props) {
                         .join(', '),
                     }
                   )}
+            </p>
+          )}
+          {app === 'agy' && (
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Antigravity starts from the terminal button on its CC Switch card. Running agy on its own still signs in with Google.'
+              )}
             </p>
           )}
         </div>
