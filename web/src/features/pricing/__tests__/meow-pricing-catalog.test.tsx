@@ -459,6 +459,72 @@ describe('meow pricing catalog', () => {
     ).toBeInTheDocument()
   })
 
+  it.each([
+    { term: 'ai * 0.08', label: 'Audio In', amount: '¥0.4' },
+    { term: 'ao * 0.3', label: 'Audio Out', amount: '¥1.5' },
+  ])(
+    'shows Gemini Ultra token columns with a separate $label price in the popup',
+    async ({ term, label, amount }) => {
+      const user = userEvent.setup()
+      useSystemConfigStore.getState().setConfig({
+        currency: {
+          ...DEFAULT_CURRENCY_CONFIG,
+          quotaDisplayType: 'CNY',
+          usdExchangeRate: 1,
+        },
+      })
+      mockApi({
+        pricing: {
+          ...PRICING,
+          data: [
+            {
+              ...SONNET,
+              model_name: 'gemini-4-carbon',
+              enable_groups: ['official', 'Gemini Ultra'],
+              billing_mode: 'tiered_expr',
+              billing_expr: `tier("standard", p * 0.08 + c * 0.4 + cr * 0.004 + ${term})`,
+            },
+          ],
+          group_ratio: { official: 1, 'Gemini Ultra': 5 },
+          usable_group: {
+            official: { desc: 'Official', ratio: 1 },
+            'Gemini Ultra': { desc: 'Gemini Ultra', ratio: 5 },
+          },
+        },
+      })
+      renderCatalog(undefined, undefined, { group: 'Gemini Ultra' })
+
+      const table = await screen.findByRole('table', {
+        name: 'Models · Gemini Ultra',
+      })
+      const row = within(table).getByRole('row', { name: /gemini-4-carbon/ })
+      expect(
+        within(row).getByRole('cell', { name: 'Input' })
+      ).toHaveTextContent('¥0.4')
+      expect(
+        within(row).getByRole('cell', { name: 'Output' })
+      ).toHaveTextContent('¥2')
+      expect(
+        within(row).getByRole('cell', { name: 'Cache Read' })
+      ).toHaveTextContent('¥0.02')
+      await user.click(
+        within(row).getByRole('button', {
+          name: 'Price details for gemini-4-carbon',
+        })
+      )
+      const popup = await screen.findByRole('dialog', {
+        name: 'Price details for gemini-4-carbon',
+      })
+      const headers = within(popup).getAllByRole('columnheader')
+      const audioHeader = within(popup).getByRole('columnheader', {
+        name: label,
+      })
+      expect(
+        within(popup).getAllByRole('cell')[headers.indexOf(audioHeader)]
+      ).toHaveTextContent(amount)
+    }
+  )
+
   it('hides tier details until its arrow opens complete selected-channel prices', async () => {
     await import('../components/model-details')
     const user = userEvent.setup()
@@ -879,6 +945,59 @@ describe('meow pricing catalog', () => {
           'len < 1000 ? tier("request", fixed(0.01)) : tier("tokens", p * 2 + c * 8)',
       },
       expected: 'Token or per-call pricing',
+    },
+    {
+      kind: 'audio-only',
+      model: {
+        billing_mode: 'tiered_expr',
+        billing_expr: 'tier("base", ai * 2 + ao * 8)',
+      },
+      expected: 'Dynamic Pricing',
+    },
+    {
+      kind: 'missing input in an audio tier',
+      model: {
+        billing_mode: 'tiered_expr',
+        billing_expr:
+          'len <= 200000 ? tier("short", p * 1 + c * 5 + ai * 2) : tier("long", c * 10 + ai * 4)',
+      },
+      expected: 'Dynamic Pricing',
+    },
+    {
+      kind: 'image-count multiplier on audio prices',
+      model: {
+        billing_mode: 'tiered_expr',
+        billing_expr:
+          'image_count * tier("base", p * 0.08 + c * 0.4 + ai * 0.08)',
+      },
+      expected: 'Dynamic Pricing',
+    },
+    {
+      kind: 'audio-dependent token counts',
+      model: {
+        billing_mode: 'tiered_expr',
+        billing_expr:
+          'ai > 0 || ao > 0 ? tier("audio", max(len - ai, 0) * 0.2 + c * 0.4 + ai * 1 + ao * 4) : tier("text", p * 0.08 + c * 0.4)',
+      },
+      expected: 'Dynamic Pricing',
+    },
+    {
+      kind: 'context-based input quantity with audio and cache',
+      model: {
+        billing_mode: 'tiered_expr',
+        billing_expr:
+          'tier("standard", max(len - ai, 0) * 0.08 + c * 0.4 + cr * 0.004 + ai * 0.08)',
+      },
+      expected: 'Dynamic Pricing',
+    },
+    {
+      kind: 'mixed input quantity bases',
+      model: {
+        billing_mode: 'tiered_expr',
+        billing_expr:
+          'len < 2000 ? tier("short", p * 0.08 + c * 0.4 + cr * 0.004 + ai * 0.08) : tier("long", max(len - ai, 0) * 0.08 + c * 0.4 + cr * 0.004)',
+      },
+      expected: 'Dynamic Pricing',
     },
     {
       kind: 'unconfigured task',

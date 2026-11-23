@@ -35,6 +35,7 @@ export type TokenTierCondition = {
 export type TokenTier = {
   conditionText?: string
   imageCount?: boolean
+  inputUsesContextLength?: boolean
   billingUnit?: 'token' | 'request'
   fixedPrice?: number
   label: string
@@ -112,6 +113,7 @@ function tokenTier(
     return null
   }
   const prices: TokenTier['prices'] = {}
+  let inputUsesContextLength = false
   const body = node.args[1]
   if (
     body.kind === 'call' &&
@@ -173,12 +175,18 @@ function tokenTier(
         return null
       }
       variable = 'p'
+      inputUsesContextLength = true
     }
     if (Object.hasOwn(prices, variable)) return null
     prices[variable] = price
   }
   if (Object.keys(prices).length === 0) return null
-  return { label: node.args[0].value, conditions, prices }
+  return {
+    label: node.args[0].value,
+    conditions,
+    prices,
+    ...(inputUsesContextLength ? { inputUsesContextLength: true } : {}),
+  }
 }
 
 /** Legacy token summary contract: ordered linear chain, never a minimum or partial price extraction. */
