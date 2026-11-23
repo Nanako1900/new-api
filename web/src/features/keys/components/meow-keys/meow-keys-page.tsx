@@ -39,6 +39,7 @@ import { getApiKeys, searchApiKeys } from '../../api'
 import { ERROR_MESSAGES } from '../../constants'
 import { MEOW_KEY_LIST_KEY, type MeowKeyList } from '../../lib/meow-keys'
 import { useApiKeyGroupOptions } from '../../use-api-key-group-options'
+import { ApiAddressStrip } from '../api-address-strip'
 import { ApiKeysDialogs } from '../api-keys-dialogs'
 import { ApiKeysPrimaryButtons } from '../api-keys-primary-buttons'
 import { ApiKeysProvider, useApiKeys } from '../api-keys-provider'
@@ -236,6 +237,9 @@ export function MeowApiKeys() {
         <div className='min-h-0 flex-1 overflow-auto px-4 pt-6 pb-8 sm:px-8 sm:pt-8'>
           <div className='mx-auto flex w-full max-w-[1440px] flex-col gap-5'>
             <KeyList />
+            <div className='-mt-2'>
+              <ApiAddressStrip />
+            </div>
           </div>
         </div>
       </Main>
