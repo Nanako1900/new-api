@@ -43,7 +43,7 @@ func useUserIDTestDB(t *testing.T, dialect string) *gorm.DB {
 	}
 	db, err := gorm.Open(driver, &gorm.Config{Logger: logger.Default.LogMode(logger.Silent), NamingStrategy: schema.NamingStrategy{TablePrefix: "user_id_test_"}})
 	require.NoError(t, err)
-	tables := []any{&Option{}, &User{}, &SystemTask{}, &UserSubscription{}, &Log{}, &AuditLog{}, &ContentSafetyLog{}, &Token{}, &UserSession{}, &AuthFlow{}, &ExternalIdentityClaim{}, &PasskeyCredential{}, &Redemption{}, &Midjourney{}, &TopUp{}, &QuotaData{}, &Task{}, &TwoFA{}, &TwoFABackupCode{}, &Checkin{}, &SubscriptionOrder{}, &SubscriptionPreConsumeRecord{}, &UserOAuthBinding{}, &UserAccessToken{}, &CasbinRule{}, &AffiliateAccount{}, &AffiliateOrder{}, &AffiliateEntry{}, &AffiliateChange{}}
+	tables := []any{&Option{}, &User{}, &SystemTask{}, &UserSubscription{}, &Log{}, &AuditLog{}, &ContentSafetyLog{}, &Token{}, &UserSession{}, &AuthFlow{}, &ExternalIdentityClaim{}, &PasskeyCredential{}, &Redemption{}, &Midjourney{}, &TopUp{}, &QuotaData{}, &Task{}, &TwoFA{}, &TwoFABackupCode{}, &Checkin{}, &SubscriptionOrder{}, &SubscriptionPreConsumeRecord{}, &UserOAuthBinding{}, &UserAccessToken{}, &CasbinRule{}, &AffiliateAccount{}, &AffiliateOrder{}, &AffiliateEntry{}, &AffiliateChange{}, &UserRiskProfile{}}
 	require.NoError(t, db.AutoMigrate(tables...))
 	require.NoError(t, db.AutoMigrate(tables...))
 	var version string

@@ -31,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func setupContentSafetyReview(t *testing.T, reply http.HandlerFunc) *atomic.Int3
 	t.Helper()
 	require.NoError(t, i18n.Init())
 	database := setupRelayChannelDB(t)
-	require.NoError(t, database.AutoMigrate(&model.Ability{}, &model.ContentSafetyLog{}))
+	require.NoError(t, database.AutoMigrate(&model.Ability{}, &model.ContentSafetyLog{}, &model.User{}, &model.UserRiskProfile{}))
 	previousLogDB := model.LOG_DB
 	model.LOG_DB = database
 	t.Cleanup(func() { model.LOG_DB = previousLogDB })
@@ -511,6 +512,12 @@ func TestContentSafetySyncReviewIsForAccountsThatNeedIt(t *testing.T) {
 		{name: "an established account", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncNewUserDays = 3 }, createdAt: -4 * 86400, wantMode: model.ContentSafetyModeAsync},
 		{name: "an account without a registration time", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncNewUserDays = 3 }, noCreatedAt: true, wantMode: model.ContentSafetyModeAsync},
 		{name: "an account whose background reviews were dropped", info: func(info *relaycommon.RelayInfo) { contentsafety.ForceSync(info.UserId) }, wantMode: model.ContentSafetyModeSync},
+		{name: "an account at the watch risk level", info: func(info *relaycommon.RelayInfo) { scoreTestAccount(info.UserId, 25) }, wantMode: model.ContentSafetyModeSync},
+		{name: "a trusted account even with sync_all", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncAll = true }, info: func(info *relaycommon.RelayInfo) {
+			scoreTestAccount(info.UserId, 60)
+			_ = model.SetUserRiskTrusted(info.UserId, true)
+			contentsafety.ForgetRiskState(info.UserId)
+		}, wantMode: model.ContentSafetyModeAsync},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setupContentSafetyReview(t, reviewerReply(safeReply))
@@ -532,6 +539,163 @@ func TestContentSafetySyncReviewIsForAccountsThatNeedIt(t *testing.T) {
 			require.NotNil(t, reviewPlan(c))
 			assert.Equal(t, tc.wantMode, reviewPlan(c).mode)
 		})
+	}
+}
+
+// scoreTestAccount gives userId an enforced risk score of points now.
+func scoreTestAccount(userId, points int) {
+	cfg := operation_setting.GetContentSafetySetting().Bounded()
+	_, _ = model.RecordRiskEvent(model.RiskEvent{UserId: userId, Unsafe: true, Points: points, Now: common.GetTimestamp(), Thresholds: contentsafety.RiskThresholds(cfg)})
+	contentsafety.ForgetRiskState(userId)
+}
+
+// Every non-safe verdict feeds the risk score of the account that sent it,
+// once per account and unit: resent history never adds up, while another
+// account sending the same text is scored too. Shadow reviews and trusted
+// accounts move only the shadow score, and root accounts are never scored.
+// The log row of each decision carries the change.
+func TestContentSafetyVerdictsScoreTheAccountOncePerUnit(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(unsafeReply))
+	text := saltedText("stab someone")
+	profile := func(userId int) model.UserRiskProfile {
+		stored, err := model.GetUserRiskProfile(userId)
+		require.NoError(t, err)
+		return stored
+	}
+	send := func(userId int) *types.NewAPIError {
+		c, info := newContentSafetyContext(userId)
+		return checkContent(c, info, text)
+	}
+	rejected, flagged := model.ContentSafetyDecisionReviewRejected, model.ContentSafetyDecisionReviewFlagged
+
+	first := nextContentSafetyUser()
+	require.NotNil(t, send(first))
+	logs := requireContentSafetyDecisions(t, first, rejected)
+	assert.Equal(t, []int{40, 40}, []int{logs[0].RiskDelta, logs[0].RiskScore})
+	require.NotNil(t, send(first), "the cache rejects the resent text")
+	logs = requireContentSafetyDecisions(t, first, rejected, rejected)
+	assert.Equal(t, 40, logs[0].RiskDelta+logs[1].RiskDelta, "the resent text is not scored again")
+	assert.InDelta(t, 40, profile(first).Score, 0.01)
+	assert.Equal(t, 1, profile(first).UnsafeCount)
+
+	second := nextContentSafetyUser()
+	require.NotNil(t, send(second))
+	logs = requireContentSafetyDecisions(t, second, rejected)
+	assert.True(t, logs[0].CacheHit)
+	assert.Equal(t, 40, logs[0].RiskDelta, "another account sending the cached text is scored")
+	assert.Equal(t, int32(1), calls.Load())
+
+	reviewInTheBackground(operation_setting.ContentReviewModeShadow)
+	shadow := nextContentSafetyUser()
+	require.Nil(t, send(shadow))
+	requireContentSafetyDecisions(t, shadow, flagged)
+	assert.InDelta(t, 40, profile(shadow).ShadowScore, 0.01)
+	assert.Zero(t, profile(shadow).Score)
+
+	reviewInTheBackground(operation_setting.ContentReviewModeEnforce)
+	trusted := nextContentSafetyUser()
+	require.NoError(t, model.SetUserRiskTrusted(trusted, true))
+	require.Nil(t, send(trusted))
+	requireContentSafetyDecisions(t, trusted, flagged)
+	assert.InDelta(t, 40, profile(trusted).ShadowScore, 0.01)
+	assert.Zero(t, profile(trusted).Score)
+	assert.False(t, profile(trusted).Blocked)
+
+	root := nextContentSafetyUser()
+	require.NoError(t, model.DB.Create(&model.User{Id: root, Username: "cs-root-" + strconv.Itoa(root), Role: common.RoleRootUser, Status: common.UserStatusEnabled, AffCode: "cs-root-" + strconv.Itoa(root)}).Error)
+	require.Nil(t, send(root))
+	logs = requireContentSafetyDecisions(t, root, flagged)
+	assert.Zero(t, logs[0].RiskDelta)
+	var stored int64
+	require.NoError(t, model.DB.Model(&model.UserRiskProfile{}).Where("user_id = ?", root).Count(&stored).Error)
+	assert.Zero(t, stored, "root accounts are never scored")
+}
+
+// Administrators hear when an enforced account becomes restricted or
+// blocked, and of every zero-tolerance hit, shadow reviews included. A notice
+// names the account, its level and the category, never the content.
+func TestContentRiskNoticesNameTheAccountNeverTheContent(t *testing.T) {
+	const minorsMarker = "minors-marker"
+	setupContentSafetyReview(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), minorsMarker) {
+			reviewerReply(`{"results":[{"id":1,"level":"unsafe","category":"sexual_minors","reason":"minor"}]}`)(w, r)
+			return
+		}
+		reviewerReply(unsafeReply)(w, r)
+	})
+	fetch := system_setting.GetFetchSetting()
+	previousFetch, previousRedis, previousLimit := *fetch, common.RedisEnabled, constant.NotifyLimitCount
+	fetch.EnableSSRFProtection, common.RedisEnabled, constant.NotifyLimitCount = false, false, 2
+	t.Cleanup(func() {
+		*fetch, common.RedisEnabled, constant.NotifyLimitCount = previousFetch, previousRedis, previousLimit
+	})
+	var mutex sync.Mutex
+	var received []service.WebhookPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload service.WebhookPayload
+		if common.DecodeJson(r.Body, &payload) == nil {
+			mutex.Lock()
+			received = append(received, payload)
+			mutex.Unlock()
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	setting, err := common.Marshal(kitdto.UserSetting{NotifyType: kitdto.NotifyTypeWebhook, WebhookUrl: server.URL})
+	require.NoError(t, err)
+	adminId := nextContentSafetyUser()
+	require.NoError(t, model.DB.Create(&model.User{Id: adminId, Username: "cs-admin-" + strconv.Itoa(adminId), Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Setting: string(setting), AffCode: "cs-admin-" + strconv.Itoa(adminId)}).Error)
+	account := func() int {
+		id := nextContentSafetyUser()
+		require.NoError(t, model.DB.Create(&model.User{Id: id, Username: "cs-" + strconv.Itoa(id), Status: common.UserStatusEnabled, AffCode: "cs-" + strconv.Itoa(id)}).Error)
+		return id
+	}
+	var texts []string
+	send := func(userId int, text string) {
+		texts = append(texts, text)
+		c, info := newContentSafetyContext(userId)
+		_ = checkContent(c, info, text)
+	}
+
+	// Each decision is recorded after its notice, so waiting for it orders them.
+	scored := account()
+	for i := range 3 {
+		send(scored, saltedText("stab someone "+strconv.Itoa(i)))
+		requireContentSafetyDecisions(t, scored, slices.Repeat([]string{model.ContentSafetyDecisionReviewRejected}, i+1)...)
+	}
+	zeroTolerance := account()
+	send(zeroTolerance, saltedText(minorsMarker))
+	requireContentSafetyDecisions(t, zeroTolerance, model.ContentSafetyDecisionReviewRejected)
+	reviewInTheBackground(operation_setting.ContentReviewModeShadow)
+	shadow := account()
+	send(shadow, saltedText(minorsMarker))
+	requireContentSafetyDecisions(t, shadow, model.ContentSafetyDecisionReviewFlagged)
+
+	want := []string{
+		fmt.Sprintf(`content_risk_restricted_%[1]d Account "cs-%[1]d" (#%[1]d) is now restricted by its content risk`, scored),
+		fmt.Sprintf(`content_risk_blocked_%[1]d Account "cs-%[1]d" (#%[1]d) has been blocked by its content risk`, scored),
+		fmt.Sprintf(`content_risk_blocked_%[1]d Account "cs-%[1]d" (#%[1]d) has been blocked by its content risk`, zeroTolerance),
+		fmt.Sprintf(`content_risk_zero_tolerance_%[1]d Account "cs-%[1]d" (#%[1]d) sent content in a zero-tolerance category`, shadow),
+	}
+	var got []string
+	require.Eventually(t, func() bool {
+		mutex.Lock()
+		defer mutex.Unlock()
+		got = got[:0]
+		for _, payload := range received {
+			got = append(got, payload.Type+" "+payload.Title)
+		}
+		return len(got) == len(want)
+	}, 3*time.Second, 20*time.Millisecond)
+	assert.Equal(t, want, got)
+	mutex.Lock()
+	defer mutex.Unlock()
+	assert.Equal(t, fmt.Sprintf("Account: cs-%[1]d (#%[1]d)\nRisk level: blocked\nCategory: sexual_minors\nReview mode: shadow", shadow), received[3].Content)
+	for _, payload := range received {
+		for _, text := range texts {
+			assert.NotContains(t, payload.Content, text)
+		}
 	}
 }
 
@@ -577,6 +741,7 @@ func TestContentSafetyReviewOfTooManyNewUnits(t *testing.T) {
 			assert.True(t, logs[0].Truncated)
 			assert.Equal(t, 3, logs[0].UnitCount)
 			assert.Equal(t, int32(2), calls.Load(), "the two newest units are reviewed")
+			assert.Equal(t, 15, logs[0].RiskDelta, "two controversial units and the unread one count 5 points each")
 			var snippets []string
 			require.NoError(t, common.UnmarshalJsonStr(logs[0].Snippets, &snippets))
 			assert.Contains(t, snippets, request.Messages[2].StringContent())

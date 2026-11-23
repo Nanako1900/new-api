@@ -616,6 +616,9 @@ func TokenAuth() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
 			return
 		}
+		if !allowContentRisk(c, token.UserId, userCache.Role) {
+			return
+		}
 
 		userCache.WriteContext(c)
 

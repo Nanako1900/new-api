@@ -37,6 +37,16 @@ func NotifyUpstreamModelUpdateWatchers(render func(lang string) (subject string,
 	common.SysLog(common.LogText("upstream model update notifications sent: %d", sentCount))
 }
 
+// NotifyContentRiskWatchers sends a content risk notice (an account
+// restricted or blocked, or a zero-tolerance hit) to every enabled
+// administrator. notifyType names the event and the account, so the
+// per-type notice limit never holds back notices about other accounts or
+// other events. render builds the subject and content in the recipient's
+// saved language; an empty language means DEFAULT_LANGUAGE.
+func NotifyContentRiskWatchers(notifyType string, render func(lang string) (subject string, content string)) {
+	notifyAdmins(notifyType, func(int, dto.UserSetting) bool { return true }, render)
+}
+
 // notifyAdmins sends a notice to each enabled administrator for whom receives
 // returns true, and returns how many notices it sent.
 func notifyAdmins(notifyType string, receives func(role int, setting dto.UserSetting) bool, render func(lang string) (subject string, content string)) int {

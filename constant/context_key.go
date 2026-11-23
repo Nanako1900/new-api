@@ -102,6 +102,9 @@ const (
 	// rejected content check, so a retry of the same request returns that
 	// rejection again instead of reviewing or forwarding the content.
 	ContextKeyContentSafetyRejection ContextKey = "content_safety_rejection"
+	// ContextKeyContentRiskState holds the contentsafety.RiskState the
+	// authentication gate read, so the content review does not read it again.
+	ContextKeyContentRiskState ContextKey = "content_risk_state"
 	// ContextKeyBindUpstreamToRequestContext cancels upstream requests with the
 	// request context. Only the content reviewer sets it; ordinary relays must
 	// keep upstream requests running after a client disconnect for billing.

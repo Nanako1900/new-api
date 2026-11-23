@@ -202,7 +202,7 @@ func userIDHasHistory(tx *gorm.DB, id int64) (bool, error) {
 	if count > 0 {
 		return true, nil
 	}
-	for _, record := range []any{&UserSession{}, &AuthFlow{}, &ExternalIdentityClaim{}, &PasskeyCredential{}, &Token{}, &TwoFA{}, &TwoFABackupCode{}, &UserOAuthBinding{}, &UserAccessToken{}, &Redemption{}, &Midjourney{}, &TopUp{}, &QuotaData{}, &Task{}, &AffiliateAccount{}, &AffiliateEntry{}, &AffiliateChange{}, &Checkin{}, &SubscriptionOrder{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}, &Log{}} {
+	for _, record := range []any{&UserSession{}, &AuthFlow{}, &ExternalIdentityClaim{}, &PasskeyCredential{}, &Token{}, &TwoFA{}, &TwoFABackupCode{}, &UserOAuthBinding{}, &UserAccessToken{}, &Redemption{}, &Midjourney{}, &TopUp{}, &QuotaData{}, &Task{}, &AffiliateAccount{}, &AffiliateEntry{}, &AffiliateChange{}, &Checkin{}, &SubscriptionOrder{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}, &UserRiskProfile{}, &Log{}} {
 		var exists int
 		if err := tx.Unscoped().Model(record).Select("1").Where("user_id = ?", id).Limit(1).Scan(&exists).Error; err != nil {
 			return false, err

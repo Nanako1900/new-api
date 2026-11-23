@@ -44,6 +44,8 @@ const (
 	ErrorCodeSensitiveWordsDetected   ErrorCode = "sensitive_words_detected"
 	ErrorCodeContentReviewRejected    ErrorCode = "content_review_rejected"
 	ErrorCodeContentReviewUnavailable ErrorCode = "content_review_unavailable"
+	ErrorCodeContentRiskBlocked       ErrorCode = "content_risk_blocked"
+	ErrorCodeContentRiskThrottled     ErrorCode = "content_risk_throttled"
 	ErrorCodeViolationFeeGrokCSAM     ErrorCode = "violation_fee.grok.csam"
 	ErrorCodeRequestRejected          ErrorCode = "request_rejected"
 	ErrorCodeRequestPluginFailed      ErrorCode = "request_plugin_failed"

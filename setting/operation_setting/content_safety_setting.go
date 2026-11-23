@@ -41,7 +41,23 @@ type ContentSafetySetting struct {
 	SyncGroups               string `json:"sync_groups"`
 	CacheTTLSeconds          int    `json:"cache_ttl_seconds"`
 	LogRetentionDays         int    `json:"log_retention_days"`
+
+	// Per-account risk score. Verdicts add points that halve every
+	// RiskHalfLifeHours; the levels act only when ReviewMode is enforce.
+	RiskHalfLifeHours           int    `json:"risk_half_life_hours"`
+	RiskPointsUnsafe            int    `json:"risk_points_unsafe"`
+	RiskPointsControversial     int    `json:"risk_points_controversial"`
+	RiskZeroToleranceCategories string `json:"risk_zero_tolerance_categories"`
+	RiskWatchThreshold          int    `json:"risk_watch_threshold"`
+	RiskRestrictThreshold       int    `json:"risk_restrict_threshold"`
+	RiskBlockThreshold          int    `json:"risk_block_threshold"`
+	RiskRestrictRPM             int    `json:"risk_restrict_rpm"`
+	RiskNotifyEnabled           bool   `json:"risk_notify_enabled"`
 }
+
+// ContentSafetyCategories are the policy areas a non-safe verdict names. They
+// follow what gets an AI provider account banned; anything else is "other".
+var ContentSafetyCategories = []string{"sexual_minors", "weapons", "terrorism", "self_harm", "cyber_attack", "fraud", "sexual", "other"}
 
 const ContentSafetyOptionPrefix = "content_safety_setting."
 
@@ -71,6 +87,16 @@ var contentSafetySetting = ContentSafetySetting{
 	SyncNewUserDays:          3,
 	CacheTTLSeconds:          86400,
 	LogRetentionDays:         30,
+
+	RiskHalfLifeHours:           168,
+	RiskPointsUnsafe:            40,
+	RiskPointsControversial:     5,
+	RiskZeroToleranceCategories: "sexual_minors",
+	RiskWatchThreshold:          20,
+	RiskRestrictThreshold:       50,
+	RiskBlockThreshold:          100,
+	RiskRestrictRPM:             10,
+	RiskNotifyEnabled:           true,
 }
 
 type contentSafetyIntOption struct {
@@ -94,11 +120,18 @@ var contentSafetyIntOptions = []contentSafetyIntOption{
 	{"sync_new_user_days", 0, 365, func(s *ContentSafetySetting) *int { return &s.SyncNewUserDays }},
 	{"cache_ttl_seconds", 0, 604800, func(s *ContentSafetySetting) *int { return &s.CacheTTLSeconds }},
 	{"log_retention_days", 1, 3650, func(s *ContentSafetySetting) *int { return &s.LogRetentionDays }},
+	{"risk_half_life_hours", 1, 8760, func(s *ContentSafetySetting) *int { return &s.RiskHalfLifeHours }},
+	{"risk_points_unsafe", 0, 1000, func(s *ContentSafetySetting) *int { return &s.RiskPointsUnsafe }},
+	{"risk_points_controversial", 0, 1000, func(s *ContentSafetySetting) *int { return &s.RiskPointsControversial }},
+	{"risk_watch_threshold", 1, 100000, func(s *ContentSafetySetting) *int { return &s.RiskWatchThreshold }},
+	{"risk_restrict_threshold", 1, 100000, func(s *ContentSafetySetting) *int { return &s.RiskRestrictThreshold }},
+	{"risk_block_threshold", 1, 100000, func(s *ContentSafetySetting) *int { return &s.RiskBlockThreshold }},
+	{"risk_restrict_rpm", 1, 10000, func(s *ContentSafetySetting) *int { return &s.RiskRestrictRPM }},
 }
 
-var contentSafetyBoolFields = []string{"review_tool_results", "sync_all"}
+var contentSafetyBoolFields = []string{"review_tool_results", "sync_all", "risk_notify_enabled"}
 
-var contentSafetyStringFields = []string{"review_mode", "review_model", "review_group", "review_prompt", "sync_groups"}
+var contentSafetyStringFields = []string{"review_mode", "review_model", "review_group", "review_prompt", "sync_groups", "risk_zero_tolerance_categories"}
 
 func init() {
 	config.GlobalConfig.Register("content_safety_setting", &contentSafetySetting)
@@ -122,6 +155,18 @@ func (s *ContentSafetySetting) SyncGroupList() []string {
 		}
 	}
 	return groups
+}
+
+// RiskZeroToleranceList returns the non-empty trimmed lines of
+// RiskZeroToleranceCategories.
+func (s *ContentSafetySetting) RiskZeroToleranceList() []string {
+	categories := make([]string, 0)
+	for category := range strings.SplitSeq(s.RiskZeroToleranceCategories, "\n") {
+		if category = strings.TrimSpace(category); category != "" {
+			categories = append(categories, category)
+		}
+	}
+	return categories
 }
 
 // Bounded returns a copy with every integer clamped to its range, an unknown
@@ -165,6 +210,19 @@ func ValidateContentSafetyOptions(raw map[string]string) error {
 	for _, field := range contentSafetyBoolFields {
 		if _, err := strconv.ParseBool(raw[ContentSafetyOptionPrefix+field]); err != nil {
 			return fmt.Errorf("invalid boolean: %s%s", ContentSafetyOptionPrefix, field)
+		}
+	}
+	// The integers parsed above, so the thresholds compare as numbers.
+	watch, _ := strconv.Atoi(raw[ContentSafetyOptionPrefix+"risk_watch_threshold"])
+	restrict, _ := strconv.Atoi(raw[ContentSafetyOptionPrefix+"risk_restrict_threshold"])
+	block, _ := strconv.Atoi(raw[ContentSafetyOptionPrefix+"risk_block_threshold"])
+	if watch >= restrict || restrict >= block {
+		return fmt.Errorf("%srisk_watch_threshold, risk_restrict_threshold and risk_block_threshold must increase", ContentSafetyOptionPrefix)
+	}
+	zeroTolerance := ContentSafetySetting{RiskZeroToleranceCategories: raw[ContentSafetyOptionPrefix+"risk_zero_tolerance_categories"]}
+	for _, category := range zeroTolerance.RiskZeroToleranceList() {
+		if !slices.Contains(ContentSafetyCategories, category) {
+			return fmt.Errorf("%srisk_zero_tolerance_categories has an unknown category: %s", ContentSafetyOptionPrefix, category)
 		}
 	}
 	switch mode := raw[ContentSafetyOptionPrefix+"review_mode"]; mode {

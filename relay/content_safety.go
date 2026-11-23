@@ -48,9 +48,11 @@ type contentReviewPlan struct {
 	pending   []contentsafety.Unit
 	flagged   []cachedUnit
 	truncated int
-	mode      string
-	prompt    string
-	cfg       operation_setting.ContentSafetySetting
+	// skipped are the keys of the new units past max_units, left unreviewed.
+	skipped []string
+	mode    string
+	prompt  string
+	cfg     operation_setting.ContentSafetySetting
 }
 
 type cachedUnit struct {
@@ -133,6 +135,9 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 	}
 	if len(plan.pending) > cfg.MaxUnits {
 		plan.truncated += len(plan.pending) - cfg.MaxUnits
+		for _, unit := range plan.pending[cfg.MaxUnits:] {
+			plan.skipped = append(plan.skipped, unit.Key)
+		}
 		plan.pending = plan.pending[:cfg.MaxUnits]
 	}
 	if cfg.ReviewMode == operation_setting.ContentReviewModeEnforce {
@@ -158,22 +163,32 @@ func reviewEngineKey(cfg operation_setting.ContentSafetySetting) string {
 
 // needsSyncReview reports whether an enforced review holds the request until
 // the reviewer answers: for every account with sync_all, for accounts in a
-// listed group or younger than sync_new_user_days, and for accounts whose
-// background reviews were recently dropped. The group is the account's own;
-// the group a token selects is the caller's choice.
+// listed group or younger than sync_new_user_days, for accounts at the watch
+// risk level or above, and for accounts whose background reviews were
+// recently dropped. Trusted accounts are always reviewed in the background.
+// The group is the account's own; the group a token selects is the caller's
+// choice.
 func needsSyncReview(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting) bool {
+	state, ok := common.GetContextKeyType[contentsafety.RiskState](c, constant.ContextKeyContentRiskState)
+	if !ok {
+		var err error
+		if state, err = contentsafety.LoadRiskState(info.UserId); err != nil {
+			logger.LogError(c, common.LogText("content risk state read failed: %s", err.Error()))
+			return true
+		}
+	}
+	if state.Trusted {
+		return false
+	}
 	if cfg.SyncAll || slices.Contains(cfg.SyncGroupList(), info.UserGroup) {
 		return true
 	}
-	if cfg.SyncNewUserDays > 0 {
-		createdAt, err := contentsafety.AccountCreatedAt(info.UserId)
-		if err != nil {
-			logger.LogError(c, common.LogText("content safety account age read failed: %s", err.Error()))
-			return true
-		}
-		if createdAt > 0 && common.GetTimestamp()-createdAt < int64(cfg.SyncNewUserDays)*86400 {
-			return true
-		}
+	now := common.GetTimestamp()
+	if cfg.SyncNewUserDays > 0 && state.UserCreatedAt > 0 && now-state.UserCreatedAt < int64(cfg.SyncNewUserDays)*86400 {
+		return true
+	}
+	if state.Level(now, contentsafety.RiskThresholds(cfg)) != model.RiskLevelNormal {
+		return true
 	}
 	return contentsafety.SyncForced(c.Request.Context(), info.UserId)
 }
@@ -190,7 +205,7 @@ func rejectCachedOrOversized(c *gin.Context, info *relaycommon.RelayInfo, plan *
 		entry := contentSafetyLogEntry(c, info)
 		entry.Decision, entry.Mode, entry.CacheHit = model.ContentSafetyDecisionReviewRejected, model.ContentSafetyModeSync, true
 		entry.ReviewModel, entry.AiCategory, entry.AiReason, entry.UnitCount = cfg.ReviewModel, hit.verdict.Category, hit.verdict.Reason, 1
-		recordContentSafetyLog(entry, []string{hit.verdict.Category}, []string{unitSnippet(hit.unit)})
+		recordScoredReview(entry, []string{hit.verdict.Category}, []string{unitSnippet(hit.unit)}, cfg.PassLogPercent, cachedRiskVerdicts(plan.flagged))
 		return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
 	}
 	if plan.truncated == 0 {
@@ -362,7 +377,7 @@ func EnforceContentSafety(c *gin.Context, info *relaycommon.RelayInfo) *types.Ne
 		return nil
 	}
 	if plan, ok := common.GetContextKeyType[*contentReviewPlan](c, constant.ContextKeyContentSafetyPlan); ok && plan != nil {
-		recordFlaggedSightings(c, info, plan)
+		recordFlaggedVerdicts(c, info, plan)
 		if plan.mode == model.ContentSafetyModeSync && len(plan.pending) > 0 {
 			if apiErr := reviewSynchronously(c, info, plan); apiErr != nil {
 				return apiErr
@@ -388,24 +403,6 @@ func EnforceContentSafetyText(c *gin.Context, info *relaycommon.RelayInfo, text 
 		return apiErr
 	}
 	return EnforceContentSafety(c, info)
-}
-
-// recordFlaggedSightings records the non-safe units the cache decided, once
-// per account and unit: a conversation resends its history on every turn.
-func recordFlaggedSightings(c *gin.Context, info *relaycommon.RelayInfo, plan *contentReviewPlan) {
-	var reviews []unitReview
-	for _, hit := range plan.flagged {
-		if contentsafety.FirstSighting(c.Request.Context(), info.UserId, hit.unit.Key) {
-			reviews = append(reviews, unitReview{unit: hit.unit, verdict: contentsafety.Verdict{Level: hit.verdict.Level, Category: hit.verdict.Category, Reason: hit.verdict.Reason}})
-		}
-	}
-	if len(reviews) == 0 {
-		return
-	}
-	entry := contentSafetyLogEntry(c, info)
-	entry.Mode, entry.ReviewModel, entry.CacheHit = plan.mode, plan.cfg.ReviewModel, true
-	entry, categories, snippets := summarizeReviews(entry, reviews)
-	recordContentSafetyLog(entry, categories, snippets)
 }
 
 // reviewSynchronously asks the reviewer about the pending units, at most
@@ -437,7 +434,7 @@ func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, plan *cont
 	_ = group.Wait()
 	storeVerdicts(reviews, cfg.CacheTTLSeconds)
 	entry, categories, snippets := summarizeReviews(entry, reviews)
-	recordReview(entry, categories, snippets, cfg.PassLogPercent, recordContentSafetyLog)
+	recordScoredReview(entry, categories, snippets, cfg.PassLogPercent, riskVerdicts(reviews))
 	switch entry.Decision {
 	case model.ContentSafetyDecisionReviewRejected:
 		return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
@@ -538,11 +535,11 @@ func reviewInBackground(entry model.ContentSafetyLog, plan *contentReviewPlan) {
 	}
 	storeVerdicts(reviews, cfg.CacheTTLSeconds)
 	entry, categories, snippets := summarizeReviews(entry, reviews)
-	recordReview(entry, categories, snippets, cfg.PassLogPercent, func(entry model.ContentSafetyLog, categories, snippets []string) {
-		if encoded, ok := encodeLogLists(entry, categories, snippets); ok {
-			model.RecordContentSafetyLog(encoded)
-		}
-	})
+	verdicts := riskVerdicts(reviews)
+	if len(plan.skipped) > 0 {
+		verdicts = append(verdicts, unreviewedRiskVerdict(plan.skipped))
+	}
+	recordScoredReview(entry, categories, snippets, cfg.PassLogPercent, verdicts)
 }
 
 // reviewUnit tries up to two channels that serve the review model, and stops

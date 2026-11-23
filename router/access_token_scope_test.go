@@ -98,10 +98,14 @@ var accessTokenExemptRoutes = []string{
 // accessTokenHelperRoutes are declared through handlePermissionRoute outside
 // channelPermissionRoutes.
 var accessTokenHelperRoutes = map[string]authz.Permission{
-	"GET /api/task_plugin_options":  authz.TaskPluginBind,
-	"GET /api/audit":                authz.AuditRead,
-	"GET /api/content_safety/logs":  authz.AuditRead,
-	"GET /api/content_safety/stats": authz.AuditRead,
+	"GET /api/task_plugin_options":                          authz.TaskPluginBind,
+	"GET /api/audit":                                        authz.AuditRead,
+	"GET /api/content_safety/logs":                          authz.AuditRead,
+	"GET /api/content_safety/stats":                         authz.AuditRead,
+	"GET /api/content_safety/risk_profiles":                 authz.AuditRead,
+	"GET /api/content_safety/risk_profiles/:user_id":        authz.AuditRead,
+	"POST /api/content_safety/risk_profiles/:user_id/reset": authz.AuditRead,
+	"POST /api/content_safety/risk_profiles/:user_id/trust": authz.AuditRead,
 }
 
 func newAccessTokenScopeTestEngine(t *testing.T) *gin.Engine {

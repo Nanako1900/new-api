@@ -153,6 +153,12 @@ func TestBuildRequestPolicyValidatesContentSafety(t *testing.T) {
 		{name: "unknown content safety field", options: map[string]string{p + "mode": "strict"}, wantErr: "unknown content safety option"},
 		{name: "non-boolean switch", options: map[string]string{p + "sync_all": "yes"}, wantErr: "sync_all"},
 		{name: "options of the retired keyword trigger are ignored", options: map[string]string{p + "review_enabled": "true", p + "review_words": "knife", p + "window_chars": "1", p + "max_windows": "x"}},
+		{name: "risk thresholds must increase", options: map[string]string{p + "risk_watch_threshold": "50", p + "risk_restrict_threshold": "50"}, wantErr: "must increase"},
+		{name: "block threshold above restrict", options: map[string]string{p + "risk_restrict_threshold": "100", p + "risk_block_threshold": "100"}, wantErr: "must increase"},
+		{name: "half-life above a year", options: map[string]string{p + "risk_half_life_hours": "8761"}, wantErr: "risk_half_life_hours"},
+		{name: "known zero-tolerance categories", options: map[string]string{p + "risk_zero_tolerance_categories": "sexual_minors\n terrorism \n"}},
+		{name: "unknown zero-tolerance category", options: map[string]string{p + "risk_zero_tolerance_categories": "sexual_minors\nspam"}, wantErr: "unknown category: spam"},
+		{name: "non-boolean notice switch", options: map[string]string{p + "risk_notify_enabled": "on"}, wantErr: "risk_notify_enabled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := BuildRequestPolicy(tc.options)
@@ -198,6 +204,8 @@ func TestContentSafetySettingBounded(t *testing.T) {
 		ReviewTimeoutSeconds: -1, ReviewMaxConcurrency: 0, ReviewRateLimitPerMinute: 99999,
 		UnitChars: 10, MaxUnits: 1000, AsyncWorkers: 0, AsyncQueueSize: 1, AsyncRatePerMinute: 0,
 		PassLogPercent: 101, SyncNewUserDays: -1, CacheTTLSeconds: -5, LogRetentionDays: 0,
+		RiskHalfLifeHours: 0, RiskPointsUnsafe: 5000, RiskPointsControversial: -1, RiskWatchThreshold: 0,
+		RiskRestrictThreshold: 200000, RiskBlockThreshold: 0, RiskRestrictRPM: 0,
 	}
 	bounded := setting.Bounded()
 	assert.Equal(t, operation_setting.ContentSafetySetting{
@@ -205,6 +213,8 @@ func TestContentSafetySettingBounded(t *testing.T) {
 		ReviewTimeoutSeconds: 1, ReviewMaxConcurrency: 1, ReviewRateLimitPerMinute: 10000,
 		UnitChars: 200, MaxUnits: 100, AsyncWorkers: 1, AsyncQueueSize: 10, AsyncRatePerMinute: 1,
 		PassLogPercent: 100, SyncNewUserDays: 0, CacheTTLSeconds: 0, LogRetentionDays: 1,
+		RiskHalfLifeHours: 1, RiskPointsUnsafe: 1000, RiskPointsControversial: 0, RiskWatchThreshold: 1,
+		RiskRestrictThreshold: 100000, RiskBlockThreshold: 1, RiskRestrictRPM: 1,
 	}, bounded)
 	assert.Equal(t, -1, setting.ReviewTimeoutSeconds)
 }

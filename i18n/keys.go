@@ -135,3 +135,14 @@ const (
 	MsgContentSafetyRejected    = "content_safety.rejected"
 	MsgContentSafetyUnavailable = "content_safety.unavailable"
 )
+
+// Content risk actions returned to AI clients, and the content risk notices
+// sent to administrators. Notices name the account, never its content.
+const (
+	MsgContentRiskBlocked                    = "content_risk.blocked"
+	MsgContentRiskThrottled                  = "content_risk.throttled"
+	MsgContentRiskNotifyRestrictedSubject    = "content_risk.notify_restricted_subject"
+	MsgContentRiskNotifyBlockedSubject       = "content_risk.notify_blocked_subject"
+	MsgContentRiskNotifyZeroToleranceSubject = "content_risk.notify_zero_tolerance_subject"
+	MsgContentRiskNotifyContent              = "content_risk.notify_content"
+)
