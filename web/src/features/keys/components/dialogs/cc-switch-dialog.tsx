@@ -27,21 +27,28 @@ import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { getPricing } from '@/features/pricing/api'
 import { getUserModels } from '@/lib/api'
 import { resolveApiRoot } from '@/lib/api-root'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { readCachedStatus } from '@/lib/status-query'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { useOnboardingStore } from '@/stores/onboarding-store'
 
+import { getTokenAutoGroups } from '../../api'
 import {
+  CC_SWITCH_APPS,
   ccSwitchModelChoices,
+  defaultCCSwitchApp,
   defaultCCSwitchModels,
+  keyModels,
+  keyRequestGroups,
   type CCSwitchApp,
+  type CCSwitchKey,
   type CCSwitchModels,
 } from '../../lib/cc-switch-defaults'
 
-// MeowAPI serves Claude and GPT models only, so Gemini is not offered.
 const APP_CONFIGS = {
   claude: {
     label: 'Claude',
@@ -56,6 +63,12 @@ const APP_CONFIGS = {
   codex: {
     label: 'Codex',
     defaultName: 'MeowAPI Codex',
+    modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
+  },
+  // Gemini CLI appends `/v1beta/...` to the site root itself.
+  gemini: {
+    label: 'Gemini',
+    defaultName: 'MeowAPI Gemini',
     modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
   },
 } as const satisfies Record<CCSwitchApp, unknown>
@@ -88,29 +101,86 @@ interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   tokenKey: string
+  /** The key being imported; its group decides the models on offer. */
+  apiKey: CCSwitchKey | null
 }
 
 export function CCSwitchDialog(props: Props) {
   const { t } = useTranslation()
-  const [app, setApp] = useState<AppType>('claude')
-  const [name, setName] = useState<string>(APP_CONFIGS.claude.defaultName)
-  // Fields the user changed; the rest follow the defaults for the app.
+  // What the user picked; null follows the defaults for the key and client.
+  const [appChoice, setAppChoice] = useState<AppType | null>(null)
+  const [nameEdit, setNameEdit] = useState<string | null>(null)
   const [modelEdits, setModelEdits] = useState<CCSwitchModels>({})
   const userId = useAuthStore((state) => state.auth.user?.id)
+  const userGroup = useAuthStore((state) => state.auth.user?.group ?? '')
   const recordImport = useOnboardingStore((state) => state.recordImport)
 
-  const { data: modelsData } = useQuery({
-    queryKey: ['user-models-ccswitch'],
-    queryFn: async () => requireServerSuccess(await getUserModels()),
-    enabled: props.open,
+  // A key in `auto` without its own list follows the user's global Auto list.
+  const needsGlobalAuto =
+    props.apiKey?.group === 'auto' && !props.apiKey.auto_groups?.length
+  const pricing = useQuery({
+    queryKey: ['pricing'],
+    queryFn: async () => requireServerSuccess(await getPricing()),
+    enabled: props.open && props.apiKey !== null,
     staleTime: 5 * 60 * 1000,
   })
+  const autoGroups = useQuery({
+    queryKey: ['token-auto-groups'],
+    queryFn: async () => requireServerSuccess(await getTokenAutoGroups()),
+    enabled: props.open && needsGlobalAuto,
+  })
+  // Without the price list the key's groups cannot be checked, so the
+  // user's own models stand in for the key's.
+  const fallback =
+    props.apiKey === null || pricing.isError || autoGroups.isError
+  const userModels = useQuery({
+    queryKey: ['user-models-ccswitch'],
+    queryFn: async () => requireServerSuccess(await getUserModels()),
+    enabled: props.open && fallback,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // The models this key can call; null while they load.
+  const available = useMemo(() => {
+    if (fallback || props.apiKey === null) return userModels.data?.data ?? null
+    if (!pricing.data || (needsGlobalAuto && !autoGroups.data)) return null
+    const groups = keyRequestGroups(
+      props.apiKey,
+      userGroup,
+      autoGroups.data?.data?.groups ?? []
+    )
+    return keyModels(props.apiKey, groups, pricing.data.data ?? [])
+  }, [
+    fallback,
+    props.apiKey,
+    userModels.data,
+    pricing.data,
+    needsGlobalAuto,
+    autoGroups.data,
+    userGroup,
+  ])
+
+  // Clients with no model this key can call are grayed out.
+  const unusableApps = useMemo(
+    () =>
+      available === null
+        ? []
+        : CC_SWITCH_APPS.filter(
+            (key) => ccSwitchModelChoices(key, available).length === 0
+          ),
+    [available]
+  )
+  const noUsableApp = unusableApps.length === CC_SWITCH_APPS.length
+
+  const app =
+    appChoice ?? (available && defaultCCSwitchApp(available)) ?? 'claude'
+  const name = nameEdit ?? APP_CONFIGS[app].defaultName
 
   // Only models of the chosen client's family, so Codex cannot be pointed
   // at a Claude model or the other way round.
   const choices = useMemo(
-    () => ccSwitchModelChoices(app, modelsData?.data ?? []),
-    [app, modelsData?.data]
+    () => ccSwitchModelChoices(app, available ?? []),
+    [app, available]
   )
 
   const modelOptions = useMemo(
@@ -128,18 +198,17 @@ export function CCSwitchDialog(props: Props) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setModelEdits({})
 
-      setApp('claude')
+      setAppChoice(null)
 
-      setName(APP_CONFIGS.claude.defaultName)
+      setNameEdit(null)
     }
   }, [props.open])
 
   const currentConfig = APP_CONFIGS[app]
 
   const handleAppChange = (val: string) => {
-    const appVal = val as AppType
-    setApp(appVal)
-    setName(APP_CONFIGS[appVal].defaultName)
+    setAppChoice(val as AppType)
+    setNameEdit(null)
     setModelEdits({})
   }
 
@@ -170,7 +239,11 @@ export function CCSwitchDialog(props: Props) {
           <Button variant='outline' onClick={() => props.onOpenChange(false)}>
             {t('Cancel')}
           </Button>
-          <Button data-tour='cc-switch-open' onClick={handleSubmit}>
+          <Button
+            data-tour='cc-switch-open'
+            disabled={noUsableApp}
+            onClick={handleSubmit}
+          >
             {t('Open CC Switch')}
           </Button>
         </>
@@ -183,21 +256,52 @@ export function CCSwitchDialog(props: Props) {
             value={app}
             onValueChange={handleAppChange}
             className='flex gap-4'
+            aria-describedby={
+              unusableApps.length > 0 ? 'cc-switch-app-note' : undefined
+            }
           >
-            {(
-              Object.entries(APP_CONFIGS) as [
-                AppType,
-                (typeof APP_CONFIGS)[AppType],
-              ][]
-            ).map(([key, cfg]) => (
-              <div key={key} className='flex items-center gap-2'>
-                <RadioGroupItem value={key} id={`app-${key}`} />
-                <Label htmlFor={`app-${key}`} className='cursor-pointer'>
-                  {cfg.label}
-                </Label>
-              </div>
-            ))}
+            {CC_SWITCH_APPS.map((key) => {
+              const unusable = unusableApps.includes(key)
+              return (
+                <div key={key} className='flex items-center gap-2'>
+                  <RadioGroupItem
+                    value={key}
+                    id={`app-${key}`}
+                    disabled={unusable}
+                  />
+                  <Label
+                    htmlFor={`app-${key}`}
+                    className={cn(
+                      unusable
+                        ? 'cursor-not-allowed opacity-50'
+                        : 'cursor-pointer'
+                    )}
+                  >
+                    {APP_CONFIGS[key].label}
+                  </Label>
+                </div>
+              )
+            })}
           </RadioGroup>
+          {unusableApps.length > 0 && (
+            <p
+              id='cc-switch-app-note'
+              className='text-muted-foreground text-xs'
+            >
+              {noUsableApp
+                ? t(
+                    "This key's group has no Claude, GPT or Gemini models. Change its group in the key list first."
+                  )
+                : t(
+                    'Not available with this key: {{apps}}. Its group has no models for them.',
+                    {
+                      apps: unusableApps
+                        .map((key) => APP_CONFIGS[key].label)
+                        .join(', '),
+                    }
+                  )}
+            </p>
+          )}
         </div>
 
         <div className='space-y-2'>
@@ -205,7 +309,7 @@ export function CCSwitchDialog(props: Props) {
           <Input
             id='cc-switch-name'
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => setNameEdit(event.target.value)}
             placeholder={currentConfig.defaultName}
           />
         </div>

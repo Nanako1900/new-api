@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 
+import type { ClaudeApiStatus } from '@/features/performance-metrics/api'
 import { api } from '@/lib/api'
 
 import { MeowStatus } from '../components/meow/meow-status'
@@ -49,13 +50,26 @@ const GPT_DIPPED: PerfModel[] = [
 ]
 
 /** Serves the home page requests; `perf` decides the health summary. */
-function mockApi(perf: PerfModel[] | 'fail' | 'pending') {
+function mockApi(
+  perf: PerfModel[] | 'fail' | 'pending',
+  status: () => ClaudeApiStatus | Promise<ClaudeApiStatus> = () => ({
+    status: 'partial_outage',
+    incidents: [
+      { id: 'incident-a', name: 'Elevated API errors', status: 'monitoring' },
+    ],
+    checked_at: 1_800_000_000,
+    stale: false,
+  })
+) {
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/perf-metrics/summary') {
       if (perf === 'fail') throw new Error('network down')
       if (perf === 'pending') return new Promise(() => undefined)
       const models = perf.map((model) => ({ ...model, avg_latency_ms: 3000 }))
       return { data: { success: true, data: { models } } }
+    }
+    if (url === '/api/status/claude') {
+      return { data: { success: true, data: await status() } }
     }
     if (url === '/api/pricing') {
       return { data: { success: true, data: [], vendors: [] } }
@@ -64,10 +78,10 @@ function mockApi(perf: PerfModel[] | 'fail' | 'pending') {
   })
 }
 
-function renderStatus(checkinEnabled = true) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
+function renderStatus(
+  checkinEnabled = true,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+) {
   client.setQueryData(['status'], { checkin_enabled: checkinEnabled })
   return render(
     <QueryClientProvider client={client}>
@@ -77,6 +91,7 @@ function renderStatus(checkinEnabled = true) {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -155,4 +170,99 @@ test('the check-in promise is left out when check-in is disabled', async () => {
 
   const bar = await screen.findByRole('region', { name: 'Peace of mind' })
   expect(bar).not.toHaveTextContent('Daily check-in credits')
+})
+
+test('shows official API incidents even when local provider metrics are hidden', async () => {
+  mockApi(GPT_DIPPED)
+  renderStatus()
+
+  const bar = await screen.findByRole('region', { name: 'Peace of mind' })
+  expect(await within(bar).findByText('Partial outage')).toBeInTheDocument()
+  expect(within(bar).getByText('Elevated API errors')).toBeInTheDocument()
+  expect(
+    within(bar).getByRole('link', { name: 'Claude API official status' })
+  ).toHaveAttribute('href', 'https://status.claude.com')
+})
+
+test.each([false, true])(
+  'refreshes a nearly expired official report on its original deadline after remount (stale=%s)',
+  async (stale) => {
+    vi.useFakeTimers()
+    const client = new QueryClient()
+    const loadStatus = vi.fn(() => ({
+      status: 'operational',
+      incidents: [],
+      checked_at: 1_800_000_000,
+      stale,
+      refresh_after_seconds: 2,
+    }))
+    mockApi(HEALTHY, loadStatus)
+    const view = renderStatus(true, client)
+    await act(() => vi.advanceTimersByTimeAsync(500))
+    view.unmount()
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    renderStatus(true, client)
+    await act(() => vi.advanceTimersByTimeAsync(499))
+    expect(loadStatus).toHaveBeenCalledTimes(1)
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(loadStatus).toHaveBeenCalledTimes(2)
+  }
+)
+
+test('refreshes the official report at five minutes and retries a failed refresh after one minute', async () => {
+  vi.useFakeTimers()
+  const checkedAt = 1_800_000_000
+  const client = new QueryClient()
+  let offline = false
+  let component = 'operational'
+  const loadStatus = vi.fn(async () => {
+    if (offline) {
+      await new Promise((resolve) => setTimeout(resolve, 5000))
+      throw new Error('Network error')
+    }
+    return {
+      status: component,
+      incidents: [],
+      checked_at: checkedAt,
+      stale: false,
+    }
+  })
+  mockApi(HEALTHY, loadStatus)
+  const view = renderStatus(true, client)
+  await act(() => vi.advanceTimersByTimeAsync(1))
+  expect(screen.getByText('Operational')).toBeInTheDocument()
+  offline = true
+  await act(() => vi.advanceTimersByTimeAsync(299_998))
+  expect(loadStatus).toHaveBeenCalledTimes(1)
+  await act(() => vi.advanceTimersByTimeAsync(2))
+  expect(loadStatus).toHaveBeenCalledTimes(2)
+  await act(() => vi.advanceTimersByTimeAsync(5000))
+  expect(screen.getByText('Showing last known status')).toBeInTheDocument()
+  expect(screen.getByText('Operational')).toBeInTheDocument()
+  expect(screen.getByRole('time')).toHaveAttribute(
+    'datetime',
+    new Date(checkedAt * 1000).toISOString()
+  )
+  offline = false
+  component = 'degraded_performance'
+  view.unmount()
+  await act(() => vi.advanceTimersByTimeAsync(30_000))
+  renderStatus(true, client)
+  await act(() => vi.advanceTimersByTimeAsync(29_998))
+  expect(loadStatus).toHaveBeenCalledTimes(2)
+  await act(() => vi.advanceTimersByTimeAsync(2))
+  expect(screen.getByText('Degraded performance')).toBeInTheDocument()
+  expect(
+    screen.queryByText('Showing last known status')
+  ).not.toBeInTheDocument()
+})
+
+test('shows unavailable when the first official check fails and keeps live gateway metrics', async () => {
+  mockApi(HEALTHY, () => {
+    throw new Error('Status unavailable')
+  })
+  renderStatus()
+  expect(await screen.findByText('Unavailable')).toBeInTheDocument()
+  expect(await screen.findAllByText('Success rate')).toHaveLength(2)
+  expect(screen.queryByRole('time')).not.toBeInTheDocument()
 })

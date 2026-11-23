@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -31,6 +32,15 @@ func TestStatus(c *gin.Context) {
 		"http_stats": httpStats,
 	})
 	return
+}
+
+func GetClaudeAPIStatus(c *gin.Context) {
+	status, err := service.GetClaudeAPIStatus()
+	if err != nil {
+		common.ApiErrorStatus(c, http.StatusServiceUnavailable, common.NewMessage("Information unavailable"))
+		return
+	}
+	common.ApiSuccess(c, status)
 }
 
 func GetStatus(c *gin.Context) {

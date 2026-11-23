@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type { PerformanceMetricsData, PerfSummaryAllData } from './types'
 
@@ -42,4 +43,20 @@ export async function getPerfMetrics(
     },
   })
   return res.data
+}
+
+export interface ClaudeApiStatus {
+  status: string
+  incidents: { id: string; name: string; status: string }[]
+  checked_at: number
+  stale: boolean
+  refresh_after_seconds?: number
+}
+
+export async function getClaudeApiStatus() {
+  const response = await api.get<{
+    success: boolean
+    data: ClaudeApiStatus
+  }>('/api/status/claude')
+  return requireServerSuccess(response.data).data
 }

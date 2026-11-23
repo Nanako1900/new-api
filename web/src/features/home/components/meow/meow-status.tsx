@@ -20,6 +20,7 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PawPrint, SleepingCat } from '@/components/cat-art'
+import { ClaudeOfficialStatus } from '@/features/performance-metrics/claude-official-status'
 import {
   formatLatency,
   formatUptimePct,
@@ -67,8 +68,7 @@ export function MeowStatus() {
   const { t } = useTranslation()
   const { health, isLoading } = useProviderHealth()
 
-  // While loading, the empty bar and the cat already hold their place, so
-  // the promises never flash in ahead of the live numbers.
+  // Wait for local metrics before choosing the promises or live numbers.
   let label = t('Live status')
   let content: ReactNode = null
   if (canShowLiveStatus(health)) {
@@ -90,6 +90,9 @@ export function MeowStatus() {
         */}
         <SleepingCat className='absolute right-10 bottom-full w-[150px] translate-y-[34.4%] lg:right-6 lg:w-[208px]' />
         {content}
+        <div className='w-full'>
+          <ClaudeOfficialStatus />
+        </div>
       </div>
     </section>
   )
