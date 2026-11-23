@@ -35,8 +35,13 @@ import { safeNumberFieldProps } from '../utils/numeric-field'
 import {
   CONTENT_SAFETY_INT_LIMITS,
   type ContentSafetyIntField,
-  type RequestChecksFormValues,
 } from './request-checks-form'
+
+// Any section form that keeps its content safety options under
+// `content_safety_setting`; the field only touches `props.name`.
+type ContentSafetyNumberForm = {
+  content_safety_setting: Record<ContentSafetyIntField, number>
+}
 
 type ReviewNumberFieldProps = {
   name: ContentSafetyIntField
@@ -47,7 +52,7 @@ type ReviewNumberFieldProps = {
 export function ReviewNumberField(props: ReviewNumberFieldProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
-  const form = useFormContext<RequestChecksFormValues>()
+  const form = useFormContext<ContentSafetyNumberForm>()
   const limits = CONTENT_SAFETY_INT_LIMITS[props.name]
 
   return (

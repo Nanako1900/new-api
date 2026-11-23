@@ -65,10 +65,24 @@ export type ContentSafetySettings = {
   'content_safety_setting.cache_ttl_seconds': number
   'content_safety_setting.log_retention_days': number
 }
+// Per-account risk score options of the same `content_safety_setting` struct.
+// `risk_zero_tolerance_categories` holds one category per line.
+export type ContentRiskSettings = {
+  'content_safety_setting.risk_half_life_hours': number
+  'content_safety_setting.risk_points_unsafe': number
+  'content_safety_setting.risk_points_controversial': number
+  'content_safety_setting.risk_zero_tolerance_categories': string
+  'content_safety_setting.risk_watch_threshold': number
+  'content_safety_setting.risk_restrict_threshold': number
+  'content_safety_setting.risk_block_threshold': number
+  'content_safety_setting.risk_restrict_rpm': number
+  'content_safety_setting.risk_notify_enabled': boolean
+}
 export type RequestPolicySettings = RetrySettings &
   HealthSettings &
   FilteringSettings &
   ContentSafetySettings &
+  ContentRiskSettings &
   Pick<ChannelAffinitySettings, keyof ChannelAffinitySettings>
 
 export const defaultRequestPolicySettings: RequestPolicySettings = {
@@ -113,4 +127,13 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   'content_safety_setting.sync_groups': '',
   'content_safety_setting.cache_ttl_seconds': 86400,
   'content_safety_setting.log_retention_days': 30,
+  'content_safety_setting.risk_half_life_hours': 168,
+  'content_safety_setting.risk_points_unsafe': 40,
+  'content_safety_setting.risk_points_controversial': 5,
+  'content_safety_setting.risk_zero_tolerance_categories': 'sexual_minors',
+  'content_safety_setting.risk_watch_threshold': 20,
+  'content_safety_setting.risk_restrict_threshold': 50,
+  'content_safety_setting.risk_block_threshold': 100,
+  'content_safety_setting.risk_restrict_rpm': 10,
+  'content_safety_setting.risk_notify_enabled': true,
 }

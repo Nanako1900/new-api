@@ -24,6 +24,7 @@ import {
   DatabaseZap,
   FileText,
   FlaskConical,
+  Gauge,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -158,6 +159,15 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Content Safety Logs'),
             url: '/usage-logs/content-safety',
             icon: ShieldAlert,
+            requiredPermission: {
+              resource: ADMIN_PERMISSION_RESOURCES.AUDIT,
+              action: ADMIN_PERMISSION_ACTIONS.READ,
+            },
+          },
+          {
+            title: t('Account Risk'),
+            url: '/usage-logs/content-risk',
+            icon: Gauge,
             requiredPermission: {
               resource: ADMIN_PERMISSION_RESOURCES.AUDIT,
               action: ADMIN_PERMISSION_ACTIONS.READ,
