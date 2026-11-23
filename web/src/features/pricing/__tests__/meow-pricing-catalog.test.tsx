@@ -99,6 +99,19 @@ function mockApi(
       if (options.pricing === 'fail-once') return { data: PRICING }
       return { data: options.pricing ?? PRICING }
     }
+    if (url === '/api/status/claude') {
+      return {
+        data: {
+          success: true,
+          data: {
+            status: 'operational',
+            incidents: [],
+            checked_at: LAST_HOUR,
+            stale: true,
+          },
+        },
+      }
+    }
     if (url === '/api/pricing/reference') {
       if (options.reference === 'fail') {
         throw Object.assign(new Error('reference down'), {
@@ -1126,6 +1139,52 @@ describe('meow pricing catalog', () => {
     expect(pricing).toHaveTextContent('$0')
     expect(pricing).not.toHaveTextContent('1x')
     expect(within(pricing).getAllByRole('table')).toHaveLength(1)
+  })
+
+  it('shows one cached official report for channels carrying Claude and reuses it across switches', async () => {
+    const user = userEvent.setup()
+    mockApi({
+      pricing: {
+        ...PRICING,
+        data: [
+          {
+            ...SONNET,
+            model_name: 'private-sonnet',
+            vendor_id: 3,
+            enable_groups: ['kiro'],
+          },
+          {
+            ...SONNET,
+            model_name: 'gpt-test',
+            enable_groups: ['official', 'kiro'],
+          },
+        ],
+        vendors: [{ id: 3, name: 'Anthropic' }],
+      },
+    })
+    renderCatalog()
+    await screen.findByRole('table', { name: 'Models · Official' })
+    const report = { name: 'Claude API official status' }
+    expect(screen.queryByRole('link', report)).not.toBeInTheDocument()
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.filter(([url]) => url === '/api/status/claude')
+    ).toHaveLength(0)
+    await user.click(screen.getByRole('button', { name: 'kiro' }))
+    expect(
+      await screen.findByText('Showing last known status')
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole('link', report)).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'official' }))
+    expect(screen.queryByRole('link', report)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'kiro' }))
+    expect(await screen.findByText('Operational')).toBeInTheDocument()
+    expect(
+      vi
+        .mocked(api.get)
+        .mock.calls.filter(([url]) => url === '/api/status/claude')
+    ).toHaveLength(1)
   })
 
   it('shows each channel the success rate measured for its group', async () => {
