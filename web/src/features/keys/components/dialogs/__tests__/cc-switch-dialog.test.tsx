@@ -45,7 +45,14 @@ afterEach(() => {
 })
 
 function renderDialog(
-  models = ['gpt-5.4', 'gpt-5.5', 'claude-sonnet-4-6', 'claude-opus-4-6']
+  models = [
+    'gpt-5.4',
+    'gpt-5.5',
+    'claude-sonnet-4-6',
+    'claude-opus-4-6',
+    'gemini-4-carbon',
+    'gemini-4-neon',
+  ]
 ) {
   queryClient.setQueryData(['user-models-ccswitch'], {
     success: true,
@@ -62,6 +69,8 @@ const SITE_MODELS = [
   'claude-haiku-5-5',
   'claude-opus-5-5',
   'claude-sonnet-5-5',
+  'gemini-3.8-flash',
+  'gemini-4-neon',
   'gpt-6-astra',
   'gpt-6.1-sol',
 ]
@@ -101,15 +110,46 @@ describe('CC Switch defaults', () => {
     )
   })
 
-  it('offers Claude and Codex only', () => {
+  it('switches the name and model to Gemini defaults when Gemini is picked', async () => {
+    renderDialog(SITE_MODELS)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('radio', { name: 'Gemini' }))
+
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue(
+      'MeowAPI Gemini'
+    )
+    expect(screen.getByRole('combobox', { name: 'Primary Model' })).toHaveValue(
+      'gemini-4-neon'
+    )
+    expect(
+      screen.queryByRole('combobox', { name: 'Haiku Model' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('offers Claude, Codex and Gemini', () => {
     renderDialog(SITE_MODELS)
 
-    expect(screen.getAllByRole('radio')).toHaveLength(2)
-    expect(screen.getByRole('radio', { name: 'Claude' })).toBeVisible()
-    expect(screen.getByRole('radio', { name: 'Codex' })).toBeVisible()
-    expect(
-      screen.queryByRole('radio', { name: 'Gemini' })
-    ).not.toBeInTheDocument()
+    expect(screen.getAllByRole('radio')).toHaveLength(3)
+    for (const app of ['Claude', 'Codex', 'Gemini']) {
+      expect(screen.getByRole('radio', { name: app })).toBeVisible()
+    }
+  })
+
+  it('sends Gemini CLI the site root, without a version path', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    renderDialog(SITE_MODELS)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('radio', { name: 'Gemini' }))
+    await user.click(screen.getByRole('button', { name: 'Open CC Switch' }))
+
+    const url = new URL(String(open.mock.calls[0][0]))
+    expect(url.searchParams.get('app')).toBe('gemini')
+    expect(url.searchParams.get('name')).toBe('MeowAPI Gemini')
+    expect(url.searchParams.get('endpoint')).toBe(window.location.origin)
+    expect(url.searchParams.get('apiKey')).toBe('sk-test-only')
+    expect(url.searchParams.get('model')).toBe('gemini-4-neon')
   })
 
   it('opens the CC Switch link with the defaults and records the import for the user', async () => {
@@ -136,6 +176,7 @@ describe('CC Switch model selection', () => {
   it.each([
     ['Claude', 'claude-sonnet-4-6'],
     ['Codex', 'gpt-5.4'],
+    ['Gemini', 'gemini-4-carbon'],
   ])(
     'opens %s models outside the clipping dialog and keeps the dialog open after selection',
     async (app, option) => {
@@ -161,7 +202,8 @@ describe('CC Switch model selection', () => {
 
   it.each([
     ['Claude', ['claude-opus-4-6', 'claude-sonnet-4-6']],
-    ['Codex', ['gpt-5.4', 'gpt-5.5']],
+    ['Codex', ['gemini-4-carbon', 'gemini-4-neon', 'gpt-5.4', 'gpt-5.5']],
+    ['Gemini', ['gemini-4-carbon', 'gemini-4-neon']],
   ])('lists only the models %s can run', async (app, expected) => {
     renderDialog()
     const user = userEvent.setup()

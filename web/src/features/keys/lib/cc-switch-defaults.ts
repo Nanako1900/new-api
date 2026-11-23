@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 /** The clients the CC Switch import offers. */
-export type CCSwitchApp = 'claude' | 'codex'
+export type CCSwitchApp = 'claude' | 'codex' | 'gemini'
 
 /** Model fields of a CC Switch import, keyed by its deep-link parameter. */
 export type CCSwitchModels = Record<string, string>
@@ -33,6 +33,10 @@ const CLAUDE_HAIKU = /^claude-haiku(?:-(\d{1,2}(?:[-.]\d{1,2})*))?$/
 const GPT_SOL = /^gpt-(\d+(?:\.\d+)*)-sol$/
 /** A GPT chat model with a version and an optional tier: `gpt-6.1-terra`. */
 export const GPT_MODEL = /^gpt-(\d+(?:\.\d+)*)(?:-[a-z]+)?$/
+// Gemini CLI prefers the newest `neon` tier, then the newest Gemini model of
+// any tier (`gemini-4-carbon`, `gemini-3.8-flash`).
+const GEMINI_NEON = /^gemini-(\d+(?:\.\d+)*)-neon$/
+const GEMINI_MODEL = /^gemini-(\d+(?:\.\d+)*)(?:-[a-z]+)?$/
 
 /**
  * The newest model whose name matches `pattern`, comparing the version that
@@ -60,11 +64,15 @@ export function newestModel(models: readonly string[], pattern: RegExp) {
   return best
 }
 
-// The models each client can run: Claude Code speaks the Anthropic API and
-// Codex the OpenAI one, so a model from the other family breaks the client.
-const APP_MODELS: Record<CCSwitchApp, RegExp> = {
-  claude: /^claude-/,
-  codex: /^(?:gpt|codex)-/,
+// The model families each client can run, its own family first. Claude Code
+// speaks the Anthropic API and keeps to Claude models. Codex speaks the
+// OpenAI Responses API, which the gateway also converts for Gemini channels,
+// so it may pick Gemini models after its GPT ones. Gemini CLI speaks the
+// Gemini API and keeps to Gemini models.
+const APP_MODELS: Record<CCSwitchApp, readonly RegExp[]> = {
+  claude: [/^claude-/],
+  codex: [/^(?:gpt|codex)-/, /^gemini-/],
+  gemini: [/^gemini-/],
 }
 
 /** The user's models a CC Switch import may pick for `app`. */
@@ -72,14 +80,17 @@ export function ccSwitchModelChoices(
   app: CCSwitchApp,
   models: readonly string[]
 ): string[] {
-  return models.filter((model) => APP_MODELS[app].test(model))
+  return APP_MODELS[app].flatMap((family) =>
+    models.filter((model) => family.test(model))
+  )
 }
 
 /**
  * Models a CC Switch import starts with, picked from the user's models so a
  * new model version is chosen without a code change: Claude runs on Opus
  * and fills each family slot with its newest model; Codex runs on the newest
- * GPT `sol` model. A field is empty when no model fits.
+ * GPT `sol` model; Gemini CLI on the newest Gemini `neon` model. A field is
+ * empty when no model fits.
  */
 export function defaultCCSwitchModels(
   app: CCSwitchApp,
@@ -88,6 +99,12 @@ export function defaultCCSwitchModels(
   if (app === 'codex') {
     return {
       model: newestModel(models, GPT_SOL) || newestModel(models, GPT_MODEL),
+    }
+  }
+  if (app === 'gemini') {
+    return {
+      model:
+        newestModel(models, GEMINI_NEON) || newestModel(models, GEMINI_MODEL),
     }
   }
 

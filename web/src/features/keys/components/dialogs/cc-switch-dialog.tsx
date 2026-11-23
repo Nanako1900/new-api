@@ -41,7 +41,6 @@ import {
   type CCSwitchModels,
 } from '../../lib/cc-switch-defaults'
 
-// MeowAPI serves Claude and GPT models only, so Gemini is not offered.
 const APP_CONFIGS = {
   claude: {
     label: 'Claude',
@@ -56,6 +55,12 @@ const APP_CONFIGS = {
   codex: {
     label: 'Codex',
     defaultName: 'MeowAPI Codex',
+    modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
+  },
+  // Gemini CLI appends `/v1beta/...` to the site root itself.
+  gemini: {
+    label: 'Gemini',
+    defaultName: 'MeowAPI Gemini',
     modelFields: [{ key: 'model', labelKey: 'Primary Model', required: true }],
   },
 } as const satisfies Record<CCSwitchApp, unknown>

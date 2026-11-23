@@ -34,11 +34,14 @@ const SITE_MODELS = [
   'gpt-5.6-sol',
   'gpt-3.5-turbo-0125',
   'claude-sonnet-5-5',
+  'gemini-3.8-flash',
+  'gemini-4-carbon',
+  'gemini-4-neon',
   'sora-2',
 ]
 
 describe('ccSwitchModelChoices', () => {
-  it('offers Codex the GPT and codex models only', () => {
+  it('offers Codex its GPT and codex models first, then the Gemini models', () => {
     expect(ccSwitchModelChoices('codex', SITE_MODELS)).toEqual([
       'codex-auto-review',
       'gpt-6-astra',
@@ -47,7 +50,16 @@ describe('ccSwitchModelChoices', () => {
       'gpt-6-sol',
       'gpt-5.6-sol',
       'gpt-3.5-turbo-0125',
+      'gemini-3.8-flash',
+      'gemini-4-carbon',
+      'gemini-4-neon',
     ])
+  })
+
+  it('keeps the Codex default on GPT when Gemini models are offered too', () => {
+    const models = ccSwitchModelChoices('codex', SITE_MODELS)
+
+    expect(defaultCCSwitchModels('codex', models).model).toBe('gpt-6.1-sol')
   })
 
   it('offers Claude Code the Claude models only', () => {
@@ -55,6 +67,14 @@ describe('ccSwitchModelChoices', () => {
       'claude-haiku-5-5',
       'claude-opus-5-5',
       'claude-sonnet-5-5',
+    ])
+  })
+
+  it('offers Gemini CLI the Gemini models only', () => {
+    expect(ccSwitchModelChoices('gemini', SITE_MODELS)).toEqual([
+      'gemini-3.8-flash',
+      'gemini-4-carbon',
+      'gemini-4-neon',
     ])
   })
 })
@@ -111,6 +131,24 @@ describe('defaultCCSwitchModels', () => {
     expect(defaultCCSwitchModels('codex', models).model).toBe('gpt-6.1-terra')
   })
 
+  it('fills Gemini CLI with the newest Gemini neon model', () => {
+    expect(defaultCCSwitchModels('gemini', SITE_MODELS)).toEqual({
+      model: 'gemini-4-neon',
+    })
+    expect(
+      defaultCCSwitchModels('gemini', ['gemini-4-neon', 'gemini-4.5-neon'])
+        .model
+    ).toBe('gemini-4.5-neon')
+  })
+
+  it('falls back to the newest Gemini model when no neon model exists', () => {
+    const models = ['gemini-3.8-flash', 'gemini-4-carbon']
+
+    expect(defaultCCSwitchModels('gemini', models).model).toBe(
+      'gemini-4-carbon'
+    )
+  })
+
   it('leaves every field empty when the user has no matching models', () => {
     expect(defaultCCSwitchModels('claude', ['sora-2'])).toEqual({
       model: '',
@@ -119,5 +157,8 @@ describe('defaultCCSwitchModels', () => {
       opusModel: '',
     })
     expect(defaultCCSwitchModels('codex', [])).toEqual({ model: '' })
+    expect(defaultCCSwitchModels('gemini', ['gpt-6.1-sol'])).toEqual({
+      model: '',
+    })
   })
 })

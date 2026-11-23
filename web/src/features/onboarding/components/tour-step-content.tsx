@@ -39,11 +39,11 @@ import {
 const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
   welcome: {
     title: 'Welcome to MeowAPI',
-    body: 'A few clicks connect Claude Code or Codex. The spot to click lights up each time.',
+    body: 'A few clicks connect Claude Code, Codex or Gemini CLI. The spot to click lights up each time.',
   },
   install: {
     title: 'First, install CC Switch',
-    body: 'CC Switch is a free desktop app. It fills the MeowAPI address and your key into Claude Code and Codex.',
+    body: 'CC Switch is a free desktop app. It fills the MeowAPI address and your key into Claude Code, Codex and Gemini CLI.',
   },
   'open-keys': {
     title: 'Open API Keys',
@@ -59,7 +59,7 @@ const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
   },
   'pick-group': {
     title: 'Pick a group',
-    body: "The group decides which models this key can use and at what rate; each group's note is in the list. Claude Code needs a Claude group, Codex a GPT group. Using both? Make one key for each.",
+    body: "The group decides which models this key can use and at what rate; each group's note is in the list. Claude Code needs a Claude group, Codex a GPT group, Gemini CLI a Gemini group. Using more than one? Make one key for each.",
   },
   'save-key': {
     title: 'Save the key',
@@ -67,7 +67,7 @@ const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
   },
   'pick-key-group': {
     title: 'Give this key a group',
-    body: 'This key is not in any of your groups yet, so it cannot reach a model. Pick one here: Claude Code needs a Claude group, Codex a GPT group.',
+    body: 'This key is not in any of your groups yet, so it cannot reach a model. Pick one here: Claude Code needs a Claude group, Codex a GPT group, Gemini CLI a Gemini group.',
   },
   'open-cc-switch': {
     title: 'Send the key to CC Switch',
@@ -75,7 +75,7 @@ const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
   },
   'pick-app': {
     title: 'Pick your tool and models',
-    body: "Match the key's group: Claude for a Claude group (Claude Code), Codex for a GPT group. Default models are filled in; open a list to pick another.",
+    body: "Match the key's group: Claude for a Claude group (Claude Code), Codex for a GPT group, Gemini for a Gemini group. Default models are filled in; open a list to pick another.",
   },
   import: {
     title: 'Open CC Switch',
@@ -83,7 +83,7 @@ const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
   },
   done: {
     title: 'Last step, in CC Switch',
-    body: 'Click Import in the CC Switch window and you are set. Then send a message from Claude Code or Codex.',
+    body: 'Click Import in the CC Switch window and you are set. Then send a message from Claude Code, Codex or Gemini CLI.',
   },
 }
 

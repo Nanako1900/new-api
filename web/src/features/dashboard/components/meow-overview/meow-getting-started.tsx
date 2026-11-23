@@ -84,7 +84,7 @@ export function MeowGettingStarted() {
         <div className='flex min-w-0 flex-col gap-0.5'>
           <h2 className='text-base font-extrabold'>{t('Setup progress')}</h2>
           <p className='text-muted-foreground text-[13px]'>
-            {t('Four steps to connect Claude Code or Codex.')}
+            {t('Four steps to connect Claude Code, Codex or Gemini CLI.')}
           </p>
         </div>
         <span className='text-muted-foreground text-[13px] font-bold tabular-nums'>
@@ -130,7 +130,7 @@ export function MeowGettingStarted() {
               </span>
               {item.id === 'first-call' && !item.done && (
                 <span className='text-muted-foreground text-xs'>
-                  {t('Send a message from Claude Code or Codex.')}
+                  {t('Send a message from Claude Code, Codex or Gemini CLI.')}
                 </span>
               )}
             </span>

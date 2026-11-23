@@ -109,7 +109,8 @@ function mockResponse(
       return ok(sampleKeys().find((key) => key.id === edit.id))
     }
     if (/^\/api\/token\/\d+\/key$/.test(path)) {
-      return ok({ key: 'sk-meowpreview0000000000000000' })
+      // Like the live API, without the `sk-` the console adds.
+      return ok({ key: 'meowpreview0000000000000000' })
     }
     return { success: false, message: '本地预览模式：操作不会保存' }
   }
@@ -117,12 +118,13 @@ function mockResponse(
   if (path === '/api/user/self') return ok(previewUser())
   if (path === '/api/user/models') return ok(PREVIEW_MODELS)
   if (path === '/api/user/self/groups') {
-    // The live site's groups (2026-11-14); none of them is the user's own.
+    // The live site's groups (2026-11-23); none of them is the user's own.
     return ok({
-      'CC Max': { desc: '1.3x  仅限ClaudeCode', ratio: 1.3 },
-      'Claude 0注入': { desc: '1.6x 官方API', ratio: 1.6 },
-      'GPT Pro号池': { desc: '0.22x 官方Pro号池', ratio: 0.22 },
-      'Kiro 企业': { desc: '0.4x 企业Kiro', ratio: 0.4 },
+      'Claude 0注入': { desc: 'Claude官方API（维护）', ratio: 1.2 },
+      'Claude Max': { desc: ' Claude正价Ultra号池 - 日常使用', ratio: 1 },
+      'GPT Pro号池': { desc: 'GPT官方Pro号池', ratio: 0.25 },
+      'Gemini Ultra': { desc: 'Gemini正价Ultra号池', ratio: 0.75 },
+      'Kiro 企业': { desc: '企业Kiro - Claude模型', ratio: 0.4 },
       其他: { desc: '全部第三方模型', ratio: 0.5 },
     })
   }
