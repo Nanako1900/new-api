@@ -20,7 +20,10 @@ import { describe, expect, it } from 'vitest'
 
 import {
   ccSwitchModelChoices,
+  defaultCCSwitchApp,
   defaultCCSwitchModels,
+  keyModels,
+  keyRequestGroups,
 } from '../cc-switch-defaults'
 
 const SITE_MODELS = [
@@ -141,6 +144,12 @@ describe('defaultCCSwitchModels', () => {
     ).toBe('gemini-4.5-neon')
   })
 
+  it('falls back to the Gemini default for Codex when no GPT model exists', () => {
+    expect(
+      defaultCCSwitchModels('codex', ['gemini-3.8-flash', 'gemini-4-neon'])
+    ).toEqual({ model: 'gemini-4-neon' })
+  })
+
   it('falls back to the newest Gemini model when no neon model exists', () => {
     const models = ['gemini-3.8-flash', 'gemini-4-carbon']
 
@@ -160,5 +169,82 @@ describe('defaultCCSwitchModels', () => {
     expect(defaultCCSwitchModels('gemini', ['gpt-6.1-sol'])).toEqual({
       model: '',
     })
+  })
+})
+
+describe('keyRequestGroups', () => {
+  it('uses the key group when it names one', () => {
+    expect(keyRequestGroups({ group: 'GPT Pro号池' }, 'default', [])).toEqual([
+      'GPT Pro号池',
+    ])
+  })
+
+  it("uses the user's own group when the key has none", () => {
+    expect(keyRequestGroups({ group: '' }, 'default', [])).toEqual(['default'])
+    expect(keyRequestGroups({ group: null }, '', [])).toEqual([])
+  })
+
+  it("uses an Auto key's own list, else the user's global Auto list", () => {
+    expect(
+      keyRequestGroups(
+        { group: 'auto', auto_groups: ['Claude Max', 'Gemini Ultra'] },
+        'default',
+        ['GPT Pro号池']
+      )
+    ).toEqual(['Claude Max', 'Gemini Ultra'])
+    expect(
+      keyRequestGroups({ group: 'auto', auto_groups: null }, 'default', [
+        'GPT Pro号池',
+      ])
+    ).toEqual(['GPT Pro号池'])
+  })
+})
+
+describe('keyModels', () => {
+  const PRICING = [
+    { model_name: 'claude-opus-5-5', enable_groups: ['Claude Max'] },
+    { model_name: 'gemini-4-neon', enable_groups: ['Gemini Ultra'] },
+    { model_name: 'gpt-6-astra', enable_groups: ['GPT Pro号池'] },
+    { model_name: 'gpt-6.1-sol', enable_groups: ['GPT Pro号池'] },
+    { model_name: 'unlisted-model', enable_groups: null },
+  ]
+
+  it('keeps the models served in any of the groups', () => {
+    expect(keyModels({}, ['Claude Max', 'Gemini Ultra'], PRICING)).toEqual([
+      'claude-opus-5-5',
+      'gemini-4-neon',
+    ])
+    expect(keyModels({}, [], PRICING)).toEqual([])
+  })
+
+  it('narrows them to the model limits when the key has limits on', () => {
+    const key = {
+      model_limits_enabled: true,
+      model_limits: 'gpt-6-astra, claude-opus-5-5',
+    }
+
+    expect(keyModels(key, ['GPT Pro号池'], PRICING)).toEqual(['gpt-6-astra'])
+    expect(
+      keyModels(
+        { ...key, model_limits_enabled: false },
+        ['GPT Pro号池'],
+        PRICING
+      )
+    ).toEqual(['gpt-6-astra', 'gpt-6.1-sol'])
+  })
+})
+
+describe('defaultCCSwitchApp', () => {
+  it('picks the client whose own family the key can call', () => {
+    expect(defaultCCSwitchApp(['gpt-6.1-sol'])).toBe('codex')
+    expect(defaultCCSwitchApp(['gemini-4-neon'])).toBe('gemini')
+    expect(defaultCCSwitchApp(['gemini-4-neon', 'claude-opus-5-5'])).toBe(
+      'claude'
+    )
+  })
+
+  it('returns null when no client runs any of the models', () => {
+    expect(defaultCCSwitchApp(['deepseek-flash'])).toBeNull()
+    expect(defaultCCSwitchApp([])).toBeNull()
   })
 })

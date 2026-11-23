@@ -64,6 +64,13 @@ export function newestModel(models: readonly string[], pattern: RegExp) {
   return best
 }
 
+/** The clients in the order the import offers them. */
+export const CC_SWITCH_APPS: readonly CCSwitchApp[] = [
+  'claude',
+  'codex',
+  'gemini',
+]
+
 // The model families each client can run, its own family first. Claude Code
 // speaks the Anthropic API and keeps to Claude models. Codex speaks the
 // OpenAI Responses API, which the gateway also converts for Gemini channels,
@@ -75,7 +82,7 @@ const APP_MODELS: Record<CCSwitchApp, readonly RegExp[]> = {
   gemini: [/^gemini-/],
 }
 
-/** The user's models a CC Switch import may pick for `app`. */
+/** The models of `models` that a CC Switch import may pick for `app`. */
 export function ccSwitchModelChoices(
   app: CCSwitchApp,
   models: readonly string[]
@@ -85,28 +92,103 @@ export function ccSwitchModelChoices(
   )
 }
 
+/** The group settings of a key that decide which models it can call. */
+export type CCSwitchKey = {
+  group?: string | null
+  auto_groups?: readonly string[] | null
+  model_limits_enabled?: boolean
+  model_limits?: string | null
+}
+
+/** A `/api/pricing` model: its name and the groups that serve it. */
+export type CCSwitchPricedModel = {
+  model_name: string
+  enable_groups?: readonly string[] | null
+}
+
+/**
+ * The groups a key's requests run in, as the gateway resolves them: an empty
+ * group means the user's own group, and `auto` means the key's Auto list, or
+ * the user's global Auto list when the key has none.
+ */
+export function keyRequestGroups(
+  key: CCSwitchKey,
+  userGroup: string,
+  globalAutoGroups: readonly string[]
+): string[] {
+  const group = key.group ?? ''
+  if (group === '') return userGroup ? [userGroup] : []
+  if (group !== 'auto') return [group]
+  return [...(key.auto_groups?.length ? key.auto_groups : globalAutoGroups)]
+}
+
+/**
+ * The models a key can call: those served in any of `groups`, narrowed to
+ * the key's model limits when it has them.
+ */
+export function keyModels(
+  key: CCSwitchKey,
+  groups: readonly string[],
+  pricing: readonly CCSwitchPricedModel[]
+): string[] {
+  const limits = key.model_limits_enabled
+    ? new Set(
+        (key.model_limits ?? '')
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean)
+      )
+    : null
+  return pricing
+    .filter((model) =>
+      (model.enable_groups ?? []).some((group) => groups.includes(group))
+    )
+    .map((model) => model.model_name)
+    .filter((name) => !limits || limits.has(name))
+}
+
+/**
+ * The client a key's models suit: the first whose own family the key can
+ * call (Claude, then GPT, then Gemini), else the first with any model it can
+ * run. Null when the key reaches no model any client runs.
+ */
+export function defaultCCSwitchApp(
+  models: readonly string[]
+): CCSwitchApp | null {
+  const own = CC_SWITCH_APPS.find((app) =>
+    models.some((model) => APP_MODELS[app][0].test(model))
+  )
+  return (
+    own ??
+    CC_SWITCH_APPS.find(
+      (app) => ccSwitchModelChoices(app, models).length > 0
+    ) ??
+    null
+  )
+}
+
 /**
  * Models a CC Switch import starts with, picked from the user's models so a
  * new model version is chosen without a code change: Claude runs on Opus
  * and fills each family slot with its newest model; Codex runs on the newest
- * GPT `sol` model; Gemini CLI on the newest Gemini `neon` model. A field is
- * empty when no model fits.
+ * GPT `sol` model, or the Gemini CLI default when it has no GPT model; Gemini
+ * CLI on the newest Gemini `neon` model. A field is empty when no model fits.
  */
 export function defaultCCSwitchModels(
   app: CCSwitchApp,
   models: readonly string[]
 ): CCSwitchModels {
+  const gemini =
+    newestModel(models, GEMINI_NEON) || newestModel(models, GEMINI_MODEL)
   if (app === 'codex') {
     return {
-      model: newestModel(models, GPT_SOL) || newestModel(models, GPT_MODEL),
-    }
-  }
-  if (app === 'gemini') {
-    return {
       model:
-        newestModel(models, GEMINI_NEON) || newestModel(models, GEMINI_MODEL),
+        newestModel(models, GPT_SOL) ||
+        newestModel(models, GPT_MODEL) ||
+        gemini,
     }
   }
+  if (app === 'gemini') return { model: gemini }
 
   const opus = newestModel(models, CLAUDE_OPUS)
   const sonnet = newestModel(models, CLAUDE_SONNET)

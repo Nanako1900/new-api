@@ -75,7 +75,7 @@ const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
   },
   'pick-app': {
     title: 'Pick your tool and models',
-    body: "Match the key's group: Claude for a Claude group (Claude Code), Codex for a GPT group, Gemini for a Gemini group. Default models are filled in; open a list to pick another.",
+    body: "The tool that fits this key's group is picked for you; grayed-out tools have no model in it. Default models are filled in; open a list to pick another.",
   },
   import: {
     title: 'Open CC Switch',
