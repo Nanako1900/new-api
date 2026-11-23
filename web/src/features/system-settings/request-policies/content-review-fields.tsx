@@ -21,6 +21,7 @@ import { useId, useMemo } from 'react'
 import { useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Combobox } from '@/components/ui/combobox'
 import {
   FormControl,
@@ -30,13 +31,12 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { getEnabledModels } from '@/features/channels/api'
 import { getGroups } from '@/features/users/api'
-import { toIntlLocale } from '@/i18n/languages'
-import { formatNumber } from '@/lib/format'
 import { requireServerSuccess } from '@/lib/server-error-message'
 
 import {
@@ -46,18 +46,10 @@ import {
   SettingsSwitchContent,
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
-import { safeNumberFieldProps } from '../utils/numeric-field'
-import {
-  CONTENT_SAFETY_INT_LIMITS,
-  type ContentSafetyIntField,
-  type RequestChecksFormValues,
-} from './request-checks-form'
-
-type ReviewNumberField = {
-  name: Exclude<ContentSafetyIntField, 'log_retention_days'>
-  label: string
-  description: string
-}
+import { ContentReviewSyncFields } from './content-review-sync-fields'
+import type { ContentReviewMode } from './defaults'
+import type { RequestChecksFormValues } from './request-checks-form'
+import { ReviewNumberField } from './review-number-field'
 
 type ContentReviewFieldsProps = {
   // True after a save was refused because of an invalid value; keeps the
@@ -65,35 +57,79 @@ type ContentReviewFieldsProps = {
   revealed: boolean
 }
 
+const REVIEW_MODES: ContentReviewMode[] = ['off', 'shadow', 'enforce']
+
 export function ContentReviewFields(props: ContentReviewFieldsProps) {
   const { t } = useTranslation()
   const form = useFormContext<RequestChecksFormValues>()
-  const reviewEnabled = useWatch({
+  const reviewMode = useWatch({
     control: form.control,
-    name: 'content_safety_setting.review_enabled',
+    name: 'content_safety_setting.review_mode',
   })
-  const open = reviewEnabled || props.revealed
+  const open = reviewMode !== 'off' || props.revealed
   const noteId = useId()
+  const modeLabels: Record<ContentReviewMode, string> = {
+    off: t('Off'),
+    shadow: t('Shadow'),
+    enforce: t('Enforce'),
+  }
+  const modeDescriptions: Record<ContentReviewMode, string> = {
+    off: t('No AI review.'),
+    shadow: t(
+      'Every new message is reviewed in the background. Nothing is blocked.'
+    ),
+    enforce: t(
+      'Most accounts are reviewed in the background. Accounts that need it are reviewed before the request goes upstream.'
+    ),
+  }
 
   return (
     <SettingsControlGroup>
       <FormField
         control={form.control}
-        name='content_safety_setting.review_enabled'
+        name='content_safety_setting.review_mode'
         render={({ field }) => (
-          <SettingsSwitchItem>
-            <SettingsSwitchContent>
-              <FormLabel>{t('Enable AI review')}</FormLabel>
-              <FormDescription>
-                {t(
-                  'Requests that contain a review word wait for the review model and are forwarded only after it confirms the content is safe. Requires filtering and prompt inspection.'
-                )}
-              </FormDescription>
-            </SettingsSwitchContent>
+          <FormItem>
+            <FormLabel id={`${noteId}-mode`}>{t('AI review mode')}</FormLabel>
             <FormControl>
-              <Switch checked={field.value} onCheckedChange={field.onChange} />
+              <RadioGroup
+                aria-labelledby={`${noteId}-mode`}
+                value={field.value}
+                onValueChange={field.onChange}
+                className='gap-2 sm:grid-cols-3'
+              >
+                {REVIEW_MODES.map((mode) => (
+                  <div key={mode} className='rounded-lg border'>
+                    <Label
+                      htmlFor={`${noteId}-${mode}`}
+                      className='hover:bg-muted/30 flex h-full cursor-pointer items-start gap-3 rounded-lg px-4 py-3 font-normal'
+                    >
+                      <RadioGroupItem
+                        id={`${noteId}-${mode}`}
+                        aria-labelledby={`${noteId}-${mode}-label`}
+                        aria-describedby={`${noteId}-${mode}-description`}
+                        value={mode}
+                        onClick={() => field.onChange(mode)}
+                        className='mt-0.5'
+                      />
+                      <span className='flex min-w-0 flex-col gap-1'>
+                        <span id={`${noteId}-${mode}-label`}>
+                          {modeLabels[mode]}
+                        </span>
+                        <span
+                          id={`${noteId}-${mode}-description`}
+                          className='text-muted-foreground text-xs font-normal'
+                        >
+                          {modeDescriptions[mode]}
+                        </span>
+                      </span>
+                    </Label>
+                  </div>
+                ))}
+              </RadioGroup>
             </FormControl>
-          </SettingsSwitchItem>
+            <FormMessage />
+          </FormItem>
         )}
       />
       {open && (
@@ -103,17 +139,23 @@ export function ContentReviewFields(props: ContentReviewFieldsProps) {
           aria-describedby={noteId}
           className='space-y-4'
         >
-          <ReviewOptionFields noteId={noteId} />
+          <ReviewOptionFields noteId={noteId} mode={reviewMode} />
         </SettingsControlChildren>
       )}
     </SettingsControlGroup>
   )
 }
 
-function ReviewOptionFields(props: { noteId: string }) {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+function ReviewOptionFields(props: {
+  noteId: string
+  mode: ContentReviewMode
+}) {
+  const { t } = useTranslation()
   const form = useFormContext<RequestChecksFormValues>()
+  const toolResults = useWatch({
+    control: form.control,
+    name: 'content_safety_setting.review_tool_results',
+  })
   const models = useQuery({
     queryKey: ['enabled-models'],
     queryFn: async () => requireServerSuccess(await getEnabledModels()),
@@ -138,44 +180,12 @@ function ReviewOptionFields(props: { noteId: string }) {
       })),
     [groups.data]
   )
-  const numberFields: ReviewNumberField[] = [
-    {
-      name: 'review_timeout_seconds',
-      label: t('Review timeout (seconds)'),
-      description: t('Includes waiting for a free review slot.'),
-    },
-    {
-      name: 'review_max_concurrency',
-      label: t('Maximum concurrent reviews'),
-      description: t('Reviews running at the same time on each server node.'),
-    },
-    {
-      name: 'review_rate_limit_per_minute',
-      label: t('Reviews per user per minute'),
-      description: t('Cached verdicts do not count.'),
-    },
-    {
-      name: 'window_chars',
-      label: t('Context characters'),
-      description: t('Characters reviewed before and after each match.'),
-    },
-    {
-      name: 'max_windows',
-      label: t('Maximum review windows'),
-      description: t('Requests with more text windows to review are rejected.'),
-    },
-    {
-      name: 'cache_ttl_seconds',
-      label: t('Verdict cache lifetime (seconds)'),
-      description: t('Set to 0 to disable the cache.'),
-    },
-  ]
 
   return (
     <>
       <p id={props.noteId} className='text-muted-foreground text-sm'>
         {t(
-          'AI review fails closed: if the review times out, no review channel is available, or the answer cannot be read, the request is rejected with HTTP 503. Request content can try to manipulate the review model through prompt injection, so choose a model that is robust against it.'
+          'Synchronous reviews fail closed: if the review times out, no review channel is available, or the answer cannot be read, the request is rejected with HTTP 503. Request content can try to manipulate the review model through prompt injection, so choose a model that is robust against it.'
         )}{' '}
         {t(
           'Not covered: Realtime sessions (including their text events), images, files and audio content.'
@@ -237,28 +247,6 @@ function ReviewOptionFields(props: { noteId: string }) {
         />
         <FormField
           control={form.control}
-          name='content_safety_setting.review_words'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('Review words')}</FormLabel>
-              <FormControl>
-                <Textarea
-                  rows={6}
-                  placeholder={t('Enter one keyword per line')}
-                  {...field}
-                />
-              </FormControl>
-              <FormDescription>
-                {t(
-                  'One word per line, case-insensitive. The text around each match is sent to the review model.'
-                )}
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={form.control}
           name='content_safety_setting.review_prompt'
           render={({ field }) => (
             <FormItem>
@@ -279,42 +267,95 @@ function ReviewOptionFields(props: { noteId: string }) {
             </FormItem>
           )}
         />
-        {numberFields.map((item) => (
-          <FormField
-            key={item.name}
-            control={form.control}
-            name={`content_safety_setting.${item.name}` as const}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{item.label}</FormLabel>
-                <FormControl>
-                  <Input
-                    type='number'
-                    min={CONTENT_SAFETY_INT_LIMITS[item.name].min}
-                    max={CONTENT_SAFETY_INT_LIMITS[item.name].max}
-                    step={1}
-                    {...safeNumberFieldProps(field)}
-                  />
-                </FormControl>
+        <FormField
+          control={form.control}
+          name='content_safety_setting.review_tool_results'
+          render={({ field }) => (
+            <SettingsSwitchItem>
+              <SettingsSwitchContent>
+                <FormLabel>{t('Review tool results')}</FormLabel>
                 <FormDescription>
-                  {item.description}{' '}
-                  {t('Allowed range: {{min}}–{{max}}', {
-                    min: formatNumber(
-                      CONTENT_SAFETY_INT_LIMITS[item.name].min,
-                      locale
-                    ),
-                    max: formatNumber(
-                      CONTENT_SAFETY_INT_LIMITS[item.name].max,
-                      locale
-                    ),
-                  })}
+                  {t(
+                    'Also review text labelled as a tool result. Turning this off saves reviews.'
+                  )}
                 </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        ))}
+              </SettingsSwitchContent>
+              <FormControl>
+                <Switch
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+              </FormControl>
+            </SettingsSwitchItem>
+          )}
+        />
+        {!toolResults && (
+          <Alert variant='destructive'>
+            <AlertDescription>
+              {t(
+                'Clients write their own conversation history, so text labelled as a tool result can skip review. Only turn this off if you accept that.'
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+        <ReviewNumberField
+          name='review_timeout_seconds'
+          label={t('Review timeout (seconds)')}
+          description={t('Includes waiting for a free review slot.')}
+        />
+        <ReviewNumberField
+          name='review_max_concurrency'
+          label={t('Synchronous review slots')}
+          description={t(
+            'Synchronous reviews running at the same time on each server node.'
+          )}
+        />
+        <ReviewNumberField
+          name='review_rate_limit_per_minute'
+          label={t('Synchronous reviews per account per minute')}
+          description={t('Cached verdicts do not count.')}
+        />
+        <ReviewNumberField
+          name='unit_chars'
+          label={t('Characters per reviewed piece')}
+          description={t('The longest text reviewed as one piece.')}
+        />
+        <ReviewNumberField
+          name='max_units'
+          label={t('Maximum pieces per request')}
+          description={t(
+            'Most new pieces reviewed per request. A synchronous review with more is rejected; a background review reviews the newest and marks the rest truncated.'
+          )}
+        />
+        <ReviewNumberField
+          name='async_workers'
+          label={t('Background review workers')}
+          description={t('Restart required.')}
+        />
+        <ReviewNumberField
+          name='async_queue_size'
+          label={t('Background review queue size')}
+          description={t('Restart required.')}
+        />
+        <ReviewNumberField
+          name='async_rate_per_minute'
+          label={t('Background reviews per account per minute')}
+          description={t(
+            "Over this, the account's next requests are reviewed before going upstream for 10 minutes."
+          )}
+        />
+        <ReviewNumberField
+          name='pass_log_percent'
+          label={t('Passed reviews logged (%)')}
+          description={t('Share of passed reviews written to the log.')}
+        />
+        <ReviewNumberField
+          name='cache_ttl_seconds'
+          label={t('Verdict cache lifetime (seconds)')}
+          description={t('Set to 0 to disable the cache.')}
+        />
       </SettingsFormGrid>
+      {props.mode === 'enforce' && <ContentReviewSyncFields />}
     </>
   )
 }

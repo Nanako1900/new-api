@@ -21,22 +21,30 @@ import type { StatusVariant } from '@/components/status-badge'
 export type ContentSafetyDecision =
   | 'keyword_blocked'
   | 'review_passed'
+  | 'review_controversial'
+  | 'review_flagged'
   | 'review_rejected'
   | 'review_failed'
+
+export type ContentSafetyMode = 'sync' | 'async' | 'shadow'
 
 export type ContentSafetyFailureReason =
   | 'timeout'
   | 'no_channel'
   | 'unparseable'
-  | 'too_many_windows'
+  | 'refused'
+  | 'too_many_units'
   | 'rate_limited'
+  | 'queue_full'
   | 'upstream_error'
   | 'client_canceled'
 
 /**
  * One record of GET /api/content_safety/logs. `hit_words` and `snippets` are
  * JSON-encoded string arrays. `decision` and `failure_reason` stay plain
- * strings because a newer server may add values. `id` is always 0 on a
+ * strings because a newer server may add values. `mode` is empty on keyword
+ * rows written before reviews had modes. For AI rows `hit_words` holds the
+ * verdict categories instead of matched words. `id` is always 0 on a
  * ClickHouse log store, so rows are keyed by `event_id`.
  */
 export type ContentSafetyLog = {
@@ -62,6 +70,10 @@ export type ContentSafetyLog = {
   latency_ms: number
   review_tokens: number
   cache_hit: boolean
+  mode: string
+  unit_count: number
+  truncated: boolean
+  weight: number
 }
 
 /** Query parameters of the log endpoint; timestamps are Unix seconds. */
@@ -94,4 +106,22 @@ export type ContentSafetyLogFieldErrors = {
   user_id?: string
   request_id?: string
   model?: string
+}
+
+export type ContentSafetyStatsHours = 24 | 168
+
+/** One row of the stats `counts`; `total` already includes sampling weights. */
+export type ContentSafetyStatsCount = {
+  decision: string
+  mode: string
+  failure_reason: string
+  total: number
+}
+
+/** The `data` of GET /api/content_safety/stats. */
+export type ContentSafetyStats = {
+  counts: ContentSafetyStatsCount[]
+  latency_p50_ms: number
+  latency_p95_ms: number
+  latency_samples: number
 }

@@ -35,6 +35,8 @@ import { translateServerText } from '@/lib/server-error-message'
 import {
   decisionPresentation,
   failureReasonLabelKey,
+  isReviewedDecision,
+  modeLabelKey,
   parseStringList,
 } from '../lib/log-fields'
 import type { ContentSafetyLog } from '../types'
@@ -55,7 +57,9 @@ export function ContentSafetyLogDetailsDialog(props: {
       text,
     })
   )
-  const reviewed = props.entry.decision !== 'keyword_blocked'
+  const reviewed = isReviewedDecision(props.entry.decision)
+  const hitWordsLabel = reviewed ? t('Categories') : t('Hit words')
+  const modeKey = modeLabelKey(props.entry.mode)
 
   return (
     <Dialog
@@ -126,10 +130,10 @@ export function ContentSafetyLogDetailsDialog(props: {
       </DetailSection>
       <DetailSection label={t('Matched content')}>
         <DetailRow
-          label={t('Hit words')}
+          label={hitWordsLabel}
           value={
             hitWords.length > 0 ? (
-              <ul aria-label={t('Hit words')} className='flex flex-wrap gap-1'>
+              <ul aria-label={hitWordsLabel} className='flex flex-wrap gap-1'>
                 {hitWords.map((word) => (
                   <li key={word}>
                     <StatusBadge
@@ -170,6 +174,18 @@ export function ContentSafetyLogDetailsDialog(props: {
       </DetailSection>
       {reviewed && (
         <DetailSection label={t('AI review')}>
+          <DetailRow
+            label={t('Mode')}
+            value={modeKey ? translateServerText(t, modeKey) : '—'}
+          />
+          <DetailRow
+            label={t('Pieces reviewed')}
+            value={formatNumber(props.entry.unit_count, locale)}
+          />
+          <DetailRow
+            label={t('Truncated')}
+            value={props.entry.truncated ? t('Yes') : t('No')}
+          />
           <DetailRow
             label={t('Category')}
             value={props.entry.ai_category || '—'}

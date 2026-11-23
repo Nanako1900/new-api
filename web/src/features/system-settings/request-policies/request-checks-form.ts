@@ -28,7 +28,7 @@ export const CONTENT_SAFETY_OPTION_PREFIX = 'content_safety_setting.'
 // Written together with any other content safety option so the backend
 // validates the review group.
 export const REVIEW_GUARD_OPTION_KEYS = [
-  `${CONTENT_SAFETY_OPTION_PREFIX}review_enabled`,
+  `${CONTENT_SAFETY_OPTION_PREFIX}review_mode`,
   `${CONTENT_SAFETY_OPTION_PREFIX}review_group`,
 ] as const
 
@@ -37,8 +37,13 @@ export const CONTENT_SAFETY_INT_LIMITS = {
   review_timeout_seconds: { min: 1, max: 60 },
   review_max_concurrency: { min: 1, max: 256 },
   review_rate_limit_per_minute: { min: 1, max: 10000 },
-  window_chars: { min: 50, max: 2000 },
-  max_windows: { min: 1, max: 100 },
+  unit_chars: { min: 200, max: 8000 },
+  max_units: { min: 1, max: 100 },
+  async_workers: { min: 1, max: 64 },
+  async_queue_size: { min: 10, max: 100000 },
+  async_rate_per_minute: { min: 1, max: 10000 },
+  pass_log_percent: { min: 0, max: 100 },
+  sync_new_user_days: { min: 0, max: 365 },
   cache_ttl_seconds: { min: 0, max: 604800 },
   log_retention_days: { min: 1, max: 3650 },
 } as const
@@ -69,31 +74,31 @@ export function createRequestChecksSchema(
     SensitiveWords: z.string(),
     content_safety_setting: z
       .object({
-        review_enabled: z.boolean(),
-        review_words: z.string(),
+        review_mode: z.enum(['off', 'shadow', 'enforce']),
         review_model: z.string(),
         review_group: z.string(),
         review_prompt: z.string(),
+        review_tool_results: z.boolean(),
         review_timeout_seconds: integerWithin('review_timeout_seconds'),
         review_max_concurrency: integerWithin('review_max_concurrency'),
         review_rate_limit_per_minute: integerWithin(
           'review_rate_limit_per_minute'
         ),
-        window_chars: integerWithin('window_chars'),
-        max_windows: integerWithin('max_windows'),
+        unit_chars: integerWithin('unit_chars'),
+        max_units: integerWithin('max_units'),
+        async_workers: integerWithin('async_workers'),
+        async_queue_size: integerWithin('async_queue_size'),
+        async_rate_per_minute: integerWithin('async_rate_per_minute'),
+        pass_log_percent: integerWithin('pass_log_percent'),
+        sync_all: z.boolean(),
+        sync_new_user_days: integerWithin('sync_new_user_days'),
+        sync_groups: z.string(),
         cache_ttl_seconds: integerWithin('cache_ttl_seconds'),
         log_retention_days: integerWithin('log_retention_days'),
       })
       .superRefine((value, context) => {
         // The backend refuses to enable AI review without these values.
-        if (!value.review_enabled) return
-        if (!value.review_words.trim()) {
-          context.addIssue({
-            code: 'custom',
-            path: ['review_words'],
-            message: t('Enter at least one review word'),
-          })
-        }
+        if (value.review_mode === 'off') return
         if (!value.review_model.trim()) {
           context.addIssue({
             code: 'custom',
@@ -124,19 +129,23 @@ export function requestChecksFormValues(
     CheckSensitiveOnPromptEnabled: settings.CheckSensitiveOnPromptEnabled,
     SensitiveWords: settings.SensitiveWords,
     content_safety_setting: {
-      review_enabled: settings['content_safety_setting.review_enabled'],
-      review_words: settings['content_safety_setting.review_words'],
+      review_mode: settings['content_safety_setting.review_mode'],
       review_model: settings['content_safety_setting.review_model'],
       review_group: settings['content_safety_setting.review_group'],
       review_prompt: settings['content_safety_setting.review_prompt'],
-      review_timeout_seconds:
-        settings['content_safety_setting.review_timeout_seconds'],
-      review_max_concurrency:
-        settings['content_safety_setting.review_max_concurrency'],
-      review_rate_limit_per_minute:
-        settings['content_safety_setting.review_rate_limit_per_minute'],
-      window_chars: settings['content_safety_setting.window_chars'],
-      max_windows: settings['content_safety_setting.max_windows'],
+      review_tool_results: settings['content_safety_setting.review_tool_results'],
+      review_timeout_seconds: settings['content_safety_setting.review_timeout_seconds'],
+      review_max_concurrency: settings['content_safety_setting.review_max_concurrency'],
+      review_rate_limit_per_minute: settings['content_safety_setting.review_rate_limit_per_minute'],
+      unit_chars: settings['content_safety_setting.unit_chars'],
+      max_units: settings['content_safety_setting.max_units'],
+      async_workers: settings['content_safety_setting.async_workers'],
+      async_queue_size: settings['content_safety_setting.async_queue_size'],
+      async_rate_per_minute: settings['content_safety_setting.async_rate_per_minute'],
+      pass_log_percent: settings['content_safety_setting.pass_log_percent'],
+      sync_all: settings['content_safety_setting.sync_all'],
+      sync_new_user_days: settings['content_safety_setting.sync_new_user_days'],
+      sync_groups: settings['content_safety_setting.sync_groups'],
       cache_ttl_seconds: settings['content_safety_setting.cache_ttl_seconds'],
       log_retention_days: settings['content_safety_setting.log_retention_days'],
     },

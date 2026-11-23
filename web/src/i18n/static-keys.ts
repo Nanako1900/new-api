@@ -963,12 +963,20 @@ export const STATIC_I18N_KEYS = [
   'Review timed out',
   'No review channel available',
   'Unreadable review answer',
-  'Too many review windows',
+  'Review controversial',
+  'Review flagged',
+  'Review refused by the channel',
+  'Too many pieces to review',
+  'Review queue full',
+  'Synchronous',
+  'Background',
+  'Shadow',
   'Review rate limit reached',
   'Review upstream error',
   'Client canceled',
   'Content safety log cleanup',
   'Invalid content safety log query',
+  'Invalid content safety stats query',
   // Cache subsidy campaigns: status, grant and skip-reason labels, row
   // actions, confirmation copy, form messages, the calculation task label, and
   // backend messages shown on the admin page and the dashboard card.

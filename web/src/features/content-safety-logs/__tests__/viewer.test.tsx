@@ -65,15 +65,37 @@ const rejected: ContentSafetyLog = {
   latency_ms: 1350,
   review_tokens: 210,
   cache_hit: false,
+  mode: 'sync',
+  unit_count: 2,
+  truncated: false,
+  weight: 1,
+}
+
+const STATS_URL = '/api/content_safety/stats'
+const emptyStats = {
+  success: true,
+  data: { counts: [], latency_p50_ms: 0, latency_p95_ms: 0, latency_samples: 0 },
+}
+
+// Answers the stats strip with an empty summary and the log table with `logs`.
+function mockGet(logs: () => { data: unknown }) {
+  return vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    if (url === STATS_URL) return { data: emptyStats }
+    return logs()
+  })
+}
+
+function logCalls(get: ReturnType<typeof mockGet>) {
+  return get.mock.calls.filter(([url]) => url === '/api/content_safety/logs')
 }
 
 function mockLogs(items: ContentSafetyLog[], total = items.length) {
-  return vi.spyOn(api, 'get').mockResolvedValue({
+  return mockGet(() => ({
     data: {
       success: true,
       data: { items, total, page: 1, page_size: 20 },
     },
-  })
+  }))
 }
 
 // The table renders its pagination into the page footer slot of the layout.
@@ -263,24 +285,28 @@ it('a model filter is trimmed before it is sent', async () => {
 })
 
 it('a failed response shows the error with its message and Retry loads the rows', async () => {
-  const get = vi
-    .spyOn(api, 'get')
-    .mockResolvedValueOnce({
-      data: { success: false, message: 'Invalid content safety log query' },
-    })
-    .mockResolvedValue({
+  let logRequests = 0
+  const get = mockGet(() => {
+    logRequests += 1
+    if (logRequests === 1) {
+      return {
+        data: { success: false, message: 'Invalid content safety log query' },
+      }
+    }
+    return {
       data: {
         success: true,
         data: { items: [rejected], total: 1, page: 1, page_size: 20 },
       },
-    })
+    }
+  })
   renderTable()
   const alert = await screen.findByRole('alert')
   expect(alert).toHaveTextContent('Failed to load content safety logs')
-  expect(get).toHaveBeenCalledTimes(1)
+  expect(logCalls(get)).toHaveLength(1)
   await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
   expect(await screen.findByRole('row', { name: /alice/ })).toBeVisible()
-  expect(get).toHaveBeenCalledTimes(2)
+  expect(logCalls(get)).toHaveLength(2)
   expect(screen.queryByRole('alert')).not.toBeInTheDocument()
 })
 
@@ -296,12 +322,12 @@ it('an end time before the start time shows an alert and pauses the query', asyn
   fireEvent.change(screen.getByLabelText('End Time'), {
     target: { value: '2026-11-08T10:00:00' },
   })
-  const callsBefore = get.mock.calls.length
+  const callsBefore = logCalls(get).length
   await user.click(screen.getByRole('button', { name: 'Confirm' }))
   expect(
     await screen.findByText('End time must be after start time')
   ).toBeVisible()
-  expect(get).toHaveBeenCalledTimes(callsBefore)
+  expect(logCalls(get)).toHaveLength(callsBefore)
 })
 
 it('moving to the next page requests page 2, and changing a filter returns to page 1', async () => {
@@ -401,9 +427,9 @@ const auditRead = () =>
 
 it('leaves for /403 and records the lost permission when the API answers 403', async () => {
   signInWithAuditRead()
-  vi.spyOn(api, 'get').mockRejectedValue(
-    Object.assign(new Error('forbidden'), { response: { status: 403 } })
-  )
+  mockGet(() => {
+    throw Object.assign(new Error('forbidden'), { response: { status: 403 } })
+  })
   const router = renderTableInRouter()
   expect(await screen.findByText('Forbidden page')).toBeVisible()
   expect(router.state.location.pathname).toBe('/403')
@@ -412,9 +438,11 @@ it('leaves for /403 and records the lost permission when the API answers 403', a
 
 it('stays on the page and keeps the permission when the API answers 500', async () => {
   signInWithAuditRead()
-  vi.spyOn(api, 'get').mockRejectedValue(
-    Object.assign(new Error('server error'), { response: { status: 500 } })
-  )
+  mockGet(() => {
+    throw Object.assign(new Error('server error'), {
+      response: { status: 500 },
+    })
+  })
   const router = renderTableInRouter()
   expect(await screen.findByRole('alert')).toHaveTextContent(
     'Failed to load content safety logs'

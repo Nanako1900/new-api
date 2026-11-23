@@ -31,6 +31,8 @@ import { translateServerText } from '@/lib/server-error-message'
 import {
   decisionPresentation,
   failureReasonLabelKey,
+  isReviewedDecision,
+  modeLabelKey,
   parseStringList,
 } from '../lib/log-fields'
 import type { ContentSafetyLog } from '../types'
@@ -110,13 +112,23 @@ export function useContentSafetyLogColumns(): ColumnDef<ContentSafetyLog>[] {
         meta: { label: t('Decision'), mobileBadge: true },
       },
       {
+        accessorKey: 'mode',
+        header: t('Mode'),
+        size: 110,
+        cell: ({ row }) => {
+          const labelKey = modeLabelKey(row.original.mode)
+          return labelKey ? translateServerText(t, labelKey) : '—'
+        },
+        meta: { label: t('Mode'), mobileHidden: true },
+      },
+      {
         id: 'hit_words',
-        header: t('Hit words'),
+        header: t('Hit words / categories'),
         size: 200,
         cell: ({ row }) => (
           <BadgeListCell
             expandable
-            expandLabel={t('Hit words')}
+            expandLabel={t('Hit words / categories')}
             items={parseStringList(row.original.hit_words, {
               unique: true,
             }).map((word) => (
@@ -129,7 +141,7 @@ export function useContentSafetyLogColumns(): ColumnDef<ContentSafetyLog>[] {
             ))}
           />
         ),
-        meta: { label: t('Hit words') },
+        meta: { label: t('Hit words / categories') },
       },
       {
         accessorKey: 'latency_ms',
@@ -137,9 +149,9 @@ export function useContentSafetyLogColumns(): ColumnDef<ContentSafetyLog>[] {
         size: 100,
         cell: ({ row }) => (
           <span className='font-mono tabular-nums'>
-            {row.original.decision === 'keyword_blocked'
-              ? '—'
-              : `${formatNumber(row.original.latency_ms, locale)} ${t('ms')}`}
+            {isReviewedDecision(row.original.decision)
+              ? `${formatNumber(row.original.latency_ms, locale)} ${t('ms')}`
+              : '—'}
           </span>
         ),
         meta: { label: t('Latency'), mobileHidden: true },

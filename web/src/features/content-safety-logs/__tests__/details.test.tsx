@@ -46,6 +46,10 @@ const rejected: ContentSafetyLog = {
   latency_ms: 1350,
   review_tokens: 210,
   cache_hit: true,
+  mode: 'sync',
+  unit_count: 2,
+  truncated: false,
+  weight: 1,
 }
 
 async function openDetails(entry: ContentSafetyLog) {
@@ -81,7 +85,7 @@ it('opens a record whose hit words and snippets are not valid JSON and shows the
     hit_words: 'knife,gun',
     snippets: '["a knife"',
   })
-  const words = within(dialog).getByRole('list', { name: 'Hit words' })
+  const words = within(dialog).getByRole('list', { name: 'Categories' })
   expect(within(words).getByRole('listitem')).toHaveTextContent('knife,gun')
   const snippets = within(dialog).getByRole('list', { name: 'Snippets' })
   expect(within(snippets).getByRole('listitem')).toHaveTextContent('["a knife"')
@@ -109,7 +113,7 @@ it('keeps repeated snippets and de-duplicates repeated hit words', async () => {
     hit_words: '["knife","knife"]',
     snippets: '["same text","same text"]',
   })
-  const words = within(dialog).getByRole('list', { name: 'Hit words' })
+  const words = within(dialog).getByRole('list', { name: 'Categories' })
   expect(within(words).getAllByRole('listitem')).toHaveLength(1)
   const snippets = within(dialog).getByRole('list', { name: 'Snippets' })
   expect(within(snippets).getAllByRole('listitem')).toHaveLength(2)
@@ -158,4 +162,28 @@ it('omits the time of a record whose timestamp is not a number', async () => {
     created_at: Number.NaN,
   })
   expect(within(dialog).queryByText('Invalid Date')).not.toBeInTheDocument()
+})
+
+it('an AI review shows its mode, pieces reviewed and truncation', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    mode: 'async',
+    unit_count: 12,
+    truncated: true,
+  })
+  expect(within(dialog).getByText('Background')).toBeVisible()
+  expect(within(dialog).getByText('12')).toBeVisible()
+  expect(within(dialog).getByText('Truncated')).toBeVisible()
+})
+
+it('a keyword block labels its matches as hit words, not categories', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    decision: 'keyword_blocked',
+    mode: '',
+  })
+  expect(within(dialog).getByRole('list', { name: 'Hit words' })).toBeVisible()
+  expect(
+    within(dialog).queryByRole('list', { name: 'Categories' })
+  ).not.toBeInTheDocument()
 })

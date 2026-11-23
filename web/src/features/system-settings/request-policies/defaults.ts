@@ -41,19 +41,27 @@ export type FilteringSettings = Pick<
   SecuritySettings,
   'CheckSensitiveEnabled' | 'CheckSensitiveOnPromptEnabled' | 'SensitiveWords'
 >
+export type ContentReviewMode = 'off' | 'shadow' | 'enforce'
 // Options of the content safety review tier, stored as
-// `content_safety_setting.*`. The block-word tier keeps FilteringSettings.
+// `content_safety_setting.*`. The hard-block word tier keeps FilteringSettings.
 export type ContentSafetySettings = {
-  'content_safety_setting.review_enabled': boolean
-  'content_safety_setting.review_words': string
+  'content_safety_setting.review_mode': ContentReviewMode
   'content_safety_setting.review_model': string
   'content_safety_setting.review_group': string
   'content_safety_setting.review_prompt': string
+  'content_safety_setting.review_tool_results': boolean
   'content_safety_setting.review_timeout_seconds': number
   'content_safety_setting.review_max_concurrency': number
   'content_safety_setting.review_rate_limit_per_minute': number
-  'content_safety_setting.window_chars': number
-  'content_safety_setting.max_windows': number
+  'content_safety_setting.unit_chars': number
+  'content_safety_setting.max_units': number
+  'content_safety_setting.async_workers': number
+  'content_safety_setting.async_queue_size': number
+  'content_safety_setting.async_rate_per_minute': number
+  'content_safety_setting.pass_log_percent': number
+  'content_safety_setting.sync_all': boolean
+  'content_safety_setting.sync_new_user_days': number
+  'content_safety_setting.sync_groups': string
   'content_safety_setting.cache_ttl_seconds': number
   'content_safety_setting.log_retention_days': number
 }
@@ -86,16 +94,23 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   CheckSensitiveEnabled: false,
   CheckSensitiveOnPromptEnabled: false,
   SensitiveWords: '',
-  'content_safety_setting.review_enabled': false,
-  'content_safety_setting.review_words': '',
+  'content_safety_setting.review_mode': 'off',
   'content_safety_setting.review_model': '',
   'content_safety_setting.review_group': 'default',
   'content_safety_setting.review_prompt': '',
+  'content_safety_setting.review_tool_results': true,
   'content_safety_setting.review_timeout_seconds': 15,
   'content_safety_setting.review_max_concurrency': 16,
-  'content_safety_setting.review_rate_limit_per_minute': 30,
-  'content_safety_setting.window_chars': 300,
-  'content_safety_setting.max_windows': 20,
+  'content_safety_setting.review_rate_limit_per_minute': 120,
+  'content_safety_setting.unit_chars': 2000,
+  'content_safety_setting.max_units': 16,
+  'content_safety_setting.async_workers': 4,
+  'content_safety_setting.async_queue_size': 2000,
+  'content_safety_setting.async_rate_per_minute': 300,
+  'content_safety_setting.pass_log_percent': 10,
+  'content_safety_setting.sync_all': false,
+  'content_safety_setting.sync_new_user_days': 3,
+  'content_safety_setting.sync_groups': '',
   'content_safety_setting.cache_ttl_seconds': 86400,
   'content_safety_setting.log_retention_days': 30,
 }

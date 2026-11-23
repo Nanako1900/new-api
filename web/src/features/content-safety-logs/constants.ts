@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import type {
   ContentSafetyDecision,
   ContentSafetyFailureReason,
+  ContentSafetyMode,
+  ContentSafetyStatsHours,
   DecisionPresentation,
 } from './types'
 
@@ -28,6 +30,8 @@ export const CONTENT_SAFETY_LOG_PAGE_SIZE = 20
 export const CONTENT_SAFETY_DECISIONS: readonly ContentSafetyDecision[] = [
   'keyword_blocked',
   'review_passed',
+  'review_controversial',
+  'review_flagged',
   'review_rejected',
   'review_failed',
 ]
@@ -39,6 +43,11 @@ export const DECISION_PRESENTATION: Record<
 > = {
   keyword_blocked: { labelKey: 'Blocked by keyword', variant: 'danger' },
   review_passed: { labelKey: 'Review passed', variant: 'success' },
+  review_controversial: {
+    labelKey: 'Review controversial',
+    variant: 'warning',
+  },
+  review_flagged: { labelKey: 'Review flagged', variant: 'danger' },
   review_rejected: { labelKey: 'Review rejected', variant: 'danger' },
   review_failed: { labelKey: 'Review failed', variant: 'warning' },
 }
@@ -50,8 +59,21 @@ export const FAILURE_REASON_LABEL_KEYS: Record<
   timeout: 'Review timed out',
   no_channel: 'No review channel available',
   unparseable: 'Unreadable review answer',
-  too_many_windows: 'Too many review windows',
+  refused: 'Review refused by the channel',
+  too_many_units: 'Too many pieces to review',
   rate_limited: 'Review rate limit reached',
+  queue_full: 'Review queue full',
   upstream_error: 'Review upstream error',
   client_canceled: 'Client canceled',
 }
+
+// labelKey values are i18n keys; render them with t(key).
+export const MODE_LABEL_KEYS: Record<ContentSafetyMode, string> = {
+  sync: 'Synchronous',
+  async: 'Background',
+  shadow: 'Shadow',
+}
+
+export const CONTENT_SAFETY_STATS_RANGES: readonly ContentSafetyStatsHours[] = [
+  24, 168,
+]
