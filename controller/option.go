@@ -411,12 +411,15 @@ func UpdateOption(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-	case "console_setting.alerts":
+	case alertsOptionKey:
 		err = console_setting.ValidateConsoleSettings(option.Value.(string), "Alerts")
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
+	case alertHistoryOptionKey:
+		common.ApiErrorT(c, "Alert history is kept automatically and cannot be edited here")
+		return
 	case "console_setting.faq":
 		err = console_setting.ValidateConsoleSettings(option.Value.(string), "FAQ")
 		if err != nil {
@@ -441,7 +444,11 @@ func UpdateOption(c *gin.Context) {
 		common.ApiSuccess(c, change)
 		return
 	}
-	err = model.UpdateOption(option.Key, option.Value.(string))
+	if option.Key == alertsOptionKey {
+		err = updateAlertsWithHistory(option.Value.(string))
+	} else {
+		err = model.UpdateOption(option.Key, option.Value.(string))
+	}
 	if err != nil {
 		if errors.Is(err, system_setting.ErrPasskeyRPIDInvalid) {
 			writeSecurityOperationError(c, err)

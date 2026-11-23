@@ -36,6 +36,8 @@ export const ALERT_TITLE_MAX_LENGTH = 100
 export const ALERT_CONTENT_MAX_LENGTH = 500
 
 export const CONSOLE_ALERTS_QUERY_KEY = ['console-alerts'] as const
+/** Under CONSOLE_ALERTS_QUERY_KEY, so saving the alert list refreshes it too. */
+export const ALERT_HISTORY_QUERY_KEY = ['console-alerts', 'history'] as const
 
 /** Banner tint per level, built on the theme's semantic color tokens. */
 export const ALERT_LEVEL_CLASS: Record<AlertLevel, string> = {

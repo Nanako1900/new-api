@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
-import { Bell, Megaphone } from 'lucide-react'
+import { Bell, BellRing, Megaphone, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { RichContent } from '@/components/rich-content'
@@ -40,6 +40,12 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ConsoleAlertCard } from '@/features/console-alerts/components/console-alert-card'
+import type {
+  AlertHistoryEntry,
+  ConsoleAlert,
+} from '@/features/console-alerts/types'
+import type { NotificationTab } from '@/hooks/use-notifications'
 import { getAnnouncementColorClass } from '@/lib/colors'
 import { formatDateTimeObject } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -56,8 +62,13 @@ interface NotificationPopoverProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   unreadCount: number
-  activeTab: 'notice' | 'announcements'
-  onTabChange: (tab: 'notice' | 'announcements') => void
+  activeTab: NotificationTab
+  onTabChange: (tab: NotificationTab) => void
+  /** Tabs with content, in display order */
+  tabs: NotificationTab[]
+  alerts: ConsoleAlert[]
+  /** Alerts that ended or were deleted, newest first */
+  pastAlerts: AlertHistoryEntry[]
   notice: string
   announcements: AnnouncementItem[]
   loading: boolean
@@ -288,7 +299,76 @@ function AnnouncementsContent({
 }
 
 /**
- * Notification popover with Notice and Announcements tabs
+ * Console alerts tab content: every live alert, also the ones the user
+ * closed on the console banner, then alerts that ended or were deleted
+ */
+function AlertsContent(props: {
+  alerts: ConsoleAlert[]
+  pastAlerts: AlertHistoryEntry[]
+}) {
+  const { t } = useTranslation()
+  return (
+    // Grows with the list up to the cap; flex lets the viewport shrink to
+    // the cap and scroll (with only max-height it grows past it instead)
+    <ScrollArea className='flex max-h-[min(52vh,28rem)] flex-col pr-3'>
+      <div className='flex flex-col gap-3'>
+        {props.alerts.length > 0 ? (
+          <ul aria-label={t('Site alerts')} className='flex flex-col gap-2'>
+            {props.alerts.map((alert) => (
+              <li key={alert.id}>
+                <ConsoleAlertCard
+                  alert={alert}
+                  idPrefix={`bell-alert-${alert.id}`}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {props.pastAlerts.length > 0 ? (
+          <div className='flex flex-col gap-2'>
+            <h3
+              id='bell-past-alerts-heading'
+              className='text-muted-foreground px-1 text-xs font-medium'
+            >
+              {t('Past alerts')}
+            </h3>
+            <ul
+              aria-labelledby='bell-past-alerts-heading'
+              className='flex flex-col gap-2'
+            >
+              {props.pastAlerts.map((entry) => {
+                const publishedAt = new Date(entry.publishedAt)
+                return (
+                  <li key={entry.id}>
+                    <ConsoleAlertCard
+                      alert={entry}
+                      idPrefix={`bell-past-alert-${entry.id}`}
+                      className='border-border bg-muted/40'
+                      footer={`${getRelativeTime(publishedAt, t)} • ${formatDateTimeObject(publishedAt)}`}
+                    />
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </ScrollArea>
+  )
+}
+
+const TAB_META: Record<
+  NotificationTab,
+  { labelKey: string; icon: LucideIcon }
+> = {
+  alerts: { labelKey: 'Alerts', icon: BellRing },
+  notice: { labelKey: 'Notice', icon: Bell },
+  announcements: { labelKey: 'Timeline', icon: Megaphone },
+}
+
+/**
+ * Notification popover. Only sources with content get a tab; a single source
+ * is shown without a tab bar.
  */
 export function NotificationPopover({
   open,
@@ -296,12 +376,77 @@ export function NotificationPopover({
   unreadCount,
   activeTab,
   onTabChange,
+  tabs,
+  alerts,
+  pastAlerts,
   notice,
   announcements,
   loading,
   className,
 }: NotificationPopoverProps) {
   const { t } = useTranslation()
+  const currentTab = tabs.includes(activeTab) ? activeTab : tabs[0]
+
+  const renderTabContent = (tab: NotificationTab) => {
+    if (tab === 'alerts') {
+      return <AlertsContent alerts={alerts} pastAlerts={pastAlerts} />
+    }
+    if (tab === 'notice') {
+      return <NoticeContent notice={notice} loading={loading} t={t} />
+    }
+    return (
+      <AnnouncementsContent
+        announcements={announcements}
+        loading={loading}
+        t={t}
+      />
+    )
+  }
+
+  let body = (
+    <EmptyState icon={<Bell />} title={t('No announcements at this time')} />
+  )
+  if (tabs.length === 0 && loading) {
+    body = (
+      <EmptyState
+        icon={<Bell />}
+        title={t('Loading...')}
+        description={t('Latest platform updates and notices')}
+      />
+    )
+  }
+  if (tabs.length === 1) body = renderTabContent(tabs[0])
+  if (tabs.length > 1) {
+    body = (
+      <Tabs
+        value={currentTab}
+        onValueChange={onTabChange as (value: string) => void}
+      >
+        <TabsList
+          className={cn(
+            'grid w-full',
+            tabs.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
+          )}
+        >
+          {tabs.map((tab) => {
+            const TabIcon = TAB_META[tab].icon
+            return (
+              <TabsTrigger key={tab} value={tab} className='gap-1.5'>
+                <TabIcon className='size-3.5' aria-hidden='true' />
+                {t(TAB_META[tab].labelKey)}
+              </TabsTrigger>
+            )
+          })}
+        </TabsList>
+        {tabs.map((tab) => (
+          <TabsContent key={tab} value={tab} className='mt-2'>
+            {renderTabContent(tab)}
+          </TabsContent>
+        ))}
+      </Tabs>
+    )
+  }
+
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger
@@ -331,39 +476,13 @@ export function NotificationPopover({
         className='w-[min(26rem,calc(100vw-1rem))] gap-3 p-3'
       >
         <PopoverHeader className='gap-1 px-1'>
-          <PopoverTitle>{t('System Announcements')}</PopoverTitle>
+          <PopoverTitle>{t('Notifications')}</PopoverTitle>
           <p className='text-muted-foreground text-xs'>
             {t('Latest platform updates and notices')}
           </p>
         </PopoverHeader>
 
-        <Tabs
-          value={activeTab}
-          onValueChange={onTabChange as (value: string) => void}
-        >
-          <TabsList className='grid w-full grid-cols-2'>
-            <TabsTrigger value='notice' className='gap-1.5'>
-              <Bell className='size-3.5' />
-              {t('Notice')}
-            </TabsTrigger>
-            <TabsTrigger value='announcements' className='gap-1.5'>
-              <Megaphone className='size-3.5' />
-              {t('Timeline')}
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value='notice' className='mt-2'>
-            <NoticeContent notice={notice} loading={loading} t={t} />
-          </TabsContent>
-
-          <TabsContent value='announcements' className='mt-2'>
-            <AnnouncementsContent
-              announcements={announcements}
-              loading={loading}
-              t={t}
-            />
-          </TabsContent>
-        </Tabs>
+        {body}
 
         <div className='flex justify-end'>
           <Button size='sm' onClick={() => onOpenChange(false)}>

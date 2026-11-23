@@ -98,6 +98,20 @@ test('dismissing an alert hides it and persists the dismissal to localStorage', 
   expect(screen.queryByText('Maintenance')).not.toBeInTheDocument()
 })
 
+test('dismissing an alert tells the user it can be read again from the bell', async () => {
+  const user = userEvent.setup()
+  const toastInfo = vi.spyOn(toast, 'info')
+  mockAlerts([makeAlert()])
+  renderAlerts()
+
+  await user.click(await screen.findByRole('button', { name: 'Dismiss alert' }))
+
+  expect(toastInfo).toHaveBeenCalledWith(
+    'Closed. Open the bell at the top right to read it again',
+    expect.objectContaining({ id: expect.any(String) })
+  )
+})
+
 test('a non-dismissible alert has no dismiss button', async () => {
   mockAlerts([makeAlert({ dismissible: false })])
   renderAlerts()

@@ -8,6 +8,7 @@ type ConsoleSetting struct {
 	Announcements        string `json:"announcements"`         // 系统公告 (JSON 数组字符串)
 	FAQ                  string `json:"faq"`                   // 常见问题 (JSON 数组字符串)
 	Alerts               string `json:"alerts"`                // 控制台 Alert 横幅 (JSON 数组字符串)
+	AlertHistory         string `json:"alert_history"`         // 上线过的 Alert 存档，由保存 Alerts 时自动维护 (JSON 数组字符串)
 	ApiInfoEnabled       bool   `json:"api_info_enabled"`      // 是否启用 API 信息面板
 	UptimeKumaEnabled    bool   `json:"uptime_kuma_enabled"`   // 是否启用 Uptime Kuma 面板
 	AnnouncementsEnabled bool   `json:"announcements_enabled"` // 是否启用系统公告面板
@@ -21,6 +22,7 @@ var defaultConsoleSetting = ConsoleSetting{
 	Announcements:        "",
 	FAQ:                  "",
 	Alerts:               "",
+	AlertHistory:         "",
 	ApiInfoEnabled:       true,
 	UptimeKumaEnabled:    true,
 	AnnouncementsEnabled: true,

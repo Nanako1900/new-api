@@ -34,3 +34,23 @@ export type GetActiveAlertsResponse = {
   message?: string
   data?: ConsoleAlert[]
 }
+
+/**
+ * An alert as users last saw it, kept by the server after the alert ends or
+ * is deleted (`console_setting.alert_history`).
+ */
+export type AlertHistoryEntry = Pick<
+  ConsoleAlert,
+  'id' | 'title' | 'content' | 'level'
+> & {
+  /** RFC 3339 time the alert went live */
+  publishedAt: string
+  /** RFC 3339 time of the last edit users saw */
+  updatedAt?: string
+}
+
+export type GetAlertHistoryResponse = {
+  success: boolean
+  message?: string
+  data?: AlertHistoryEntry[]
+}

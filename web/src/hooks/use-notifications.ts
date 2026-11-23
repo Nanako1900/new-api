@@ -19,11 +19,28 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 import { useState, useMemo } from 'react'
 
+import {
+  activeAlertsQueryOptions,
+  alertHistoryQueryOptions,
+} from '@/features/console-alerts/api'
+import { getAlertDismissKey } from '@/features/console-alerts/lib/dismiss-key'
+import type {
+  AlertHistoryEntry,
+  ConsoleAlert,
+} from '@/features/console-alerts/types'
 import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
 import { hashString } from '@/lib/hash'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { useAlertDismissalStore } from '@/stores/alert-dismissal-store'
+import { useAuthStore } from '@/stores/auth-store'
 import { useNotificationStore } from '@/stores/notification-store'
+
+/** Bell tabs: console alerts, the Notice text and the announcement timeline. */
+export type NotificationTab = 'alerts' | 'notice' | 'announcements'
+
+const NO_ALERTS: ConsoleAlert[] = []
+const NO_PAST_ALERTS: AlertHistoryEntry[] = []
 
 /**
  * Generate a unique key for an announcement
@@ -48,14 +65,12 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
 }
 
 /**
- * Hook to manage notifications (Notice + Announcements)
+ * Hook to manage notifications (console alerts, Notice and Announcements)
  * Provides unread counts and read status management
  */
 export function useNotifications() {
   const [popoverOpen, setPopoverOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'notice' | 'announcements'>(
-    'notice'
-  )
+  const [activeTab, setActiveTab] = useState<NotificationTab>('alerts')
 
   // Fetch Notice from API
   const {
@@ -79,11 +94,29 @@ export function useNotifications() {
     )
   }, [announcementsEnabled, status?.announcements])
 
+  // Console alerts: the list behind the console banner, including the ones
+  // closed there. `/api/alerts` needs a session, so visitors skip it.
+  const signedIn = useAuthStore((s) => !!s.auth.user)
+  const alertsQuery = useQuery({
+    ...activeAlertsQueryOptions,
+    enabled: signedIn,
+  })
+  const alerts = (signedIn && alertsQuery.data) || NO_ALERTS
+  const dismissedAlertKeys = useAlertDismissalStore((s) => s.dismissedKeys)
+  // Alerts that ended or were deleted; already seen, so never unread
+  const historyQuery = useQuery({
+    ...alertHistoryQueryOptions,
+    enabled: signedIn,
+  })
+  const pastAlerts = (signedIn && historyQuery.data) || NO_PAST_ALERTS
+
   // Notification store
   const {
     lastReadNotice,
+    readAlertKeys,
     markNoticeRead,
     markAnnouncementsRead,
+    markAlertsRead,
     isAnnouncementRead,
   } = useNotificationStore()
 
@@ -91,6 +124,15 @@ export function useNotifications() {
   const noticeContent = noticeResponse?.success
     ? (noticeResponse.data || '').trim()
     : ''
+
+  // Tabs with something to show, in display order
+  const tabs = useMemo(() => {
+    const available: NotificationTab[] = []
+    if (alerts.length > 0 || pastAlerts.length > 0) available.push('alerts')
+    if (noticeContent) available.push('notice')
+    if (announcements.length > 0) available.push('announcements')
+    return available
+  }, [alerts.length, pastAlerts.length, noticeContent, announcements.length])
 
   // Calculate unread counts
   const unreadCounts = useMemo(() => {
@@ -104,12 +146,27 @@ export function useNotifications() {
       }
     ).length
 
+    // Closing an alert on the banner counts as reading it
+    const alertsUnread = alerts.filter((alert) => {
+      const key = getAlertDismissKey(alert)
+      return !readAlertKeys.includes(key) && !dismissedAlertKeys.includes(key)
+    }).length
+
     return {
+      alerts: alertsUnread,
       notice: noticeUnread,
       announcements: announcementsUnread,
-      total: noticeUnread + announcementsUnread,
+      total: alertsUnread + noticeUnread + announcementsUnread,
     }
-  }, [noticeContent, lastReadNotice, announcements, isAnnouncementRead])
+  }, [
+    noticeContent,
+    lastReadNotice,
+    announcements,
+    isAnnouncementRead,
+    alerts,
+    readAlertKeys,
+    dismissedAlertKeys,
+  ])
 
   const markAnnouncementsAsRead = () => {
     if (announcements.length > 0) {
@@ -120,17 +177,28 @@ export function useNotifications() {
     }
   }
 
-  // Handle popover open
-  const handleOpenPopover = (tab?: 'notice' | 'announcements') => {
-    const nextTab = tab || activeTab
+  const markTabRead = (tab: NotificationTab) => {
+    if (tab === 'announcements') {
+      markAnnouncementsAsRead()
+    }
+    if (tab === 'alerts' && alerts.length > 0) {
+      markAlertsRead(alerts.map((alert) => getAlertDismissKey(alert)))
+    }
+  }
+
+  // Handle popover open. Without a tab, open the first one with unread items,
+  // else stay on the last tab while it still has content.
+  const handleOpenPopover = (tab?: NotificationTab) => {
+    let nextTab = tab ?? tabs.find((candidate) => unreadCounts[candidate] > 0)
+    if (!nextTab) {
+      nextTab = tabs.includes(activeTab) ? activeTab : (tabs[0] ?? activeTab)
+    }
 
     // Mark currently visible content as read when opening the notification center
     if (noticeContent) {
       markNoticeRead(noticeContent)
     }
-    if (nextTab === 'announcements') {
-      markAnnouncementsAsRead()
-    }
+    markTabRead(nextTab)
 
     setActiveTab(nextTab)
     setPopoverOpen(true)
@@ -138,30 +206,34 @@ export function useNotifications() {
 
   const handlePopoverOpenChange = (open: boolean) => {
     if (open) {
-      handleOpenPopover(activeTab)
+      handleOpenPopover()
       return
     }
 
     setPopoverOpen(false)
   }
 
-  // Handle tab change - mark announcements as read when switching to that tab
-  const handleTabChange = (tab: 'notice' | 'announcements') => {
+  // Handle tab change - mark the tab's items as read when switching to it
+  const handleTabChange = (tab: NotificationTab) => {
     setActiveTab(tab)
-
-    if (tab === 'announcements') {
-      markAnnouncementsAsRead()
-    }
+    markTabRead(tab)
   }
 
   return {
     // Data
+    alerts,
+    pastAlerts,
     notice: noticeContent,
     announcements,
-    loading: noticeLoading || statusLoading,
+    tabs,
+    loading:
+      noticeLoading ||
+      statusLoading ||
+      (signedIn && (alertsQuery.isLoading || historyQuery.isLoading)),
 
     // Unread counts
     unreadCount: unreadCounts.total,
+    unreadAlertsCount: unreadCounts.alerts,
     unreadNoticeCount: unreadCounts.notice,
     unreadAnnouncementsCount: unreadCounts.announcements,
 

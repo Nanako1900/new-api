@@ -44,6 +44,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	// router/api-router.go: top level
 	"GET /api/models":                     accessTokenScopeRule("profile:read"),
 	"GET /api/alerts":                     accessTokenScopeRule("profile:read"),
+	"GET /api/alerts/history":             accessTokenScopeRule("profile:read"),
 	"GET /api/status/test":                accessTokenScopeRule("log:read"),
 	"GET /api/pricing":                    accessTokenAnyRule,
 	"GET /api/pricing/reference":          accessTokenAnyRule,
@@ -181,6 +182,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/option/payment_compliance":                        accessTokenSessionRule,
 	"GET /api/option/channel_affinity_cache":                     accessTokenScopeRule("option:read"),
 	"DELETE /api/option/channel_affinity_cache":                  accessTokenScopeRule("option:write"),
+	"DELETE /api/option/alert_history/:id":                       accessTokenScopeRule("option:write"),
 	"POST /api/option/rest_model_ratio":                          accessTokenScopeRule("option:write"),
 	"GET /api/option/waffo-pancake/catalog":                      accessTokenScopeRule("option:read"),
 	"POST /api/option/waffo-pancake/pair":                        accessTokenScopeRule("option:write"),

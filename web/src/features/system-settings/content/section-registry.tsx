@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ContentSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { AlertHistorySection } from './alert-history-section'
 import { AlertsSection } from './alerts-section'
 import { AnnouncementsSection } from './announcements-section'
 import { ApiInfoSection } from './api-info-section'
@@ -68,7 +69,13 @@ const CONTENT_SECTIONS = [
     id: 'alerts',
     titleKey: 'Alerts',
     build: (settings: ContentSettings) => (
-      <AlertsSection data={settings['console_setting.alerts']} />
+      <>
+        <AlertsSection data={settings['console_setting.alerts']} />
+        <AlertHistorySection
+          history={settings['console_setting.alert_history']}
+          alerts={settings['console_setting.alerts']}
+        />
+      </>
     ),
   },
   {

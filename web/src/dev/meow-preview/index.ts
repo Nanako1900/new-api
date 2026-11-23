@@ -121,6 +121,45 @@ function mockResponse(
     return { success: false, message: '本地预览模式：操作不会保存' }
   }
 
+  if (path === '/api/alerts') {
+    // Shaped like the live console banner (2026-11-23).
+    return ok([
+      {
+        id: 1763900000000,
+        title: '每周更新：',
+        content:
+          '- 新站开业的优惠倍率改为长期倍率不再变更。\n- 修复了 Dashboard 的一些细节\n- 上新 Gemini 全系模型倍率 0.75 倍\n\nMeowAPI 运营团队',
+        level: 'info',
+        dismissible: true,
+        enabled: true,
+      },
+      {
+        id: 1763800000000,
+        title: '充值优惠',
+        content: '单笔充值满 ¥100 自动叠加 95 折，大额充值请联系客服。',
+        level: 'success',
+        dismissible: true,
+        enabled: true,
+      },
+    ])
+  }
+  if (path === '/api/alerts/history') {
+    return ok([
+      {
+        id: 1763300000000,
+        title: '双十一充值活动',
+        content: '11 月 11 日至 15 日充值额外赠送 10%，已结束。',
+        level: 'success',
+        publishedAt: '2026-11-11T00:00:00Z',
+      },
+      {
+        id: 1762900000000,
+        content: '11 月 12 日凌晨 2 点到 3 点维护，期间请求可能失败。',
+        level: 'warning',
+        publishedAt: '2026-11-10T08:00:00Z',
+      },
+    ])
+  }
   if (path === '/api/user/self') return ok(previewUser())
   if (path === '/api/user/models') return ok(PREVIEW_MODELS)
   if (path === '/api/user/self/groups') {

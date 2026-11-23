@@ -24,12 +24,16 @@ interface NotificationState {
   lastReadNotice: string
   // Array of read announcement keys (id or content hash)
   readAnnouncementKeys: string[]
+  // Console alert versions seen in the bell (keys from getAlertDismissKey)
+  readAlertKeys: string[]
   // Timestamp of last "Close Today" action
   closedUntilDate: string | null
 
   // Actions
   markNoticeRead: (noticeContent: string) => void
   markAnnouncementsRead: (keys: string[]) => void
+  // Pass every live alert's key: keys of alerts no longer live are dropped
+  markAlertsRead: (liveKeys: string[]) => void
   setClosedUntilDate: (date: string | null) => void
   isAnnouncementRead: (key: string) => boolean
   isNoticeClosed: () => boolean
@@ -44,6 +48,7 @@ export const useNotificationStore = create<NotificationState>()(
     (set, get) => ({
       lastReadNotice: '',
       readAnnouncementKeys: [],
+      readAlertKeys: [],
       closedUntilDate: null,
 
       markNoticeRead: (noticeContent: string) => {
@@ -58,6 +63,10 @@ export const useNotificationStore = create<NotificationState>()(
             ...new Set([...state.readAnnouncementKeys, ...keys]),
           ],
         }))
+      },
+
+      markAlertsRead: (liveKeys: string[]) => {
+        set({ readAlertKeys: [...new Set(liveKeys)] })
       },
 
       setClosedUntilDate: (date: string | null) => {
@@ -81,6 +90,7 @@ export const useNotificationStore = create<NotificationState>()(
       partialize: (state) => ({
         lastReadNotice: state.lastReadNotice,
         readAnnouncementKeys: state.readAnnouncementKeys,
+        readAlertKeys: state.readAlertKeys,
         closedUntilDate: state.closedUntilDate,
       }),
     }
