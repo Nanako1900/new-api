@@ -934,19 +934,21 @@ func TestContentSafetyEscalation(t *testing.T) {
 		wantFailure         string
 		wantEscalated       string
 		wantEscalationCalls int
+		// wantRiskDelta is what the final verdict adds to the account's score.
+		wantRiskDelta int
 	}{
 		{name: "an unsafe second verdict replaces a controversial one", engine: operation_setting.ContentReviewEngineQwen3Guard, first: guardControversial, escalation: reviewerReply(unsafeReply),
-			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantEscalated: "escalate-model", wantEscalationCalls: 1},
+			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantEscalated: "escalate-model", wantEscalationCalls: 1, wantRiskDelta: 40},
 		{name: "a safe second verdict clears a controversial one", first: reviewerReply(controversialReply), escalation: reviewerReply(safeReply),
 			wantDecision: model.ContentSafetyDecisionReviewPassed, wantEscalated: "escalate-model", wantEscalationCalls: 1},
 		{name: "a refused review is escalated", first: refusal, escalation: reviewerReply(unsafeReply),
-			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantEscalated: "escalate-model", wantEscalationCalls: 1},
+			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantEscalated: "escalate-model", wantEscalationCalls: 1, wantRiskDelta: 40},
 		{name: "a failed escalation keeps the controversial verdict", engine: operation_setting.ContentReviewEngineQwen3Guard, first: guardControversial, escalation: serverError,
-			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "weapons", wantEscalationCalls: 2},
+			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "weapons", wantEscalationCalls: 2, wantRiskDelta: 5},
 		{name: "a refused escalation keeps the refusal", first: refusal, escalation: refusal,
-			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "other", wantFailure: model.ContentSafetyFailureRefused, wantEscalationCalls: 2},
+			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "other", wantFailure: model.ContentSafetyFailureRefused, wantEscalationCalls: 2, wantRiskDelta: 5},
 		{name: "an unsafe verdict is not escalated", engine: operation_setting.ContentReviewEngineQwen3Guard, first: reviewerReply("Safety: Unsafe\nCategories: Violent"), escalation: reviewerReply(safeReply),
-			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons"},
+			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantRiskDelta: 40},
 		{name: "a safe verdict is not escalated", engine: operation_setting.ContentReviewEngineQwen3Guard, first: reviewerReply("Safety: Safe\nCategories: None"), escalation: reviewerReply(unsafeReply),
 			wantDecision: model.ContentSafetyDecisionReviewPassed},
 	} {
@@ -976,6 +978,7 @@ func TestContentSafetyEscalation(t *testing.T) {
 			assert.Equal(t, tc.wantFailure, logs[0].FailureReason)
 			assert.Equal(t, tc.wantEscalated, logs[0].EscalatedModel)
 			assert.Equal(t, "judge-model", logs[0].ReviewModel)
+			assert.Equal(t, tc.wantRiskDelta, logs[0].RiskDelta, "the account is scored by the final verdict")
 		})
 	}
 }
