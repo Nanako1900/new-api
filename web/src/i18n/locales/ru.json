@@ -8614,6 +8614,9 @@
     "Without new verdicts, a score halves after this many hours.": "Без новых вердиктов оценка уменьшается вдвое за это количество часов.",
     "Would block": "Был бы заблокирован",
     "Zero-tolerance categories": "Категории с нулевой терпимостью",
-    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "Запросы {{username}} больше не будут проверяться до отправки, ограничиваться по частоте или блокироваться. Они по-прежнему проверяются в фоне и записываются в журнал."
+    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "Запросы {{username}} больше не будут проверяться до отправки, ограничиваться по частоте или блокироваться. Они по-прежнему проверяются в фоне и записываются в журнал.",
+    "Invalid content risk profile query": "Недопустимый запрос риска аккаунтов",
+    "Score reached the block threshold": "Оценка достигла порога блокировки",
+    "Zero-tolerance category: {{category}}": "Категория с нулевой терпимостью: {{category}}"
   }
 }

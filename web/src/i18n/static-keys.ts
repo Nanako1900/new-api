@@ -979,6 +979,7 @@ export const STATIC_I18N_KEYS = [
   'Content safety log cleanup',
   'Invalid content safety log query',
   'Invalid content safety stats query',
+  'Invalid content risk profile query',
   // Account risk: verdict category labels (constants), level labels, and the
   // confirmation copy of the risk profile row actions.
   'Sexual content involving minors',

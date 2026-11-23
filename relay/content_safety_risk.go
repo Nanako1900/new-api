@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service/contentsafety"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
@@ -50,14 +51,14 @@ func unreviewedRiskVerdict(skipped []string) contentsafety.RiskVerdict {
 // recordScoredReview records a review decision as recordReview does, after
 // scoring its verdicts against the account in the background, so neither
 // adds latency to the request. A decision that changed the score is always
-// recorded, with the change.
-func recordScoredReview(entry model.ContentSafetyLog, categories, snippets []string, percent int, verdicts []contentsafety.RiskVerdict) {
+// recorded, with the change. cfg is the configuration of the review plan.
+func recordScoredReview(entry model.ContentSafetyLog, categories, snippets []string, cfg operation_setting.ContentSafetySetting, verdicts []contentsafety.RiskVerdict) {
 	if len(verdicts) == 0 {
-		recordReview(entry, categories, snippets, percent, recordContentSafetyLog)
+		recordReview(entry, categories, snippets, cfg.PassLogPercent, recordContentSafetyLog)
 		return
 	}
 	gopool.Go(func() {
-		outcome := contentsafety.ScoreRisk(entry.UserId, entry.Mode == model.ContentSafetyModeShadow, verdicts)
+		outcome := contentsafety.ScoreRisk(cfg, entry.UserId, entry.Mode == model.ContentSafetyModeShadow, verdicts)
 		entry.RiskDelta, entry.RiskScore = outcome.Delta, outcome.Score
 		if encoded, ok := encodeLogLists(entry, categories, snippets); ok {
 			model.RecordContentSafetyLog(encoded)
@@ -81,7 +82,7 @@ func recordFlaggedVerdicts(c *gin.Context, info *relaycommon.RelayInfo, plan *co
 	entry.Mode, entry.ReviewModel, entry.CacheHit = plan.mode, plan.cfg.ReviewModel, true
 	hits := plan.flagged
 	gopool.Go(func() {
-		outcome := contentsafety.ScoreRisk(entry.UserId, entry.Mode == model.ContentSafetyModeShadow, cachedRiskVerdicts(hits))
+		outcome := contentsafety.ScoreRisk(plan.cfg, entry.UserId, entry.Mode == model.ContentSafetyModeShadow, cachedRiskVerdicts(hits))
 		var reviews []unitReview
 		for i, hit := range hits {
 			if sighted[i] || outcome.Counted[i] {

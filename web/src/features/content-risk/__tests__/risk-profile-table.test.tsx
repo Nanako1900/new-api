@@ -137,6 +137,30 @@ describe('risk profile list', () => {
     })
   })
 
+  it('a blocked account shows its stored block reason in words', async () => {
+    const blocked = { ...watched, level: 'blocked', blocked: true }
+    mockProfiles([
+      { ...blocked, blocked_reason: 'score_threshold' },
+      {
+        ...blocked,
+        user_id: 8,
+        username: 'bob',
+        blocked_reason: 'zero_tolerance:sexual_minors',
+      },
+    ])
+    await renderRiskPage()
+    const byScore = await screen.findByRole('row', { name: /alice/ })
+    expect(
+      within(byScore).getByText('Score reached the block threshold')
+    ).toBeVisible()
+    const byCategory = screen.getByRole('row', { name: /bob/ })
+    expect(
+      within(byCategory).getByText(
+        'Zero-tolerance category: Sexual content involving minors'
+      )
+    ).toBeVisible()
+  })
+
   it('a link with user_id requests only that account and shows it in the User ID filter', async () => {
     const get = mockProfiles([watched])
     await renderRiskPage('/usage-logs/content-risk?user_id=7')

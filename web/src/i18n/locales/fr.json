@@ -8614,6 +8614,9 @@
     "Without new verdicts, a score halves after this many hours.": "Sans nouveau verdict, un score est divisé par deux après ce nombre d'heures.",
     "Would block": "Serait bloqué",
     "Zero-tolerance categories": "Catégories à tolérance zéro",
-    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "Les requêtes de {{username}} ne seront plus vérifiées avant l'envoi en amont, limitées ni bloquées. Elles restent vérifiées en arrière-plan et journalisées."
+    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "Les requêtes de {{username}} ne seront plus vérifiées avant l'envoi en amont, limitées ni bloquées. Elles restent vérifiées en arrière-plan et journalisées.",
+    "Invalid content risk profile query": "Requête de risque des comptes invalide",
+    "Score reached the block threshold": "Le score a atteint le seuil de blocage",
+    "Zero-tolerance category: {{category}}": "Catégorie à tolérance zéro : {{category}}"
   }
 }

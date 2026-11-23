@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
+import type { TFunction } from 'i18next'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -24,6 +25,10 @@ import { TimestampCell } from '@/components/activity-time-cell'
 import { DataTableRowActionMenu } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
+import {
+  RISK_CATEGORIES,
+  RISK_CATEGORY_LABEL_KEYS,
+} from '@/features/system-settings/request-policies/risk-form'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatNumber } from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
@@ -42,6 +47,27 @@ function levelPresentation(level: string): RiskLevelPresentation {
   return known
     ? RISK_LEVEL_PRESENTATION[known]
     : { labelKey: level, variant: 'neutral' }
+}
+
+const ZERO_TOLERANCE_REASON_PREFIX = 'zero_tolerance:'
+
+/**
+ * Why an account is blocked, from the stored reason: `score_threshold`, or
+ * `zero_tolerance:<category>` for one unsafe verdict in a zero-tolerance
+ * category. A reason the server added later is shown as stored.
+ */
+function blockedReasonText(t: TFunction, reason: string): string {
+  if (reason === 'score_threshold') {
+    return t('Score reached the block threshold')
+  }
+  if (!reason.startsWith(ZERO_TOLERANCE_REASON_PREFIX)) {
+    return translateServerText(t, reason)
+  }
+  const category = reason.slice(ZERO_TOLERANCE_REASON_PREFIX.length)
+  const known = RISK_CATEGORIES.find((item) => item === category)
+  return t('Zero-tolerance category: {{category}}', {
+    category: known ? t(RISK_CATEGORY_LABEL_KEYS[known]) : category,
+  })
 }
 
 export function useRiskProfileColumns(
@@ -96,7 +122,7 @@ export function useRiskProfileColumns(
                 row.original.blocked &&
                 row.original.blocked_reason && (
                   <div className='text-muted-foreground text-xs'>
-                    {translateServerText(t, row.original.blocked_reason)}
+                    {blockedReasonText(t, row.original.blocked_reason)}
                   </div>
                 )}
             </div>

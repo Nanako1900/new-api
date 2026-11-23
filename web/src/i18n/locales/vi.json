@@ -8614,6 +8614,9 @@
     "Without new verdicts, a score halves after this many hours.": "Khi không có kết quả mới, điểm giảm một nửa sau số giờ này.",
     "Would block": "Sẽ bị chặn",
     "Zero-tolerance categories": "Danh mục không khoan nhượng",
-    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "Yêu cầu của {{username}} sẽ không còn bị kiểm duyệt trước khi chuyển lên upstream, giới hạn tốc độ hay bị chặn. Yêu cầu vẫn được kiểm duyệt ở chế độ nền và ghi nhật ký."
+    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "Yêu cầu của {{username}} sẽ không còn bị kiểm duyệt trước khi chuyển lên upstream, giới hạn tốc độ hay bị chặn. Yêu cầu vẫn được kiểm duyệt ở chế độ nền và ghi nhật ký.",
+    "Invalid content risk profile query": "Truy vấn rủi ro tài khoản không hợp lệ",
+    "Score reached the block threshold": "Điểm đã đạt ngưỡng chặn",
+    "Zero-tolerance category: {{category}}": "Danh mục không khoan nhượng: {{category}}"
   }
 }

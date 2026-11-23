@@ -205,7 +205,7 @@ func rejectCachedOrOversized(c *gin.Context, info *relaycommon.RelayInfo, plan *
 		entry := contentSafetyLogEntry(c, info)
 		entry.Decision, entry.Mode, entry.CacheHit = model.ContentSafetyDecisionReviewRejected, model.ContentSafetyModeSync, true
 		entry.ReviewModel, entry.AiCategory, entry.AiReason, entry.UnitCount = cfg.ReviewModel, hit.verdict.Category, hit.verdict.Reason, 1
-		recordScoredReview(entry, []string{hit.verdict.Category}, []string{unitSnippet(hit.unit)}, cfg.PassLogPercent, cachedRiskVerdicts(plan.flagged))
+		recordScoredReview(entry, []string{hit.verdict.Category}, []string{unitSnippet(hit.unit)}, cfg, cachedRiskVerdicts(plan.flagged))
 		return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
 	}
 	if plan.truncated == 0 {
@@ -434,7 +434,7 @@ func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, plan *cont
 	_ = group.Wait()
 	storeVerdicts(reviews, cfg.CacheTTLSeconds)
 	entry, categories, snippets := summarizeReviews(entry, reviews)
-	recordScoredReview(entry, categories, snippets, cfg.PassLogPercent, riskVerdicts(reviews))
+	recordScoredReview(entry, categories, snippets, cfg, riskVerdicts(reviews))
 	switch entry.Decision {
 	case model.ContentSafetyDecisionReviewRejected:
 		return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
@@ -539,7 +539,7 @@ func reviewInBackground(entry model.ContentSafetyLog, plan *contentReviewPlan) {
 	if len(plan.skipped) > 0 {
 		verdicts = append(verdicts, unreviewedRiskVerdict(plan.skipped))
 	}
-	recordScoredReview(entry, categories, snippets, cfg.PassLogPercent, verdicts)
+	recordScoredReview(entry, categories, snippets, cfg, verdicts)
 }
 
 // reviewUnit tries up to two channels that serve the review model, and stops

@@ -8614,6 +8614,9 @@
     "Without new verdicts, a score halves after this many hours.": "没有新的审核结果时，分数每经过这么多小时减半。",
     "Would block": "将被封禁",
     "Zero-tolerance categories": "零容忍类别",
-    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "{{username}} 的请求将不再在发往上游前先审核，也不会被限流或封禁。其请求仍会在后台审核并记录。"
+    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "{{username}} 的请求将不再在发往上游前先审核，也不会被限流或封禁。其请求仍会在后台审核并记录。",
+    "Invalid content risk profile query": "账号风险查询无效",
+    "Score reached the block threshold": "分数达到封禁阈值",
+    "Zero-tolerance category: {{category}}": "零容忍类别：{{category}}"
   }
 }

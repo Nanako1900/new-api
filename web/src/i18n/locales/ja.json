@@ -8614,6 +8614,9 @@
     "Without new verdicts, a score halves after this many hours.": "新しい判定がない場合、スコアはこの時間ごとに半分になります。",
     "Would block": "ブロック対象",
     "Zero-tolerance categories": "ゼロトレランスのカテゴリ",
-    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "{{username}} のリクエストは上流に送る前にレビューされず、スロットリングやブロックもされなくなります。リクエストは引き続きバックグラウンドでレビューされ、記録されます。"
+    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "{{username}} のリクエストは上流に送る前にレビューされず、スロットリングやブロックもされなくなります。リクエストは引き続きバックグラウンドでレビューされ、記録されます。",
+    "Invalid content risk profile query": "アカウントリスクのクエリが無効です",
+    "Score reached the block threshold": "スコアがブロックしきい値に達しました",
+    "Zero-tolerance category: {{category}}": "ゼロトレランスのカテゴリ：{{category}}"
   }
 }

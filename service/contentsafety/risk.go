@@ -32,6 +32,8 @@ const (
 // RiskState is what a request needs to know about an account's content risk
 // and age, read through one cache entry: the enforced score, the block and
 // trust flags, and when and with which role the account was created.
+// UserCreatedAt is 0 for an account without a registration time, which
+// callers read as an established account.
 type RiskState struct {
 	Score         float64 `json:"score"`
 	ScoreAt       int64   `json:"score_at"`
@@ -84,7 +86,7 @@ func LoadRiskState(userId int) (RiskState, error) {
 		CreatedAt int64
 		Role      int
 	}
-	if err := model.DB.Model(&model.User{}).Where("id = ?", userId).Select("created_at", "role").Scan(&account).Error; err != nil {
+	if err := model.DB.Model(&model.User{}).Where("id = ?", userId).Select("COALESCE(created_at, 0) AS created_at", "role").Scan(&account).Error; err != nil {
 		return RiskState{}, err
 	}
 	state := RiskState{Score: profile.Score, ScoreAt: profile.ScoreAt, Blocked: profile.Blocked, Trusted: profile.Trusted,
@@ -138,14 +140,14 @@ type RiskOutcome struct {
 
 // ScoreRisk adds verdicts to the risk score of userId, one transaction each,
 // and notifies administrators when one restricts or blocks the account or
-// hits a zero-tolerance category. Shadow, and every verdict on a trusted
-// account, scores the shadow score. Root accounts are never scored.
-func ScoreRisk(userId int, shadow bool, verdicts []RiskVerdict) RiskOutcome {
+// hits a zero-tolerance category. cfg is the bounded configuration the
+// review was planned with. Shadow, and every verdict on a trusted account,
+// scores the shadow score. Root accounts are never scored.
+func ScoreRisk(cfg operation_setting.ContentSafetySetting, userId int, shadow bool, verdicts []RiskVerdict) RiskOutcome {
 	outcome := RiskOutcome{Counted: make([]bool, len(verdicts))}
 	if len(verdicts) == 0 {
 		return outcome
 	}
-	cfg := operation_setting.GetContentSafetySetting().Bounded()
 	state, err := LoadRiskState(userId)
 	if err != nil {
 		common.SysError(common.LogText("content risk scoring of user %d failed: %s", userId, err.Error()))
@@ -195,7 +197,7 @@ func firstRiskScoring(userId int, keys []string, window time.Duration) bool {
 		for _, key := range keys {
 			added, err := common.RDB.SetNX(ctx, fmt.Sprintf("content_safety:risk_scored:%d:%s", userId, key), 1, window).Result()
 			if err != nil {
-				common.SysError(common.LogText("content risk scoring check failed: %s", err.Error()))
+				warnRedisFailure("risk scoring check", err)
 				return true
 			}
 			fresh = fresh || added

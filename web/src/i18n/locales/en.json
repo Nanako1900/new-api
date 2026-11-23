@@ -8614,6 +8614,9 @@
     "Without new verdicts, a score halves after this many hours.": "Without new verdicts, a score halves after this many hours.",
     "Would block": "Would block",
     "Zero-tolerance categories": "Zero-tolerance categories",
-    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged."
+    "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.",
+    "Invalid content risk profile query": "Invalid content risk profile query",
+    "Score reached the block threshold": "Score reached the block threshold",
+    "Zero-tolerance category: {{category}}": "Zero-tolerance category: {{category}}"
   }
 }
