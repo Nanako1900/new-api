@@ -74,7 +74,12 @@ const rejected: ContentSafetyLog = {
 const STATS_URL = '/api/content_safety/stats'
 const emptyStats = {
   success: true,
-  data: { counts: [], latency_p50_ms: 0, latency_p95_ms: 0, latency_samples: 0 },
+  data: {
+    counts: [],
+    latency_p50_ms: 0,
+    latency_p95_ms: 0,
+    latency_samples: 0,
+  },
 }
 
 // Answers the stats strip with an empty summary and the log table with `logs`.

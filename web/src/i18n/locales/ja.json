@@ -8566,6 +8566,7 @@
     "Synchronous reviews running at the same time on each server node.": "各サーバーノードで同時に実行される同期レビューの数。",
     "The longest text reviewed as one piece.": "1 つの単位としてレビューする最長のテキスト。",
     "Too many pieces to review": "レビューする単位が多すぎます",
-    "Truncated": "切り捨て済み"
+    "Truncated": "切り捨て済み",
+    "Refused by the reviewer": "審査チャネルが拒否"
   }
 }

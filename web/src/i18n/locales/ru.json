@@ -8566,6 +8566,7 @@
     "Synchronous reviews running at the same time on each server node.": "Число синхронных проверок, выполняемых одновременно на каждом узле сервера.",
     "The longest text reviewed as one piece.": "Самый длинный текст, проверяемый как один фрагмент.",
     "Too many pieces to review": "Слишком много фрагментов для проверки",
-    "Truncated": "Усечено"
+    "Truncated": "Усечено",
+    "Refused by the reviewer": "Отказ модели проверки"
   }
 }

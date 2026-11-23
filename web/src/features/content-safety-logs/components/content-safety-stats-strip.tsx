@@ -52,7 +52,10 @@ function statFigures(
       value: formatNumber(summary.controversial, locale),
     },
     { label: t('Failed'), value: formatNumber(summary.failed, locale) },
-    { label: t('Refused'), value: formatNumber(summary.refused, locale) },
+    {
+      label: t('Refused by the reviewer'),
+      value: formatNumber(summary.refused, locale),
+    },
     {
       label: t('Latency p50'),
       value: `${formatNumber(stats.latency_p50_ms, locale)} ${unit}`,

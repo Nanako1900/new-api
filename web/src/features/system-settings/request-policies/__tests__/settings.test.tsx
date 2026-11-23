@@ -264,9 +264,9 @@ describe('request policy settings', () => {
     const prompt = screen.getByRole('switch', { name: 'Inspect user prompts' })
     expect(prompt).toHaveAttribute('aria-disabled', 'true')
     expect(prompt).toBeChecked()
-    expect(screen.getByRole('textbox', { name: 'Hard-block words (zero tolerance)' })).toHaveValue(
-      'blocked'
-    )
+    expect(
+      screen.getByRole('textbox', { name: 'Hard-block words (zero tolerance)' })
+    ).toHaveValue('blocked')
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(api.patch).toHaveBeenCalledExactlyOnceWith(

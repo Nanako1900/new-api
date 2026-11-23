@@ -8566,6 +8566,7 @@
     "Synchronous reviews running at the same time on each server node.": "Số lần kiểm duyệt đồng bộ chạy cùng lúc trên mỗi nút máy chủ.",
     "The longest text reviewed as one piece.": "Văn bản dài nhất được kiểm duyệt như một đoạn.",
     "Too many pieces to review": "Có quá nhiều đoạn cần kiểm duyệt",
-    "Truncated": "Đã cắt bớt"
+    "Truncated": "Đã cắt bớt",
+    "Refused by the reviewer": "Kênh kiểm duyệt từ chối"
   }
 }

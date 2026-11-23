@@ -8566,6 +8566,7 @@
     "Synchronous reviews running at the same time on each server node.": "Synchronous reviews running at the same time on each server node.",
     "The longest text reviewed as one piece.": "The longest text reviewed as one piece.",
     "Too many pieces to review": "Too many pieces to review",
-    "Truncated": "Truncated"
+    "Truncated": "Truncated",
+    "Refused by the reviewer": "Refused by the reviewer"
   }
 }

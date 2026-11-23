@@ -8566,6 +8566,7 @@
     "Synchronous reviews running at the same time on each server node.": "Vérifications synchrones exécutées en même temps sur chaque nœud serveur.",
     "The longest text reviewed as one piece.": "Le texte le plus long vérifié en un seul segment.",
     "Too many pieces to review": "Trop de segments à vérifier",
-    "Truncated": "Tronqué"
+    "Truncated": "Tronqué",
+    "Refused by the reviewer": "Refusé par le modèle de revue"
   }
 }

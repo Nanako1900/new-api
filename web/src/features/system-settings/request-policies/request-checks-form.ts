@@ -133,15 +133,20 @@ export function requestChecksFormValues(
       review_model: settings['content_safety_setting.review_model'],
       review_group: settings['content_safety_setting.review_group'],
       review_prompt: settings['content_safety_setting.review_prompt'],
-      review_tool_results: settings['content_safety_setting.review_tool_results'],
-      review_timeout_seconds: settings['content_safety_setting.review_timeout_seconds'],
-      review_max_concurrency: settings['content_safety_setting.review_max_concurrency'],
-      review_rate_limit_per_minute: settings['content_safety_setting.review_rate_limit_per_minute'],
+      review_tool_results:
+        settings['content_safety_setting.review_tool_results'],
+      review_timeout_seconds:
+        settings['content_safety_setting.review_timeout_seconds'],
+      review_max_concurrency:
+        settings['content_safety_setting.review_max_concurrency'],
+      review_rate_limit_per_minute:
+        settings['content_safety_setting.review_rate_limit_per_minute'],
       unit_chars: settings['content_safety_setting.unit_chars'],
       max_units: settings['content_safety_setting.max_units'],
       async_workers: settings['content_safety_setting.async_workers'],
       async_queue_size: settings['content_safety_setting.async_queue_size'],
-      async_rate_per_minute: settings['content_safety_setting.async_rate_per_minute'],
+      async_rate_per_minute:
+        settings['content_safety_setting.async_rate_per_minute'],
       pass_log_percent: settings['content_safety_setting.pass_log_percent'],
       sync_all: settings['content_safety_setting.sync_all'],
       sync_new_user_days: settings['content_safety_setting.sync_new_user_days'],

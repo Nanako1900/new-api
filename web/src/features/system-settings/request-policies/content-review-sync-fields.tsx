@@ -39,8 +39,8 @@ import {
   SettingsSwitchContent,
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
-import { ReviewNumberField } from './review-number-field'
 import type { RequestChecksFormValues } from './request-checks-form'
+import { ReviewNumberField } from './review-number-field'
 
 // Options that choose which accounts are reviewed before the request goes
 // upstream. They only apply in enforce mode.

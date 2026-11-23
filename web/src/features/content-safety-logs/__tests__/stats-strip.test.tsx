@@ -37,7 +37,12 @@ import { ContentSafetyStatsStrip } from '../components/content-safety-stats-stri
 const stats = {
   counts: [
     { decision: 'keyword_blocked', mode: '', failure_reason: '', total: 50 },
-    { decision: 'review_passed', mode: 'sync', failure_reason: '', total: 1200 },
+    {
+      decision: 'review_passed',
+      mode: 'sync',
+      failure_reason: '',
+      total: 1200,
+    },
     { decision: 'review_flagged', mode: 'async', failure_reason: '', total: 7 },
     { decision: 'review_rejected', mode: 'sync', failure_reason: '', total: 3 },
     {
@@ -46,7 +51,12 @@ const stats = {
       failure_reason: 'refused',
       total: 4,
     },
-    { decision: 'review_failed', mode: 'sync', failure_reason: 'timeout', total: 2 },
+    {
+      decision: 'review_failed',
+      mode: 'sync',
+      failure_reason: 'timeout',
+      total: 2,
+    },
   ],
   latency_p50_ms: 850,
   latency_p95_ms: 2400,
@@ -103,7 +113,7 @@ it('shows the review figures of the last 24 hours from the stats API', async () 
   expect(figure('Flagged or rejected')).toHaveTextContent('10')
   expect(figure('Controversial')).toHaveTextContent('4')
   expect(figure('Failed')).toHaveTextContent('2')
-  expect(figure('Refused')).toHaveTextContent('4')
+  expect(figure('Refused by the reviewer')).toHaveTextContent('4')
   expect(figure('Latency p50')).toHaveTextContent('850 ms')
   expect(figure('Latency p95')).toHaveTextContent('2,400 ms')
 })

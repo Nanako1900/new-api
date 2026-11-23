@@ -124,9 +124,12 @@ export function summarizeStatsCounts(
     if (row.failure_reason === 'refused') summary.refused += row.total
     if (!row.decision.startsWith('review_')) continue
     summary.reviews += row.total
-    if (row.decision === 'review_flagged') summary.flaggedOrRejected += row.total
-    if (row.decision === 'review_rejected') summary.flaggedOrRejected += row.total
-    if (row.decision === 'review_controversial') summary.controversial += row.total
+    if (row.decision === 'review_flagged')
+      summary.flaggedOrRejected += row.total
+    if (row.decision === 'review_rejected')
+      summary.flaggedOrRejected += row.total
+    if (row.decision === 'review_controversial')
+      summary.controversial += row.total
     if (row.decision === 'review_failed') summary.failed += row.total
   }
   return summary

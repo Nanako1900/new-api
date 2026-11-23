@@ -198,9 +198,7 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
                   <SettingsSwitchContent>
                     <FormLabel>{t('Enable filtering')}</FormLabel>
                     <FormDescription>
-                      {t(
-                        'Rejects messages that contain a hard-block word.'
-                      )}
+                      {t('Rejects messages that contain a hard-block word.')}
                     </FormDescription>
                   </SettingsSwitchContent>
                   <FormControl>
