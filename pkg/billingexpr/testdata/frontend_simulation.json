@@ -291,7 +291,8 @@
           "ai": 4,
           "ao": 4
         },
-        "conditionText": "Audio requests"
+        "conditionText": "Audio requests",
+        "inputUsesContextLength": true
       },
       {
         "label": "base",
@@ -336,7 +337,8 @@
           "ai": 4,
           "ao": 4
         },
-        "conditionText": "Audio requests"
+        "conditionText": "Audio requests",
+        "inputUsesContextLength": true
       },
       {
         "label": "base",
@@ -371,7 +373,8 @@
           "ai": 4,
           "ao": 4
         },
-        "conditionText": "Audio requests"
+        "conditionText": "Audio requests",
+        "inputUsesContextLength": true
       },
       {
         "label": "base",
@@ -406,7 +409,8 @@
           "ai": 4,
           "ao": 4
         },
-        "conditionText": "Audio requests"
+        "conditionText": "Audio requests",
+        "inputUsesContextLength": true
       },
       {
         "label": "base",

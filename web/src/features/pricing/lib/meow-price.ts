@@ -66,27 +66,40 @@ export function getMeowChannelPrices(
           now ?? new Date()
         ) ?? dynamic.tiers)
       : dynamic.tiers
-    const tokenFields = ['inputPrice', 'outputPrice', 'cacheReadPrice']
+    const tokenFields = ['inputPrice', 'outputPrice', 'cacheReadPrice'] as const
     const supportedFields = new Set([
       ...tokenFields,
       'cacheCreatePrice',
       'cacheCreate1hPrice',
       'cacheCreate12hPrice',
+      'audioInputPrice',
+      'audioOutputPrice',
     ])
+    const hasAudioPrices = tiers.some(
+      (tier) => 'audioInputPrice' in tier || 'audioOutputPrice' in tier
+    )
     if (
       dynamic.isTaskUsage ||
       dynamic.isSpecialExpression ||
       dynamic.isMixedBilling ||
       dynamic.hasRequestRules ||
       tiers.length === 0 ||
-      tiers.some(
-        (tier) =>
-          'unitPrices' in tier ||
-          tier.billingUnit === 'request' ||
-          Object.keys(tier).some(
-            (field) => field.endsWith('Price') && !supportedFields.has(field)
-          )
-      )
+      tiers.some((tier) => {
+        if ('unitPrices' in tier || tier.billingUnit === 'request') return true
+        // Separate audio pricing still requires usable columns in every tier.
+        if (
+          hasAudioPrices &&
+          (tier.imageCount === true ||
+            tier.conditionText ||
+            tier.inputUsesContextLength ||
+            !tokenFields.some((field) => Number.isFinite(tier[field])))
+        ) {
+          return true
+        }
+        return Object.keys(tier).some(
+          (field) => field.endsWith('Price') && !supportedFields.has(field)
+        )
+      })
     ) {
       return { kind: 'dynamic' }
     }

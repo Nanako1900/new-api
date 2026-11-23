@@ -275,6 +275,7 @@ export type ParsedTier = {
   billingUnit?: 'token' | 'request'
   fixedPrice?: number
   conditionText?: string
+  inputUsesContextLength?: boolean
   label: string
   conditions: TierCondition[]
   [field: string]: unknown
@@ -303,6 +304,7 @@ function mapTokenTier(
   return {
     label: tier.label,
     ...(tier.imageCount ? { imageCount: true } : {}),
+    ...(tier.inputUsesContextLength ? { inputUsesContextLength: true } : {}),
     conditions: tier.conditions,
     ...(tier.billingUnit === 'request'
       ? { billingUnit: tier.billingUnit, fixedPrice: tier.fixedPrice }
