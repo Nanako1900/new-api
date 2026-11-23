@@ -35,6 +35,7 @@ export type SkipReason =
   | 'unsupported_expression'
   | 'model_mismatch'
   | 'no_cache'
+  | 'channel_test'
 
 /** A cache subsidy campaign. Quotas are quota units, times unix seconds. */
 export interface Campaign {
@@ -59,6 +60,8 @@ export interface Campaign {
   skip_reasons: Record<string, number>
   /** Calculation progress, 0-100. */
   progress: number
+  /** Latest calculation failure, empty when none; the server retries every minute. */
+  last_error: string
   eligible_users: number
   total_cache_quota: number
   total_subsidy_quota: number

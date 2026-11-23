@@ -40,11 +40,12 @@ export function canEditCampaignRules(status: CampaignStatus): boolean {
 
 /**
  * The actions a campaign offers in its current status, in menu order. A
- * campaign is deleted only as a draft, or calculated or closed with nothing
- * claimed yet.
+ * failing calculation (one with `last_error`) can be reset to draft to stop
+ * its retries. Only a campaign that never opened (draft or calculated) can be
+ * deleted; a closed campaign stays as the payout record.
  */
 export function getCampaignActions(
-  campaign: Pick<Campaign, 'status' | 'claimed_users'>
+  campaign: Pick<Campaign, 'status' | 'last_error'>
 ): CampaignAction[] {
   const actions: CampaignAction[] = []
   const status = campaign.status
@@ -58,13 +59,8 @@ export function getCampaignActions(
   if (status === 'draft') actions.push('calculate')
   if (status === 'calculated') actions.push('open', 'reset')
   if (status === 'open') actions.push('close')
+  if (isCampaignComputing(status) && campaign.last_error) actions.push('reset')
 
-  const nothingClaimed = (campaign.claimed_users ?? 0) === 0
-  if (
-    status === 'draft' ||
-    ((status === 'calculated' || status === 'closed') && nothingClaimed)
-  ) {
-    actions.push('delete')
-  }
+  if (status === 'draft' || status === 'calculated') actions.push('delete')
   return actions
 }

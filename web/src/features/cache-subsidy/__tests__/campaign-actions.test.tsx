@@ -25,7 +25,11 @@ import { CampaignRowActions } from '../components/campaign-row-actions'
 import { getCampaignActions } from '../lib'
 import type { Campaign, CampaignStatus } from '../types'
 
-function campaign(status: CampaignStatus, claimedUsers = 0): Campaign {
+function campaign(
+  status: CampaignStatus,
+  claimedUsers = 0,
+  lastError = ''
+): Campaign {
   return {
     id: 1,
     name: 'November cache refund',
@@ -44,6 +48,7 @@ function campaign(status: CampaignStatus, claimedUsers = 0): Campaign {
     skipped_logs: 0,
     skip_reasons: {},
     progress: 0,
+    last_error: lastError,
     eligible_users: 3,
     total_cache_quota: 400_000,
     total_subsidy_quota: 300_000,
@@ -59,19 +64,27 @@ function campaign(status: CampaignStatus, claimedUsers = 0): Campaign {
 
 describe('campaign actions per status', () => {
   test.each([
-    ['draft', 0, ['edit', 'details', 'calculate', 'delete']],
-    ['queued', 0, ['details']],
-    ['calculating', 0, ['details']],
-    ['calculated', 0, ['edit', 'details', 'grants', 'open', 'reset', 'delete']],
-    ['open', 2, ['edit', 'details', 'grants', 'close']],
-    ['closed', 0, ['details', 'grants', 'delete']],
-    ['closed', 2, ['details', 'grants']],
+    ['draft', 0, '', ['edit', 'details', 'calculate', 'delete']],
+    ['queued', 0, '', ['details']],
+    ['calculating', 0, '', ['details']],
+    ['calculating', 0, 'log database timeout', ['details', 'reset']],
+    ['queued', 0, 'log database timeout', ['details', 'reset']],
+    [
+      'calculated',
+      0,
+      '',
+      ['edit', 'details', 'grants', 'open', 'reset', 'delete'],
+    ],
+    ['open', 2, '', ['edit', 'details', 'grants', 'close']],
+    // A closed campaign is the payout record: never deletable.
+    ['closed', 0, '', ['details', 'grants']],
+    ['closed', 2, '', ['details', 'grants']],
   ] as const)(
-    'a %s campaign with %i claimed users offers %j',
-    (status, claimedUsers, expected) => {
-      expect(getCampaignActions(campaign(status, claimedUsers))).toEqual(
-        expected
-      )
+    'a %s campaign with %i claimed users and last error %j offers %j',
+    (status, claimedUsers, lastError, expected) => {
+      expect(
+        getCampaignActions(campaign(status, claimedUsers, lastError))
+      ).toEqual(expected)
     }
   )
 })

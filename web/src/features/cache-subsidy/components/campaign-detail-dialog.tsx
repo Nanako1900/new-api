@@ -17,12 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
+import { TriangleAlert } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { StatusBadge } from '@/components/status-badge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
   Progress,
@@ -46,6 +48,7 @@ import {
 } from '../constants'
 import {
   cacheSubsidyQueryKeys,
+  getCampaignActions,
   hasCampaignGrants,
   isCampaignComputing,
 } from '../lib'
@@ -138,6 +141,20 @@ export function CampaignDetailDialog(props: {
         )}
       </>
     )
+  } else if (
+    campaign &&
+    computing &&
+    getCampaignActions(campaign).includes('reset')
+  ) {
+    // A failing calculation keeps retrying until it is reset to draft.
+    footer = (
+      <Button
+        variant='outline'
+        onClick={() => setPendingAction({ campaign, action: 'reset' })}
+      >
+        {t('Reset to draft')}
+      </Button>
+    )
   }
 
   return (
@@ -191,6 +208,25 @@ export function CampaignDetailDialog(props: {
               </p>
             )}
           </section>
+
+          {campaign.last_error && (
+            <Alert className='border-warning/40'>
+              <TriangleAlert className='text-warning' aria-hidden='true' />
+              <AlertTitle>{t('Last calculation error')}</AlertTitle>
+              <AlertDescription>
+                <p className='font-mono text-xs break-all'>
+                  {campaign.last_error}
+                </p>
+                {computing && (
+                  <p>
+                    {t(
+                      'The calculation is retried every minute. Reset the campaign to draft to stop retrying.'
+                    )}
+                  </p>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
 
           {computing && (
             <Progress value={campaign.progress}>

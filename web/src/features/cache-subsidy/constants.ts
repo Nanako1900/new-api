@@ -66,6 +66,7 @@ export const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   unsupported_expression: 'Unsupported pricing expression',
   model_mismatch: 'Model not in the rules',
   no_cache: 'No cache usage',
+  channel_test: 'Channel tests',
 }
 
 /** How often a campaign is polled while it is queued or calculating. */

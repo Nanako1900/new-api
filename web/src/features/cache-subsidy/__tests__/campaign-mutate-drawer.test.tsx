@@ -52,6 +52,7 @@ function campaign(status: CampaignStatus): Campaign {
     skipped_logs: 0,
     skip_reasons: {},
     progress: 0,
+    last_error: '',
     eligible_users: 0,
     total_cache_quota: 0,
     total_subsidy_quota: 0,

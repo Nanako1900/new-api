@@ -18,12 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { CacheSubsidyProvider } from '../components/cache-subsidy-provider'
+import { CampaignActionDialog } from '../components/campaign-action-dialog'
 import { CampaignDetailDialog } from '../components/campaign-detail-dialog'
 import type { Campaign } from '../types'
 
@@ -45,8 +47,9 @@ const calculating: Campaign = {
   scanned_logs: 1200,
   matched_logs: 800,
   skipped_logs: 400,
-  skip_reasons: { subscription: 300, no_cache: 100 },
+  skip_reasons: { subscription: 250, no_cache: 100, channel_test: 50 },
   progress: 40,
+  last_error: '',
   eligible_users: 0,
   total_cache_quota: 0,
   total_subsidy_quota: 0,
@@ -119,6 +122,8 @@ test('polls a calculating campaign every 5 seconds and stops once it is calculat
   const progress = await screen.findByRole('progressbar')
   expect(progress).toHaveAttribute('aria-valuenow', '40')
   expect(screen.getByText('Paid by subscription')).toBeVisible()
+  expect(screen.getByText('Channel tests')).toBeVisible()
+  expect(screen.queryByText('Last calculation error')).not.toBeInTheDocument()
   expect(get).toHaveBeenCalledTimes(1)
 
   await act(() => vi.advanceTimersByTimeAsync(5000))
@@ -134,4 +139,41 @@ test('polls a calculating campaign every 5 seconds and stops once it is calculat
   await act(() => vi.advanceTimersByTimeAsync(30_000))
 
   expect(get).toHaveBeenCalledTimes(2)
+})
+
+test('a failing calculation shows its last error and offers reset to draft to stop the retries', async () => {
+  const failing: Campaign = {
+    ...calculating,
+    status: 'queued',
+    progress: 0,
+    last_error: 'scan consume logs: context deadline exceeded',
+  }
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: { success: true, data: failing },
+  })
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+  render(
+    <QueryClientProvider client={client}>
+      <CacheSubsidyProvider>
+        <CampaignDetailDialog
+          open
+          onOpenChange={() => undefined}
+          campaign={failing}
+        />
+        <CampaignActionDialog />
+      </CacheSubsidyProvider>
+    </QueryClientProvider>
+  )
+
+  expect(await screen.findByText('Last calculation error')).toBeVisible()
+  expect(
+    screen.getByText('scan consume logs: context deadline exceeded')
+  ).toBeVisible()
+
+  await user.click(screen.getByRole('button', { name: 'Reset to draft' }))
+
+  expect(
+    await screen.findByRole('alertdialog', { name: 'Reset to draft?' })
+  ).toBeVisible()
 })

@@ -985,6 +985,7 @@ export const STATIC_I18N_KEYS = [
   'Unsupported pricing expression',
   'Model not in the rules',
   'No cache usage',
+  'Channel tests',
   'View details',
   'View grants',
   'Start calculation',
@@ -1036,5 +1037,4 @@ export const STATIC_I18N_KEYS = [
   'The campaign window must have ended at least 5 minutes ago',
   'Invalid cache subsidy campaign settings',
   "This action is not allowed in the campaign's current status",
-  'A campaign with claimed subsidies cannot be deleted',
 ] as const
