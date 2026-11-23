@@ -795,6 +795,35 @@ func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	return token
 }
 
+// ConsumeLogCursor is the last consume log a scan has read. SQL log
+// databases order by (created_at, id); ClickHouse rows carry no id, so they
+// order by (created_at, request_id).
+type ConsumeLogCursor struct {
+	CreatedAt int64
+	Id        int64
+	RequestId string
+}
+
+// ScanConsumeLogBatch returns up to limit consume logs created in
+// [start, end) after cursor, oldest first, with the columns billing audits
+// read. Other is returned as stored, without the per-viewer redaction.
+func ScanConsumeLogBatch(ctx context.Context, cursor ConsumeLogCursor, start int64, end int64, limit int) ([]*Log, error) {
+	tx := LOG_DB.WithContext(ctx).Model(&Log{}).
+		Select("id", "user_id", "username", "created_at", "type", "model_name", "quota",
+			"prompt_tokens", "completion_tokens", "token_id", "token_name", "request_id", "other").
+		Where("type = ? AND created_at >= ? AND created_at < ?", LogTypeConsume, max(start, cursor.CreatedAt), end)
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		tx = tx.Where("(created_at > ? OR request_id > ?)", cursor.CreatedAt, cursor.RequestId).
+			Order("created_at asc, request_id asc")
+	} else {
+		tx = tx.Where("(created_at > ? OR id > ?)", cursor.CreatedAt, cursor.Id).
+			Order("created_at asc, id asc")
+	}
+	var logs []*Log
+	err := tx.Limit(limit).Find(&logs).Error
+	return logs, err
+}
+
 func CountOldLog(ctx context.Context, targetTimestamp int64) (int64, error) {
 	var total int64
 	if err := LOG_DB.WithContext(ctx).Model(&Log{}).Where("created_at < ?", targetTimestamp).Count(&total).Error; err != nil {

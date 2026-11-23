@@ -256,6 +256,35 @@ export function previewCheckin(checkedInToday: boolean) {
   }
 }
 
+/** One cache subsidy campaign; `claimedAt` 0 leaves it to be claimed. */
+export function previewCacheSubsidy(claimedAt: number) {
+  const day = 86400
+  const now = Math.floor(Date.now() / 1000)
+  return [
+    {
+      campaign: {
+        id: 1,
+        name: '缓存调价补贴',
+        description: '缓存价格下调前按官方价计费的缓存读写，返还 75%。',
+        subsidy_percent: 75,
+        include_cache_writes: true,
+        window_start: Math.floor(new Date(2026, 10, 13).getTime() / 1000),
+        window_end: now - 2 * day,
+        claim_deadline: now + 28 * day,
+      },
+      grant: {
+        log_count: 1284,
+        cache_read_tokens: 18_420_000,
+        cache_write_tokens: 2_310_000,
+        cache_quota: Math.round(12.8 * QUOTA_PER_USD),
+        subsidy_quota: Math.round(9.6 * QUOTA_PER_USD),
+        status: claimedAt > 0 ? 'claimed' : 'pending',
+        claimed_at: claimedAt,
+      },
+    },
+  ]
+}
+
 export function previewTopupInfo() {
   return {
     enable_online_topup: true,

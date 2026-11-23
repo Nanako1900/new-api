@@ -27,6 +27,7 @@ const (
 	SystemTaskTypeContentSafetyLogCleanup = "content_safety_log_cleanup"
 	SystemTaskTypeChannelBalance          = "channel_balance"
 	SystemTaskTypeCleanup                 = "system_task_cleanup"
+	SystemTaskTypeCacheSubsidy            = "cache_subsidy_compute"
 
 	systemTaskCleanupBatchSize = 500
 )

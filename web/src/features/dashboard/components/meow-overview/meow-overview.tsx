@@ -38,6 +38,7 @@ import { AnnouncementsPanel } from '../overview/announcements-panel'
 import { FAQPanel } from '../overview/faq-panel'
 import { MeowAnalyticsCard } from './meow-analytics-card'
 import { MeowBalanceCard } from './meow-balance-card'
+import { MeowCacheSubsidyCard } from './meow-cache-subsidy-card'
 import { MeowCheckinCard } from './meow-checkin-card'
 import { MeowGettingStarted } from './meow-getting-started'
 import { MeowInviteCard } from './meow-invite-card'
@@ -120,8 +121,8 @@ function useUsage24h() {
 
 /**
  * MeowAPI console overview: greeting, balance, last-24-hour usage, the
- * getting-started checklist (popular models once done), daily check-in,
- * announcements and FAQ. Detailed analytics and live logs have a dedicated
+ * getting-started checklist (popular models once done), cache subsidies to
+ * claim, daily check-in, announcements and FAQ. Detailed analytics and live logs have a dedicated
  * dashboard; this page only loads aggregate usage.
  */
 export function MeowOverview() {
@@ -133,6 +134,7 @@ export function MeowOverview() {
   const { usage, isLoading } = useUsage24h()
 
   const checkinEnabled = status?.checkin_enabled === true
+  const cacheSubsidyEnabled = status?.cache_subsidy_enabled === true
   const hasAnnouncements = announcements.items.length > 0
   const hasFaq = faq.items.length > 0
 
@@ -167,6 +169,7 @@ export function MeowOverview() {
               <MeowGettingStarted />
             </div>
             <div className='flex min-w-0 flex-col gap-4 lg:col-span-4'>
+              {cacheSubsidyEnabled && <MeowCacheSubsidyCard />}
               {checkinEnabled && <MeowCheckinCard />}
               <MeowInviteCard />
             </div>

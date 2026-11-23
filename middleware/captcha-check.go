@@ -60,6 +60,8 @@ const (
 	CaptchaScopeLogin   CaptchaScope = "login"
 	CaptchaScopeEmail   CaptchaScope = "email"
 	CaptchaScopeCheckin CaptchaScope = "checkin"
+	// CaptchaScopeCacheSubsidy guards claiming a cache subsidy.
+	CaptchaScopeCacheSubsidy CaptchaScope = "cache_subsidy"
 )
 
 // RequireCaptcha decides whether the request may proceed and writes the
@@ -93,13 +95,14 @@ func RequireCaptcha(c *gin.Context, scope CaptchaScope, subject string) bool {
 }
 
 // CaptchaGate runs RequireCaptcha for routes whose subject is known before
-// the handler: none for email requests, the signed-in user for check-in.
+// the handler: none for email requests, the signed-in user for check-in and
+// cache subsidy claims.
 // Password login calls RequireCaptcha itself because its subject is the
 // submitted username.
 func CaptchaGate(scope CaptchaScope) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		subject := ""
-		if scope == CaptchaScopeCheckin {
+		if scope == CaptchaScopeCheckin || scope == CaptchaScopeCacheSubsidy {
 			subject = strconv.Itoa(c.GetInt("id"))
 		}
 		if !RequireCaptcha(c, scope, subject) {

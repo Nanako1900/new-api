@@ -79,6 +79,12 @@ var captchaRiskPolicies = map[CaptchaScope][]captchaRiskSignal{
 		{kind: "site", keyBy: captchaRiskPerSite, limit: 60, window: 10 * time.Minute, hold: 30 * time.Minute},
 		{kind: "ip-users", keyBy: captchaRiskPerIP, distinct: true, excludeSubject: true, limit: 1, window: 24 * time.Hour},
 	},
+	// Recorded for each successful cache subsidy claim. A claim pays only
+	// what the account itself spent, so many accounts behind one network are
+	// not a signal; a burst across the site is.
+	CaptchaScopeCacheSubsidy: {
+		{kind: "site", keyBy: captchaRiskPerSite, limit: 120, window: 10 * time.Minute, hold: 30 * time.Minute},
+	},
 }
 
 func (signal captchaRiskSignal) key(scope CaptchaScope, network, subject string) string {
