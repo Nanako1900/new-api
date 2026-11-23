@@ -24,6 +24,8 @@ import { CopyButton } from '@/components/copy-button'
 import { EmptyState } from '@/components/empty-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { providerOf } from '@/features/home/lib/provider-models'
+import { ClaudeOfficialStatus } from '@/features/performance-metrics/claude-official-status'
 import { toIntlLocale } from '@/i18n/languages'
 import { getCurrencyLabel } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
@@ -55,6 +57,9 @@ export function MeowChannelModels(props: {
       model.model_name.toLowerCase().includes(query)
     )
   }, [props.channel.models, search])
+  const hasClaude = props.channel.models.some(
+    (model) => providerOf(model.model_name, model.vendor_name) === 'claude'
+  )
   const modelNames = useMemo(
     () => models.map((model) => model.model_name),
     [models]
@@ -90,6 +95,7 @@ export function MeowChannelModels(props: {
             })}
           </p>
         </div>
+        {hasClaude && <ClaudeOfficialStatus />}
         <div className='flex flex-wrap items-center justify-between gap-3'>
           <p className='text-muted-foreground text-sm' role='status'>
             {t('Showing {{visible}} of {{total}} models', {
@@ -138,7 +144,7 @@ export function MeowChannelModels(props: {
       )}
       <p className='text-muted-foreground border-t px-4 py-3 text-xs sm:px-5'>
         {t(
-          'Prices include the selected channel multiplier. Select this group when creating an API key. Status covers the last 24 hours.'
+          'Prices include the selected channel multiplier. Select this group when creating an API key. The table shows channel performance over the last 24 hours.'
         )}
       </p>
     </section>
