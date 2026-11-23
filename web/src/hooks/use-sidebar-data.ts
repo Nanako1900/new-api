@@ -21,6 +21,7 @@ import {
   Box,
   ClipboardList,
   CreditCard,
+  DatabaseZap,
   FileText,
   FlaskConical,
   Key,
@@ -171,6 +172,11 @@ export function useSidebarData(badges: SidebarBadges = {}): SidebarData {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
+          },
+          {
+            title: t('Cache Subsidies'),
+            url: '/cache-subsidies',
+            icon: DatabaseZap,
           },
           {
             title: t('System Info'),

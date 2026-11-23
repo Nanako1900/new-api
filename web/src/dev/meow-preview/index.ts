@@ -38,6 +38,7 @@ import { api } from '@/lib/http-client'
 
 import {
   PREVIEW_MODELS,
+  previewCacheSubsidy,
   previewCheckin,
   previewKeys,
   previewLogs,
@@ -77,6 +78,7 @@ export function isMeowPreviewEnabled(): boolean {
 }
 
 let checkedInToday = false
+let cacheSubsidyClaimedAt = 0
 const keyEdits = new Map<number, Record<string, unknown>>()
 
 function ok(data: unknown, message = '') {
@@ -100,6 +102,10 @@ function mockResponse(
     if (path === '/api/user/checkin') {
       checkedInToday = true
       return ok({ quota_awarded: 100_000 })
+    }
+    if (path === '/api/user/cache_subsidy/claim') {
+      cacheSubsidyClaimedAt = Math.floor(Date.now() / 1000)
+      return ok({ quota: previewCacheSubsidy(0)[0].grant.subsidy_quota })
     }
     if (method === 'put' && path === '/api/token/') {
       const edit = (typeof body === 'string' ? JSON.parse(body) : body) as {
@@ -147,6 +153,9 @@ function mockResponse(
   if (path.startsWith('/api/user/checkin')) {
     return ok(previewCheckin(checkedInToday))
   }
+  if (path === '/api/user/cache_subsidy') {
+    return ok(previewCacheSubsidy(cacheSubsidyClaimedAt))
+  }
   if (path === '/api/user/topup/info') return ok(previewTopupInfo())
   if (path === '/api/rankings') return ok(previewRankings())
   if (path === '/api/user/aff') return ok('MEOW8312')
@@ -190,10 +199,14 @@ function installAdapter() {
     ) {
       config.headers.delete('Authorization')
       const response = await realAdapter(config)
-      // Show the check-in card even when the live site has check-in off.
+      // Show the check-in and cache subsidy cards even when the live site has
+      // them off.
       if (path === '/api/status') {
         patchJson(response, (body) => {
-          if (body.data) body.data.checkin_enabled = true
+          if (body.data) {
+            body.data.checkin_enabled = true
+            body.data.cache_subsidy_enabled = true
+          }
         })
       }
       // Give the sample models a health row next to the live ones.
