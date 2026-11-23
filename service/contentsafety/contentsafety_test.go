@@ -237,6 +237,50 @@ func TestParseVerdictsNormalizesCategoriesAndTruncatesReasons(t *testing.T) {
 	assert.Empty(t, verdicts[2].Category, "a safe verdict names no category")
 }
 
+// Qwen3Guard-Gen replies "Safety: ..." and "Categories: ..." lines. Its
+// categories land on the policy list; those the policy does not cover are
+// "other" and never more than controversial.
+func TestParseQwen3GuardVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reply string
+		want  contentsafety.Verdict
+	}{
+		{name: "safe", reply: "Safety: Safe\nCategories: None", want: contentsafety.Verdict{Level: "safe"}},
+		{name: "safe without a categories line", reply: "Safety: Safe", want: contentsafety.Verdict{Level: "safe"}},
+		{name: "safe drops a named category", reply: "Safety: Safe\nCategories: Violent", want: contentsafety.Verdict{Level: "safe"}},
+		{name: "violent", reply: "Safety: Unsafe\nCategories: Violent", want: contentsafety.Verdict{Level: "unsafe", Category: "weapons", Reason: "Violent"}},
+		{name: "non-violent illegal acts", reply: "Safety: Unsafe\nCategories: Non-violent Illegal Acts", want: contentsafety.Verdict{Level: "unsafe", Category: "other", Reason: "Non-violent Illegal Acts"}},
+		{name: "sexual content", reply: "Safety: Unsafe\nCategories: Sexual Content or Sexual Acts", want: contentsafety.Verdict{Level: "unsafe", Category: "sexual", Reason: "Sexual Content or Sexual Acts"}},
+		{name: "self-harm", reply: "Safety: Controversial\nCategories: Suicide & Self-Harm", want: contentsafety.Verdict{Level: "controversial", Category: "self_harm", Reason: "Suicide & Self-Harm"}},
+		{name: "PII is capped", reply: "Safety: Unsafe\nCategories: PII", want: contentsafety.Verdict{Level: "controversial", Category: "other", Reason: "PII"}},
+		{name: "unethical acts are capped", reply: "Safety: Unsafe\nCategories: Unethical Acts", want: contentsafety.Verdict{Level: "controversial", Category: "other", Reason: "Unethical Acts"}},
+		{name: "politically sensitive topics are capped", reply: "Safety: Unsafe\nCategories: Politically Sensitive Topics", want: contentsafety.Verdict{Level: "controversial", Category: "other", Reason: "Politically Sensitive Topics"}},
+		{name: "copyright violation is capped", reply: "Safety: Unsafe\nCategories: Copyright Violation", want: contentsafety.Verdict{Level: "controversial", Category: "other", Reason: "Copyright Violation"}},
+		{name: "jailbreak is capped", reply: "Safety: Unsafe\nCategories: Jailbreak", want: contentsafety.Verdict{Level: "controversial", Category: "other", Reason: "Jailbreak"}},
+		{name: "an out-of-policy controversial stays controversial", reply: "Safety: Controversial\nCategories: Jailbreak", want: contentsafety.Verdict{Level: "controversial", Category: "other", Reason: "Jailbreak"}},
+		{name: "the first category in the policy decides", reply: "Safety: Unsafe\nCategories: Unethical Acts, Suicide & Self-Harm, Violent", want: contentsafety.Verdict{Level: "unsafe", Category: "self_harm", Reason: "Unethical Acts, Suicide & Self-Harm, Violent"}},
+		{name: "an unknown category keeps the level", reply: "Safety: Unsafe\nCategories: Jailbreak, Bioweapons", want: contentsafety.Verdict{Level: "unsafe", Category: "other", Reason: "Jailbreak, Bioweapons"}},
+		{name: "unsafe without categories keeps the level", reply: "Safety: Unsafe\nCategories: None", want: contentsafety.Verdict{Level: "unsafe", Category: "other"}},
+		{name: "a refusal line, spaces and a trailing period", reply: "  Safety: Unsafe \r\n Categories: Violent. \nRefusal: No\n", want: contentsafety.Verdict{Level: "unsafe", Category: "weapons", Reason: "Violent"}},
+		{name: "no safety line", reply: "Categories: Violent"},
+		{name: "unknown level", reply: "Safety: Maybe\nCategories: None"},
+		{name: "two safety lines", reply: "Safety: Safe\nSafety: Unsafe\nCategories: Violent"},
+		{name: "prose", reply: "The text is safe."},
+		{name: "empty", reply: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict, err := contentsafety.ParseQwen3GuardVerdict(tc.reply)
+			if tc.want.Level == "" {
+				assert.ErrorIs(t, err, contentsafety.ErrUnparseable)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, verdict)
+		})
+	}
+}
+
 func TestVerdictCacheKeyAndTTLSetting(t *testing.T) {
 	text := saltedUnit("a knife on the table")
 	key := contentsafety.CacheKey("judge", "prompt", text, "")

@@ -159,6 +159,13 @@ func TestBuildRequestPolicyValidatesContentSafety(t *testing.T) {
 		{name: "known zero-tolerance categories", options: map[string]string{p + "risk_zero_tolerance_categories": "sexual_minors\n terrorism \n"}},
 		{name: "unknown zero-tolerance category", options: map[string]string{p + "risk_zero_tolerance_categories": "sexual_minors\nspam"}, wantErr: "unknown category: spam"},
 		{name: "non-boolean notice switch", options: map[string]string{p + "risk_notify_enabled": "on"}, wantErr: "risk_notify_enabled"},
+		{name: "the qwen3guard engine", options: with(p+"review_engine", "qwen3guard")},
+		{name: "unknown engine", options: with(p+"review_engine", "llama_guard"), wantErr: "review_engine"},
+		{name: "blank engine", options: map[string]string{p + "review_engine": ""}, wantErr: "review_engine"},
+		{name: "escalation with a group", options: map[string]string{p + "review_mode": "enforce", p + "review_model": "judge", p + "review_group": "default", p + "escalate_model": "judge-2", p + "escalate_group": "default"}},
+		{name: "escalation without a group", options: with(p+"escalate_model", "judge-2"), wantErr: "escalate_group"},
+		{name: "escalation without a group while review is off", options: map[string]string{p + "escalate_model": "judge-2", p + "escalate_group": " "}, wantErr: "escalate_group"},
+		{name: "an escalation group without a model is unused", options: with(p+"escalate_group", "default")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := BuildRequestPolicy(tc.options)
@@ -196,6 +203,14 @@ func TestUpdateRequestPolicyOptionsRejectsMissingReviewGroup(t *testing.T) {
 	})
 	assert.ErrorContains(t, err, "does not exist")
 	assert.Same(t, snapshot, CurrentRequestPolicy())
+
+	escalation := map[string]string{
+		p + "review_mode": "enforce", p + "review_model": "judge", p + "review_group": "default",
+		p + "escalate_model": "judge-2", p + "escalate_group": "no-such-group",
+	}
+	assert.ErrorContains(t, UpdateRequestPolicyOptions(escalation), `escalation group "no-such-group" does not exist`)
+	assert.ErrorContains(t, UpdateOptionsBulk(escalation), `escalation group "no-such-group" does not exist`)
+	assert.Same(t, snapshot, CurrentRequestPolicy())
 }
 
 func TestContentSafetySettingBounded(t *testing.T) {
@@ -206,6 +221,7 @@ func TestContentSafetySettingBounded(t *testing.T) {
 		PassLogPercent: 101, SyncNewUserDays: -1, CacheTTLSeconds: -5, LogRetentionDays: 0,
 		RiskHalfLifeHours: 0, RiskPointsUnsafe: 5000, RiskPointsControversial: -1, RiskWatchThreshold: 0,
 		RiskRestrictThreshold: 200000, RiskBlockThreshold: 0, RiskRestrictRPM: 0,
+		ReviewEngine: "llama_guard", EscalateModel: " judge-2 ", EscalateGroup: " vip ",
 	}
 	bounded := setting.Bounded()
 	assert.Equal(t, operation_setting.ContentSafetySetting{
@@ -215,6 +231,7 @@ func TestContentSafetySettingBounded(t *testing.T) {
 		PassLogPercent: 100, SyncNewUserDays: 0, CacheTTLSeconds: 0, LogRetentionDays: 1,
 		RiskHalfLifeHours: 1, RiskPointsUnsafe: 1000, RiskPointsControversial: 0, RiskWatchThreshold: 1,
 		RiskRestrictThreshold: 100000, RiskBlockThreshold: 1, RiskRestrictRPM: 1,
+		ReviewEngine: "llm_json", EscalateModel: "judge-2", EscalateGroup: "vip",
 	}, bounded)
 	assert.Equal(t, -1, setting.ReviewTimeoutSeconds)
 }

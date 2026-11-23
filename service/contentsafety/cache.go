@@ -26,10 +26,12 @@ const (
 )
 
 // CachedVerdict is a stored review conclusion for one unit text.
+// EscalatedModel names the escalation model when it gave the verdict.
 type CachedVerdict struct {
-	Level    string `json:"level"`
-	Category string `json:"category"`
-	Reason   string `json:"reason"`
+	Level          string `json:"level"`
+	Category       string `json:"category"`
+	Reason         string `json:"reason"`
+	EscalatedModel string `json:"escalated_model,omitempty"`
 }
 
 var (

@@ -3,7 +3,6 @@ package relay
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -62,15 +61,17 @@ type cachedUnit struct {
 
 // unitReview is the reviewer's answer for one unit. A non-empty failure is
 // the content_safety_logs failure reason of a review that did not conclude.
-// A refusal by the review channel concludes as controversial.
+// A refusal by the review channel concludes as controversial. escalatedModel
+// is set when the escalation model gave the verdict.
 type unitReview struct {
-	unit      contentsafety.Unit
-	verdict   contentsafety.Verdict
-	refused   bool
-	channelId int
-	tokens    int
-	latencyMs int
-	failure   string
+	unit           contentsafety.Unit
+	verdict        contentsafety.Verdict
+	refused        bool
+	channelId      int
+	tokens         int
+	latencyMs      int
+	failure        string
+	escalatedModel string
 }
 
 // refusedReason is the verdict reason of a unit the review channel refused.
@@ -156,9 +157,14 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 }
 
 // reviewEngineKey names the reviewer in verdict cache keys, so a verdict of
-// one model never decides for another.
+// one engine or model never decides for another. With escalation on it also
+// names the escalation model, whose verdicts are cached under the same keys.
 func reviewEngineKey(cfg operation_setting.ContentSafetySetting) string {
-	return "llm_json\x00" + cfg.ReviewModel
+	key := cfg.ReviewEngine + "\x00" + cfg.ReviewModel
+	if cfg.EscalateModel != "" {
+		key += "\x00" + cfg.EscalateModel
+	}
+	return key
 }
 
 // needsSyncReview reports whether an enforced review holds the request until
@@ -205,6 +211,7 @@ func rejectCachedOrOversized(c *gin.Context, info *relaycommon.RelayInfo, plan *
 		entry := contentSafetyLogEntry(c, info)
 		entry.Decision, entry.Mode, entry.CacheHit = model.ContentSafetyDecisionReviewRejected, model.ContentSafetyModeSync, true
 		entry.ReviewModel, entry.AiCategory, entry.AiReason, entry.UnitCount = cfg.ReviewModel, hit.verdict.Category, hit.verdict.Reason, 1
+		entry.EscalatedModel = hit.verdict.EscalatedModel
 		recordScoredReview(entry, []string{hit.verdict.Category}, []string{unitSnippet(hit.unit)}, cfg, cachedRiskVerdicts(plan.flagged))
 		return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
 	}
@@ -542,22 +549,31 @@ func reviewInBackground(entry model.ContentSafetyLog, plan *contentReviewPlan) {
 	recordScoredReview(entry, categories, snippets, cfg, verdicts)
 }
 
-// reviewUnit tries up to two channels that serve the review model, and stops
-// as soon as ctx ends because nobody waits for the answer any more. A channel
-// refusing the text on content grounds (see contentsafety.IsReviewRefusal)
-// concludes as controversial unless another channel judges the text; any
-// other channel error is a failure. The latency covers every attempt.
-func reviewUnit(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) (review unitReview) {
+// reviewUnit reviews unit on the review channels and, when an escalation
+// model is set, escalates a controversial or refused verdict within the same
+// ctx. The latency covers every attempt, the escalation included.
+func reviewUnit(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
 	started := time.Now()
-	defer func() { review.latencyMs = int(time.Since(started).Milliseconds()) }()
-	system, user, err := contentsafety.ReviewMessages(prompt, []contentsafety.Unit{unit}, rand.Text())
+	review := reviewUnitOnChannels(ctx, requestId, cfg, prompt, unit)
+	if cfg.EscalateModel != "" && review.failure == "" && (review.refused || review.verdict.Level == contentsafety.LevelControversial) {
+		review = escalateReview(ctx, requestId, cfg, prompt, review)
+	}
+	review.latencyMs = int(time.Since(started).Milliseconds())
+	return review
+}
+
+// reviewUnitOnChannels asks cfg's review engine and model about unit on up
+// to two channels that serve the model, and stops as soon as ctx ends
+// because nobody waits for the answer any more. A channel refusing the text
+// on content grounds (see contentsafety.IsReviewRefusal) concludes as
+// controversial unless another channel judges the text; any other channel
+// error is a failure.
+func reviewUnitOnChannels(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
+	messages, maxTokens, err := reviewRequestMessages(cfg.ReviewEngine, prompt, unit)
 	if err != nil {
 		return unitReview{unit: unit, failure: model.ContentSafetyFailureUpstreamError}
 	}
-	// Reasoning models spend part of max_tokens on hidden reasoning before the
-	// JSON reply, so the budget leaves room well beyond the reply itself.
-	const maxTokens = uint(1024)
-	review = unitReview{unit: unit, failure: model.ContentSafetyFailureNoChannel}
+	review := unitReview{unit: unit, failure: model.ContentSafetyFailureNoChannel}
 	for retry := range 2 {
 		if ctx.Err() != nil {
 			return review
@@ -566,7 +582,7 @@ func reviewUnit(ctx context.Context, requestId string, cfg operation_setting.Con
 		if err != nil || channel == nil {
 			return review
 		}
-		reply, tokens, err := askContentReviewer(ctx, requestId, channel, cfg.ReviewModel, system, user, maxTokens)
+		reply, tokens, err := askContentReviewer(ctx, requestId, channel, cfg.ReviewModel, messages, maxTokens)
 		if err != nil {
 			common.SysError(common.LogText("content safety review via channel %d failed (request_id=%s): %s", channel.Id, requestId, err.Error()))
 			var apiErr *types.NewAPIError
@@ -580,11 +596,11 @@ func reviewUnit(ctx context.Context, requestId string, cfg operation_setting.Con
 			}
 			continue
 		}
-		verdicts, err := contentsafety.ParseVerdicts(reply, 1)
+		verdict, err := parseReviewReply(cfg.ReviewEngine, reply)
 		if err != nil {
 			return unitReview{unit: unit, channelId: channel.Id, tokens: tokens, failure: model.ContentSafetyFailureUnparseable}
 		}
-		return unitReview{unit: unit, verdict: verdicts[0], channelId: channel.Id, tokens: tokens}
+		return unitReview{unit: unit, verdict: verdict, channelId: channel.Id, tokens: tokens}
 	}
 	return review
 }
@@ -598,7 +614,8 @@ func storeVerdicts(reviews []unitReview, ttlSeconds int) {
 		if review.failure != "" {
 			continue
 		}
-		contentsafety.StoreVerdict(review.unit.Key, contentsafety.CachedVerdict{Level: review.verdict.Level, Category: review.verdict.Category, Reason: review.verdict.Reason}, ttlSeconds)
+		contentsafety.StoreVerdict(review.unit.Key, contentsafety.CachedVerdict{Level: review.verdict.Level, Category: review.verdict.Category, Reason: review.verdict.Reason,
+			EscalatedModel: review.escalatedModel}, ttlSeconds)
 	}
 }
 
@@ -638,8 +655,10 @@ func summarizeReviews(entry model.ContentSafetyLog, reviews []unitReview) (model
 		entry.Decision = model.ContentSafetyDecisionReviewControversial
 	default:
 		entry.Decision = model.ContentSafetyDecisionReviewPassed
+		entry.EscalatedModel = escalatedModelOf(reviews)
 		return entry, nil, nil
 	}
+	entry.EscalatedModel = escalatedModelOf(decisive)
 	var categories, snippets []string
 	for _, review := range decisive[:min(len(decisive), maxLoggedSnippets)] {
 		snippets = append(snippets, unitSnippet(review.unit))
@@ -683,11 +702,11 @@ func sampledPassWeight(percent, roll int) int {
 	return 100 / percent
 }
 
-// askContentReviewer sends one non-stream chat completion to channel through
-// its adaptor, the way a channel test does, and returns the assistant reply.
-// The upstream request ends with ctx. It never touches the requesting user's
-// billing.
-func askContentReviewer(ctx context.Context, requestId string, channel *model.Channel, modelName, system, user string, maxTokens uint) (string, int, error) {
+// askContentReviewer sends messages as one non-stream chat completion to
+// channel through its adaptor, the way a channel test does, and returns the
+// assistant reply. The upstream request ends with ctx. It never touches the
+// requesting user's billing.
+func askContentReviewer(ctx context.Context, requestId string, channel *model.Channel, modelName string, messages []dto.Message, maxTokens uint) (string, int, error) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", nil)
@@ -698,8 +717,7 @@ func askContentReviewer(ctx context.Context, requestId string, channel *model.Ch
 		return "", 0, apiErr
 	}
 	stream, temperature := false, 0.0
-	request := &dto.GeneralOpenAIRequest{Model: modelName, Stream: &stream, Temperature: &temperature, MaxTokens: &maxTokens,
-		Messages: []dto.Message{{Role: "system", Content: system}, {Role: "user", Content: user}}}
+	request := &dto.GeneralOpenAIRequest{Model: modelName, Stream: &stream, Temperature: &temperature, MaxTokens: &maxTokens, Messages: messages}
 	info, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, request, nil)
 	if err != nil {
 		return "", 0, err

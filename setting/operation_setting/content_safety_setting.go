@@ -18,6 +18,14 @@ const (
 	ContentReviewModeEnforce = "enforce"
 )
 
+// Content review engines. llm_json asks a general chat model with the review
+// prompt and a JSON reply contract; qwen3guard sends the text alone to a
+// Qwen3Guard-Gen model and reads its "Safety:" and "Categories:" reply lines.
+const (
+	ContentReviewEngineLLMJSON    = "llm_json"
+	ContentReviewEngineQwen3Guard = "qwen3guard"
+)
+
 // ContentSafetySetting configures the AI review of request content. The
 // zero-tolerance block-word tier keeps using setting.SensitiveWords behind
 // the CheckSensitiveEnabled and CheckSensitiveOnPromptEnabled switches.
@@ -41,6 +49,12 @@ type ContentSafetySetting struct {
 	SyncGroups               string `json:"sync_groups"`
 	CacheTTLSeconds          int    `json:"cache_ttl_seconds"`
 	LogRetentionDays         int    `json:"log_retention_days"`
+	// ReviewEngine reads ReviewModel's replies. EscalateModel, when set, is
+	// asked again with llm_json through EscalateGroup about every unit the
+	// first reviewer found controversial or refused, and its verdict wins.
+	ReviewEngine  string `json:"review_engine"`
+	EscalateModel string `json:"escalate_model"`
+	EscalateGroup string `json:"escalate_group"`
 
 	// Per-account risk score. Verdicts add points that halve every
 	// RiskHalfLifeHours; the levels act only when ReviewMode is enforce.
@@ -87,6 +101,7 @@ var contentSafetySetting = ContentSafetySetting{
 	SyncNewUserDays:          3,
 	CacheTTLSeconds:          86400,
 	LogRetentionDays:         30,
+	ReviewEngine:             ContentReviewEngineLLMJSON,
 
 	RiskHalfLifeHours:           168,
 	RiskPointsUnsafe:            40,
@@ -131,7 +146,7 @@ var contentSafetyIntOptions = []contentSafetyIntOption{
 
 var contentSafetyBoolFields = []string{"review_tool_results", "sync_all", "risk_notify_enabled"}
 
-var contentSafetyStringFields = []string{"review_mode", "review_model", "review_group", "review_prompt", "sync_groups", "risk_zero_tolerance_categories"}
+var contentSafetyStringFields = []string{"review_mode", "review_model", "review_group", "review_prompt", "sync_groups", "review_engine", "escalate_model", "escalate_group", "risk_zero_tolerance_categories"}
 
 func init() {
 	config.GlobalConfig.Register("content_safety_setting", &contentSafetySetting)
@@ -170,7 +185,8 @@ func (s *ContentSafetySetting) RiskZeroToleranceList() []string {
 }
 
 // Bounded returns a copy with every integer clamped to its range, an unknown
-// mode turned off and the model and group names trimmed. Values loaded from
+// mode turned off, an unknown engine read as llm_json and the model and group
+// names trimmed. Values loaded from
 // the database bypass validation (manual edits, older nodes), so consumers
 // read this copy.
 func (s *ContentSafetySetting) Bounded() ContentSafetySetting {
@@ -184,6 +200,11 @@ func (s *ContentSafetySetting) Bounded() ContentSafetySetting {
 	}
 	bounded.ReviewModel = strings.TrimSpace(bounded.ReviewModel)
 	bounded.ReviewGroup = strings.TrimSpace(bounded.ReviewGroup)
+	if bounded.ReviewEngine != ContentReviewEngineQwen3Guard {
+		bounded.ReviewEngine = ContentReviewEngineLLMJSON
+	}
+	bounded.EscalateModel = strings.TrimSpace(bounded.EscalateModel)
+	bounded.EscalateGroup = strings.TrimSpace(bounded.EscalateGroup)
 	return bounded
 }
 
@@ -224,6 +245,14 @@ func ValidateContentSafetyOptions(raw map[string]string) error {
 		if !slices.Contains(ContentSafetyCategories, category) {
 			return fmt.Errorf("%srisk_zero_tolerance_categories has an unknown category: %s", ContentSafetyOptionPrefix, category)
 		}
+	}
+	switch raw[ContentSafetyOptionPrefix+"review_engine"] {
+	case ContentReviewEngineLLMJSON, ContentReviewEngineQwen3Guard:
+	default:
+		return fmt.Errorf("%sreview_engine must be llm_json or qwen3guard", ContentSafetyOptionPrefix)
+	}
+	if strings.TrimSpace(raw[ContentSafetyOptionPrefix+"escalate_model"]) != "" && strings.TrimSpace(raw[ContentSafetyOptionPrefix+"escalate_group"]) == "" {
+		return fmt.Errorf("escalation requires %sescalate_group", ContentSafetyOptionPrefix)
 	}
 	switch mode := raw[ContentSafetyOptionPrefix+"review_mode"]; mode {
 	case ContentReviewModeOff:
