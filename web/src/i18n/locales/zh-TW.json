@@ -8617,6 +8617,20 @@
     "{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.": "{{username}} 的請求將不再在送往上游前先審核，也不會被限流或封鎖。其請求仍會在背景審核並記錄。",
     "Invalid content risk profile query": "帳號風險查詢參數無效",
     "Score reached the block threshold": "分數達到封鎖門檻",
-    "Zero-tolerance category: {{category}}": "零容忍類別：{{category}}"
+    "Zero-tolerance category: {{category}}": "零容忍類別：{{category}}",
+    "Review engine": "審核引擎",
+    "Chat model (JSON verdict)": "對話模型（JSON 結論）",
+    "Qwen3Guard classifier": "Qwen3Guard 分類器",
+    "A general chat model judges the text with the review prompt and answers in JSON.": "由通用對話模型依審核提示詞判斷文字，並以 JSON 回答。",
+    "A Qwen3Guard safety classifier served through an OpenAI-compatible channel.": "由透過 OpenAI 相容渠道提供的 Qwen3Guard 安全分類器判斷。",
+    "Not used by the Qwen3Guard classifier.": "Qwen3Guard 分類器不使用此項。",
+    "Escalation": "升級複審",
+    "A controversial verdict, or a review the channel refused, is reviewed again by the escalation model with the review prompt, and its verdict replaces the first one. Leave the model empty to turn escalation off.": "結論為有爭議，或審核渠道拒絕了審核時，由升級模型依審核提示詞再審一次，並以其結論為準。模型留空即關閉升級複審。",
+    "Escalation model": "升級模型",
+    "A general chat model, served by a channel in the escalation group.": "通用對話模型，須由升級分組中的渠道提供。",
+    "Escalation group": "升級分組",
+    "Channels in this group serve the escalation requests.": "由該分組中的渠道處理升級複審請求。",
+    "Select an escalation group": "請選擇升級分組",
+    "Escalated to": "升級至"
   }
 }

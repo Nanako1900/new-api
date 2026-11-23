@@ -44,6 +44,7 @@ const rejected: ContentSafetyLog = {
   ai_reason: 'Describes hurting a person',
   review_channel_id: 12,
   review_model: 'judge-model',
+  escalated_model: '',
   latency_ms: 1350,
   review_tokens: 210,
   cache_hit: true,
@@ -207,6 +208,21 @@ it('translates the reason the gateway stores for a refused text', async () => {
 it('shows a reason the reviewer wrote as stored, even when it matches a translation key', async () => {
   const dialog = await openDetailsInChinese(rejected)
   expect(within(dialog).getByText('Describes hurting a person')).toBeVisible()
+})
+
+it('an escalated review names the model that gave the final verdict', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    decision: 'review_flagged',
+    escalated_model: 'senior-judge',
+  })
+  expect(within(dialog).getByText('Escalated to')).toBeVisible()
+  expect(within(dialog).getByText('senior-judge')).toBeVisible()
+})
+
+it('a review without escalation has no escalation row', async () => {
+  const dialog = await openDetails(rejected)
+  expect(within(dialog).queryByText('Escalated to')).not.toBeInTheDocument()
 })
 
 it('a keyword block labels its matches as hit words, not categories', async () => {

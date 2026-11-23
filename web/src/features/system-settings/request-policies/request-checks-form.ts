@@ -32,6 +32,13 @@ export const REVIEW_GUARD_OPTION_KEYS = [
   `${CONTENT_SAFETY_OPTION_PREFIX}review_group`,
 ] as const
 
+// The backend checks the escalation group only when a write contains one of
+// these keys, so a change to either sends both.
+export const ESCALATION_GUARD_OPTION_KEYS = [
+  `${CONTENT_SAFETY_OPTION_PREFIX}escalate_model`,
+  `${CONTENT_SAFETY_OPTION_PREFIX}escalate_group`,
+] as const
+
 // Inclusive bounds checked by the backend request policy validation.
 export const CONTENT_SAFETY_INT_LIMITS = {
   review_timeout_seconds: { min: 1, max: 60 },
@@ -94,6 +101,9 @@ export function createRequestChecksSchema(
         review_model: z.string(),
         review_group: z.string(),
         review_prompt: z.string(),
+        review_engine: z.enum(['llm_json', 'qwen3guard']),
+        escalate_model: z.string(),
+        escalate_group: z.string(),
         review_tool_results: z.boolean(),
         review_timeout_seconds: integerWithin('review_timeout_seconds'),
         review_max_concurrency: integerWithin('review_max_concurrency'),
@@ -113,6 +123,14 @@ export function createRequestChecksSchema(
         log_retention_days: integerWithin('log_retention_days'),
       })
       .superRefine((value, context) => {
+        // The backend refuses an escalation model without its group.
+        if (value.escalate_model.trim() && !value.escalate_group.trim()) {
+          context.addIssue({
+            code: 'custom',
+            path: ['escalate_group'],
+            message: t('Select an escalation group'),
+          })
+        }
         // The backend refuses to enable AI review without these values.
         if (value.review_mode === 'off') return
         if (!value.review_model.trim()) {
@@ -149,6 +167,9 @@ export function requestChecksFormValues(
       review_model: settings['content_safety_setting.review_model'],
       review_group: settings['content_safety_setting.review_group'],
       review_prompt: settings['content_safety_setting.review_prompt'],
+      review_engine: settings['content_safety_setting.review_engine'],
+      escalate_model: settings['content_safety_setting.escalate_model'],
+      escalate_group: settings['content_safety_setting.escalate_group'],
       review_tool_results:
         settings['content_safety_setting.review_tool_results'],
       review_timeout_seconds:
@@ -181,6 +202,8 @@ export function requestChecksOptions(
     ...values.content_safety_setting,
     review_model: values.content_safety_setting.review_model.trim(),
     review_group: values.content_safety_setting.review_group.trim(),
+    escalate_model: values.content_safety_setting.escalate_model.trim(),
+    escalate_group: values.content_safety_setting.escalate_group.trim(),
   }
   return {
     CheckSensitiveEnabled: String(values.CheckSensitiveEnabled),

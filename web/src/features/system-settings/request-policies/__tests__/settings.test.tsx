@@ -590,6 +590,91 @@ describe('request policy settings', () => {
     )
   })
 
+  it('choosing the Qwen3Guard engine disables the review prompt and says the classifier does not use it', async () => {
+    settings['content_safety_setting.review_mode'] = 'shadow'
+    settings['content_safety_setting.review_model'] = 'judge-model'
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const prompt = await screen.findByRole('textbox', { name: 'Review prompt' })
+    expect(prompt).toBeEnabled()
+    await userEvent.click(
+      screen.getByRole('combobox', { name: 'Review engine' })
+    )
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'Qwen3Guard classifier' })
+    )
+    expect(prompt).toBeDisabled()
+    expect(prompt).toHaveAccessibleDescription(
+      'Not used by the Qwen3Guard classifier.'
+    )
+  })
+
+  it('choosing the Qwen3Guard engine writes the engine with the review mode and group', async () => {
+    settings['content_safety_setting.review_mode'] = 'shadow'
+    settings['content_safety_setting.review_model'] = 'judge-model'
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await userEvent.click(
+      await screen.findByRole('combobox', { name: 'Review engine' })
+    )
+    await userEvent.click(
+      await screen.findByRole('option', { name: 'Qwen3Guard classifier' })
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            'content_safety_setting.review_mode': 'shadow',
+            'content_safety_setting.review_group': 'default',
+            'content_safety_setting.review_engine': 'qwen3guard',
+          },
+        }
+      )
+    )
+  })
+
+  it('an escalation model without an escalation group shows the field error and does not write options', async () => {
+    settings['content_safety_setting.review_mode'] = 'shadow'
+    settings['content_safety_setting.review_model'] = 'judge-model'
+    await renderPolicies('/system-settings/request-policies/filtering')
+    fireEvent.change(
+      await screen.findByRole('combobox', { name: 'Escalation model' }),
+      { target: { value: 'backup-judge' } }
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    const group = screen.getByRole('combobox', { name: 'Escalation group' })
+    await waitFor(() => expect(group).toHaveAttribute('aria-invalid', 'true'))
+    expect(group).toHaveAccessibleDescription(
+      expect.stringContaining('Select an escalation group')
+    )
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
+  it('changing only the escalation model also sends the unchanged escalation group', async () => {
+    settings['content_safety_setting.review_mode'] = 'shadow'
+    settings['content_safety_setting.review_model'] = 'judge-model'
+    settings['content_safety_setting.escalate_group'] = 'vip'
+    await renderPolicies('/system-settings/request-policies/filtering')
+    fireEvent.change(
+      await screen.findByRole('combobox', { name: 'Escalation model' }),
+      { target: { value: 'backup-judge' } }
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            'content_safety_setting.review_mode': 'shadow',
+            'content_safety_setting.review_group': 'default',
+            'content_safety_setting.escalate_model': 'backup-judge',
+            'content_safety_setting.escalate_group': 'vip',
+          },
+        }
+      )
+    )
+  })
+
   it('invalid retry status ranges show validation and do not write options', async () => {
     await renderPolicies('/system-settings/request-policies/retry')
     const codes = await screen.findByRole('textbox', {

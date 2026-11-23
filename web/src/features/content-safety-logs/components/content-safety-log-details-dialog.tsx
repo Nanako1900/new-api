@@ -213,6 +213,13 @@ export function ContentSafetyLogDetailsDialog(props: {
             value={props.entry.review_model || '—'}
             mono
           />
+          {props.entry.escalated_model && (
+            <DetailRow
+              label={t('Escalated to')}
+              value={props.entry.escalated_model}
+              mono
+            />
+          )}
           <DetailRow
             label={t('Review channel')}
             value={

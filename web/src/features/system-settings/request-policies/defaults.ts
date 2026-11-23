@@ -42,6 +42,7 @@ export type FilteringSettings = Pick<
   'CheckSensitiveEnabled' | 'CheckSensitiveOnPromptEnabled' | 'SensitiveWords'
 >
 export type ContentReviewMode = 'off' | 'shadow' | 'enforce'
+export type ContentReviewEngine = 'llm_json' | 'qwen3guard'
 // Options of the content safety review tier, stored as
 // `content_safety_setting.*`. The hard-block word tier keeps FilteringSettings.
 export type ContentSafetySettings = {
@@ -49,6 +50,9 @@ export type ContentSafetySettings = {
   'content_safety_setting.review_model': string
   'content_safety_setting.review_group': string
   'content_safety_setting.review_prompt': string
+  'content_safety_setting.review_engine': ContentReviewEngine
+  'content_safety_setting.escalate_model': string
+  'content_safety_setting.escalate_group': string
   'content_safety_setting.review_tool_results': boolean
   'content_safety_setting.review_timeout_seconds': number
   'content_safety_setting.review_max_concurrency': number
@@ -112,6 +116,9 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   'content_safety_setting.review_model': '',
   'content_safety_setting.review_group': 'default',
   'content_safety_setting.review_prompt': '',
+  'content_safety_setting.review_engine': 'llm_json',
+  'content_safety_setting.escalate_model': '',
+  'content_safety_setting.escalate_group': '',
   'content_safety_setting.review_tool_results': true,
   'content_safety_setting.review_timeout_seconds': 15,
   'content_safety_setting.review_max_concurrency': 16,

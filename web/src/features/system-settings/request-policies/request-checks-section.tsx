@@ -58,6 +58,7 @@ import { ContentReviewFields } from './content-review-fields'
 import {
   CONTENT_SAFETY_INT_LIMITS,
   CONTENT_SAFETY_OPTION_PREFIX,
+  ESCALATION_GUARD_OPTION_KEYS,
   REVIEW_GUARD_OPTION_KEYS,
   createRequestChecksSchema,
   requestChecksFormValues,
@@ -162,6 +163,11 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
       )
     ) {
       for (const key of REVIEW_GUARD_OPTION_KEYS) updates[key] = current[key]
+    }
+    if (ESCALATION_GUARD_OPTION_KEYS.some((key) => key in updates)) {
+      for (const key of ESCALATION_GUARD_OPTION_KEYS) {
+        updates[key] = current[key]
+      }
     }
     try {
       await updateOption.mutateAsync(updates)

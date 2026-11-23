@@ -62,6 +62,7 @@ const rejected: ContentSafetyLog = {
   ai_reason: 'Describes hurting a person',
   review_channel_id: 12,
   review_model: 'judge-model',
+  escalated_model: '',
   latency_ms: 1350,
   review_tokens: 210,
   cache_hit: false,
