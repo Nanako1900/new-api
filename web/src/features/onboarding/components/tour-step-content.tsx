@@ -65,6 +65,10 @@ const STEP_COPY: Record<TourStepId, { title: string; body: string }> = {
     title: 'Save the key',
     body: 'Click Save changes to create the key.',
   },
+  'pick-key-group': {
+    title: 'Give this key a group',
+    body: 'This key is not in any of your groups yet, so it cannot reach a model. Pick one here: Claude Code needs a Claude group, Codex a GPT group.',
+  },
   'open-cc-switch': {
     title: 'Send the key to CC Switch',
     body: 'Click CC Switch on your key.',

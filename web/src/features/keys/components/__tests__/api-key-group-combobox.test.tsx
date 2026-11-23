@@ -252,3 +252,52 @@ describe('API key group combobox Auto effect', () => {
     setReducedMotion(false)
   })
 })
+
+describe('API key group combobox compact size', () => {
+  test('a compact trigger shows only the group name while the list keeps descriptions', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ApiKeyGroupCombobox
+          size='compact'
+          options={options}
+          value='vip'
+          aria-label='Change group for codex'
+          onValueChange={() => undefined}
+        />
+      </I18nextProvider>
+    )
+    const trigger = screen.getByRole('combobox', {
+      name: 'Change group for codex',
+    })
+    expect(trigger).toHaveTextContent(/^vip$/)
+    expect(trigger).toHaveClass('h-8')
+    fireEvent.click(trigger)
+    expect(getCommandItem('vip')).toHaveTextContent('Priority group')
+  })
+  test('a compact trigger names a group that is no longer offered', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ApiKeyGroupCombobox
+          size='compact'
+          options={options}
+          value='retired'
+          onValueChange={() => undefined}
+        />
+      </I18nextProvider>
+    )
+    expect(getTrigger()).toHaveTextContent(/^retired$/)
+  })
+  test('a compact trigger without a group asks for one', () => {
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ApiKeyGroupCombobox
+          size='compact'
+          options={options}
+          value=''
+          onValueChange={() => undefined}
+        />
+      </I18nextProvider>
+    )
+    expect(getTrigger()).toHaveTextContent('Select a group')
+  })
+})
