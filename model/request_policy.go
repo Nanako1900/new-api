@@ -228,20 +228,21 @@ func refreshRequestPolicySnapshot() error {
 	return err
 }
 
-// validateContentSafetyReviewGroup rejects enabling the AI review with a group
-// that does not exist. It runs on the write path only: BuildRequestPolicy also
-// runs on every refresh, and a group deleted later must not discard the whole
-// snapshot. At runtime a missing group means no review channel, so the request
-// fails closed instead. values are the written options, options the merged set.
+// validateContentSafetyReviewGroup rejects turning the AI review on with a
+// group that does not exist. It runs on the write path only: BuildRequestPolicy
+// also runs on every refresh, and a group deleted later must not discard the
+// whole snapshot. At runtime a missing group means no review channel, so a
+// synchronous review fails closed instead. values are the written options,
+// options the merged set.
 func validateContentSafetyReviewGroup(values, options map[string]string) error {
-	_, enabledChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_enabled"]
+	_, modeChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_mode"]
 	_, groupChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_group"]
-	if !enabledChanged && !groupChanged {
+	if !modeChanged && !groupChanged {
 		return nil
 	}
-	enabled, _ := strconv.ParseBool(options[operation_setting.ContentSafetyOptionPrefix+"review_enabled"])
-	group := options[operation_setting.ContentSafetyOptionPrefix+"review_group"]
-	if enabled && !ratio_setting.ContainsGroupRatio(group) {
+	mode := options[operation_setting.ContentSafetyOptionPrefix+"review_mode"]
+	group := strings.TrimSpace(options[operation_setting.ContentSafetyOptionPrefix+"review_group"])
+	if mode != operation_setting.ContentReviewModeOff && !ratio_setting.ContainsGroupRatio(group) {
 		return fmt.Errorf("content safety review group %q does not exist", group)
 	}
 	return nil

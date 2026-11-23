@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,30 +35,26 @@ import (
 )
 
 const (
-	unsafeReason = "asks how to hurt a person"
-	safeReply    = `{"results":[{"id":1,"safe":true}]}`
-	unsafeReply  = `{"results":[{"id":1,"safe":false,"category":"violence","reason":"` + unsafeReason + `"}]}`
+	unsafeReason       = "asks how to hurt a person"
+	safeReply          = `{"results":[{"id":1,"level":"safe"}]}`
+	controversialReply = `{"results":[{"id":1,"level":"controversial","category":"weapons","reason":"dual-use detail"}]}`
+	unsafeReply        = `{"results":[{"id":1,"level":"unsafe","category":"weapons","reason":"` + unsafeReason + `"}]}`
 )
 
-// The verdict cache and the per-user review rate limiter are process-global
-// and cannot be reset, so every test takes fresh user ids and salted texts
-// from this sequence; the tests then also pass when run again in the same
-// process (-count=2).
 var contentSafetyTestSeq atomic.Int64
 
 func nextContentSafetyUser() int {
 	return int(100000 + contentSafetyTestSeq.Add(1))
 }
 
-// saltedText wraps text in a unique digit tag at both ends, so every window
-// cut from it is new to the verdict cache.
 func saltedText(text string) string {
 	salt := "#" + strconv.FormatInt(contentSafetyTestSeq.Add(1), 10)
 	return salt + " " + text + " " + salt
 }
 
-// setupContentSafetyReview points the review model at a fake OpenAI upstream
-// and enables both tiers: "bomb" blocks and "knife" needs review.
+// setupContentSafetyReview points the review model at a fake OpenAI upstream,
+// makes "bomb" a block word and enforces the review synchronously for every
+// account. Every review decision is logged.
 func setupContentSafetyReview(t *testing.T, reply http.HandlerFunc) *atomic.Int32 {
 	t.Helper()
 	require.NoError(t, i18n.Init())
@@ -91,8 +88,8 @@ func setupContentSafetyReview(t *testing.T, reply http.HandlerFunc) *atomic.Int3
 
 	cfg := operation_setting.GetContentSafetySetting()
 	previous := *cfg
-	cfg.ReviewEnabled, cfg.ReviewModel, cfg.ReviewGroup, cfg.ReviewWords = true, "judge-model", "default", "knife"
-	cfg.ReviewTimeoutSeconds, cfg.CacheTTLSeconds = 5, 60
+	cfg.ReviewMode, cfg.ReviewModel, cfg.ReviewGroup, cfg.SyncAll = operation_setting.ContentReviewModeEnforce, "judge-model", "default", true
+	cfg.ReviewTimeoutSeconds, cfg.CacheTTLSeconds, cfg.PassLogPercent, cfg.SyncNewUserDays = 5, 60, 100, 0
 	previousWords, previousEnabled, previousOnPrompt := setting.SensitiveWords, setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled
 	setting.SensitiveWords, setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled = []string{"bomb"}, true, true
 	t.Cleanup(func() {
@@ -100,6 +97,13 @@ func setupContentSafetyReview(t *testing.T, reply http.HandlerFunc) *atomic.Int3
 		setting.SensitiveWords, setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled = previousWords, previousEnabled, previousOnPrompt
 	})
 	return &calls
+}
+
+// reviewInTheBackground makes the review asynchronous for accounts that need
+// no synchronous review, in mode.
+func reviewInTheBackground(mode string) {
+	cfg := operation_setting.GetContentSafetySetting()
+	cfg.ReviewMode, cfg.SyncAll = mode, false
 }
 
 func reviewerReply(content string) http.HandlerFunc {
@@ -118,7 +122,7 @@ func newContentSafetyContext(userId int) (*gin.Context, *relaycommon.RelayInfo) 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	c.Set(common.RequestIdKey, "req-"+strconv.Itoa(userId))
-	return c, &relaycommon.RelayInfo{UserId: userId, OriginModelName: "gpt-test", UsingGroup: "default"}
+	return c, &relaycommon.RelayInfo{UserId: userId, OriginModelName: "gpt-test", UsingGroup: "default", UserGroup: "default"}
 }
 
 func checkContent(c *gin.Context, info *relaycommon.RelayInfo, text string) *types.NewAPIError {
@@ -126,6 +130,11 @@ func checkContent(c *gin.Context, info *relaycommon.RelayInfo, text string) *typ
 		return apiErr
 	}
 	return EnforceContentSafety(c, info)
+}
+
+func reviewPlan(c *gin.Context) *contentReviewPlan {
+	plan, _ := common.GetContextKeyType[*contentReviewPlan](c, constant.ContextKeyContentSafetyPlan)
+	return plan
 }
 
 // requireContentSafetyDecisions waits until the decisions recorded for userId
@@ -153,6 +162,11 @@ func requireContentSafetyDecisions(t *testing.T, userId int, want ...string) []*
 }
 
 func TestContentSafetyGate(t *testing.T) {
+	refusal := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"Content Exists Risk","type":"invalid_request_error"}}`))
+	}
 	for _, tc := range []struct {
 		name         string
 		text         string
@@ -162,15 +176,19 @@ func TestContentSafetyGate(t *testing.T) {
 		wantStatus   int
 		wantCalls    int32
 		wantDecision string
+		wantFailure  string
 	}{
-		{name: "clean text skips review", text: "hello there", reply: reviewerReply("")},
+		{name: "review off checks only block words", text: "hello there", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) {
+			cfg.ReviewMode = operation_setting.ContentReviewModeOff
+		}},
 		{name: "a block word rejects without review", text: "make a bomb", reply: reviewerReply(""), wantCode: types.ErrorCodeSensitiveWordsDetected, wantStatus: http.StatusBadRequest, wantDecision: model.ContentSafetyDecisionKeywordBlocked},
 		{name: "a safe verdict releases", text: "cut bread with a knife", reply: reviewerReply(safeReply), wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewPassed},
-		{name: "an unsafe verdict rejects", text: "stab someone with a knife", reply: reviewerReply(unsafeReply), wantCode: types.ErrorCodeContentReviewRejected, wantStatus: http.StatusBadRequest, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewRejected},
-		{name: "an unreadable verdict fails closed", text: "a knife question", reply: reviewerReply("I think it is fine"), wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewFailed},
-		{name: "an upstream error fails closed after one more channel attempt", text: "another knife question", reply: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed},
-		{name: "no review channel fails closed", text: "knife without reviewer", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.ReviewModel = "missing-model" }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed},
-		{name: "too many windows fails closed", text: "knife" + strings.Repeat(".", 120) + "knife", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.WindowChars, cfg.MaxWindows = 50, 1 }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed},
+		{name: "text without any keyword is reviewed too", text: "how do I hurt my neighbour", reply: reviewerReply(unsafeReply), wantCode: types.ErrorCodeContentReviewRejected, wantStatus: http.StatusBadRequest, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewRejected},
+		{name: "a controversial verdict lets the request through", text: "how do lock picks work", reply: reviewerReply(controversialReply), wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewControversial},
+		{name: "a refusal by the review channel concludes as controversial", text: "a text the reviewer will not read", reply: refusal, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewControversial, wantFailure: model.ContentSafetyFailureRefused},
+		{name: "an unreadable verdict fails closed", text: "a question", reply: reviewerReply("I think it is fine"), wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUnparseable},
+		{name: "an upstream error fails closed after one more channel attempt", text: "another question", reply: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUpstreamError},
+		{name: "no review channel fails closed", text: "a text without reviewer", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.ReviewModel = "missing-model" }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureNoChannel},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := setupContentSafetyReview(t, tc.reply)
@@ -186,7 +204,6 @@ func TestContentSafetyGate(t *testing.T) {
 				require.NotNil(t, apiErr)
 				assert.Equal(t, tc.wantCode, apiErr.GetErrorCode())
 				assert.Equal(t, tc.wantStatus, apiErr.StatusCode)
-				assert.NotContains(t, apiErr.Error(), "knife", "clients never see the matched words")
 				assert.NotContains(t, apiErr.Error(), "bomb", "clients never see the matched words")
 				assert.NotContains(t, apiErr.Error(), unsafeReason, "clients never see the reviewer's reason")
 			}
@@ -194,7 +211,11 @@ func TestContentSafetyGate(t *testing.T) {
 				requireContentSafetyDecisions(t, info.UserId)
 				return
 			}
-			requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
+			logs := requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
+			assert.Equal(t, tc.wantFailure, logs[0].FailureReason)
+			if tc.wantDecision != model.ContentSafetyDecisionKeywordBlocked {
+				assert.Equal(t, model.ContentSafetyModeSync, logs[0].Mode)
+			}
 		})
 	}
 }
@@ -275,123 +296,324 @@ func TestPrepareRequestBillingScansContentBeforePreConsume(t *testing.T) {
 	}
 }
 
-// Request JSON that token counting keeps raw is scanned once, decoded, never
-// raw as well: one review word in it is one window, so a repeat of the request
-// is decided by the cached verdict instead of a second review. The filler
-// keeps a raw and a decoded copy of the word too far apart to share a window.
-func TestContentSafetyReviewOfRawRequestJSONIsOneCachedWindow(t *testing.T) {
-	filler := strings.Repeat("for cooking at home ", 80)
-	const question = "where to buy a kitchen knife"
-	for _, tc := range []struct {
-		name    string
-		request kitdto.Request
-	}{
-		{name: "an Alpha Search body", request: &kitdto.AlphaSearchRequest{Model: "gpt-test", RawBody: common.RawMessage(`{"model":"gpt-test","query":"` + filler + saltedText(question) + filler + `"}`)}},
-		{name: "Responses tools", request: &kitdto.OpenAIResponsesRequest{Model: "gpt-test", Input: common.RawMessage(`"hello"`), Tools: common.RawMessage(`[{"type":"function","name":"lookup","description":"` + filler + saltedText(question) + filler + `"}]`)}},
-		{name: "a Chat custom tool", request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{{Role: "user", Content: "hello"}}, Tools: []kitdto.ToolCallRequest{{Type: "custom", Custom: common.RawMessage(`{"name":"lookup","description":"` + filler + saltedText(question) + filler + `"}`)}}}},
-		{name: "a Claude message", request: &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{{Role: "user", Content: []any{map[string]any{"type": "text", "text": filler + saltedText(question) + filler}}}}}},
-		{name: "Gemini tools", request: &kitdto.GeminiChatRequest{Contents: []kitdto.GeminiChatContent{{Role: "user", Parts: []kitdto.GeminiPart{{Text: "hello"}}}}, Tools: common.RawMessage(`[{"functionDeclarations":[{"name":"lookup","description":"` + filler + saltedText(question) + filler + `"}]}]`)}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			calls := setupContentSafetyReview(t, reviewerReply(safeReply))
-			userId := nextContentSafetyUser()
-			for range 2 {
-				c, info := newContentSafetyContext(userId)
-				info.Request = tc.request
-				require.Nil(t, scanRequestContent(c, info, tc.request.GetTokenCountMeta().CombineText))
-				windows, _ := common.GetContextKeyType[[]contentsafety.Window](c, constant.ContextKeyContentSafetyWindows)
-				assert.Len(t, windows, 1)
-				require.Nil(t, EnforceContentSafety(c, info))
-			}
-			assert.Equal(t, int32(1), calls.Load(), "the repeat is served from the verdict cache")
-			requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
-		})
+func unitRoles(units []contentsafety.Unit) []string {
+	roles := make([]string, len(units))
+	for i, unit := range units {
+		roles[i] = unit.Role
 	}
+	return roles
 }
 
-func TestContentSafetyReviewCachesVerdictPerWindow(t *testing.T) {
-	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
-	userId, text := nextContentSafetyUser(), saltedText("sharpen the kitchen knife carefully")
-	for range 2 {
-		c, info := newContentSafetyContext(userId)
-		require.Nil(t, checkContent(c, info, text))
-	}
-	assert.Equal(t, int32(1), calls.Load(), "the second identical window is answered from the cache")
-	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
-}
-
-// A batch of several windows is cached only as a whole and only when every
-// window is safe, so a stable multi-window history is reviewed once, an
-// unsafe batch is asked again on every repeat, and no verdict of a batch ever
-// decides one of its windows on its own.
-func TestContentSafetyReviewCachesAMultiWindowBatchOnlyWhenAllSafe(t *testing.T) {
-	passed, rejected := model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewRejected
+// Chat formats are reviewed message by message, newest first, with tool and
+// schema definitions as one meta unit. Tool results are part of the history a
+// client writes, so they are reviewed unless switched off.
+func TestContentSafetyReviewReadsEachFormatByMessage(t *testing.T) {
+	const tools = `[{"type":"function","name":"lookup","description":"look things up"}]`
+	user, assistant, tool, system, meta := contentsafety.RoleUser, contentsafety.RoleAssistant, contentsafety.RoleTool, contentsafety.RoleSystem, contentsafety.RoleMeta
 	for _, tc := range []struct {
-		name          string
-		reply         string
-		wantCode      types.ErrorCode
-		wantCalls     int32
-		wantDecisions []string
+		name        string
+		request     kitdto.Request
+		toolResults bool
+		wantRoles   []string
+		wantText    map[string]string
 	}{
-		{name: "an all-safe batch is reviewed once", reply: `{"results":[{"id":1,"safe":true},{"id":2,"safe":true}]}`, wantCalls: 1, wantDecisions: []string{passed}},
-		{name: "a batch with an unsafe window is reviewed every time", reply: `{"results":[{"id":1,"safe":true},{"id":2,"safe":false,"category":"violence","reason":"` + unsafeReason + `"}]}`, wantCode: types.ErrorCodeContentReviewRejected, wantCalls: 3, wantDecisions: []string{rejected, rejected, rejected}},
+		{
+			name: "Chat with tool results",
+			request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{
+				{Role: "system", Content: "be brief"}, {Role: "user", Content: "find it"},
+				{Role: "assistant", Content: "", ToolCalls: common.RawMessage(`[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]`)},
+				{Role: "tool", ToolCallId: "call_1", Content: "the tool result"}, {Role: "user", Content: []any{map[string]any{"type": "text", "text": "thanks"}}},
+			}},
+			toolResults: true,
+			wantRoles:   []string{user, tool, assistant, user, system},
+			wantText:    map[string]string{user: "thanks", tool: "the tool result", system: "be brief"},
+		},
+		{
+			name: "Chat without tool results",
+			request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{
+				{Role: "user", Content: "find it"}, {Role: "tool", ToolCallId: "call_1", Content: "the tool result"},
+			}},
+			wantRoles: []string{user},
+		},
+		{
+			name: "Claude",
+			request: &kitdto.ClaudeRequest{Model: "gpt-test", System: "be brief", Messages: []kitdto.ClaudeMessage{
+				{Role: "user", Content: "find it"},
+				{Role: "assistant", Content: []any{map[string]any{"type": "tool_use", "id": "toolu_1", "name": "lookup", "input": map[string]any{"q": "x"}}}},
+				{Role: "user", Content: []any{map[string]any{"type": "tool_result", "tool_use_id": "toolu_1", "content": "the tool result"}, map[string]any{"type": "text", "text": "thanks"}}},
+			}},
+			toolResults: true,
+			wantRoles:   []string{user, assistant, user, system},
+			wantText:    map[string]string{user: "the tool result\nthanks", system: "be brief"},
+		},
+		{
+			name: "Responses",
+			request: &kitdto.OpenAIResponsesRequest{Model: "gpt-test", Instructions: common.RawMessage(`"be brief"`), Tools: common.RawMessage(tools), Input: common.RawMessage(`[
+				{"role":"user","content":[{"type":"input_text","text":"find it"}]},
+				{"type":"function_call","call_id":"c1","name":"lookup","arguments":"{}"},
+				{"type":"function_call_output","call_id":"c1","output":"the tool result"},
+				{"type":"message","role":"user","content":"thanks"}]`)},
+			toolResults: true,
+			wantRoles:   []string{user, tool, assistant, user, system, meta},
+			wantText:    map[string]string{user: "thanks", tool: "the tool result", system: "be brief"},
+		},
+		{
+			name: "Gemini",
+			request: &kitdto.GeminiChatRequest{SystemInstructions: &kitdto.GeminiChatContent{Parts: []kitdto.GeminiPart{{Text: "be brief"}}}, Contents: []kitdto.GeminiChatContent{
+				{Role: "user", Parts: []kitdto.GeminiPart{{Text: "find it"}}},
+				{Role: "model", Parts: []kitdto.GeminiPart{{FunctionCall: &kitdto.FunctionCall{FunctionName: "lookup", Arguments: map[string]any{"q": "x"}}}}},
+				{Role: "user", Parts: []kitdto.GeminiPart{{FunctionResponse: &kitdto.GeminiFunctionResponse{Name: "lookup", Response: map[string]any{"result": "the tool result"}}}}},
+				{Role: "user", Parts: []kitdto.GeminiPart{{Text: "thanks"}}},
+			}},
+			toolResults: true,
+			wantRoles:   []string{user, tool, assistant, user, system},
+			wantText:    map[string]string{user: "thanks", system: "be brief"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			calls := setupContentSafetyReview(t, func(w http.ResponseWriter, r *http.Request) {
-				// A lone window gets a one-item reply.
-				body, _ := io.ReadAll(r.Body)
-				if !bytes.Contains(body, []byte(`\"id\":2`)) {
-					reviewerReply(safeReply)(w, r)
-					return
-				}
-				reviewerReply(tc.reply)(w, r)
-			})
-			operation_setting.GetContentSafetySetting().WindowChars = 50
-			userId, text := nextContentSafetyUser(), saltedText("knife"+strings.Repeat(".", 120)+"knife")
-			var windows []contentsafety.Window
-			for range 3 {
-				c, info := newContentSafetyContext(userId)
-				apiErr := checkContent(c, info, text)
-				windows, _ = common.GetContextKeyType[[]contentsafety.Window](c, constant.ContextKeyContentSafetyWindows)
-				if tc.wantCode == "" {
-					require.Nil(t, apiErr)
-					continue
-				}
-				require.NotNil(t, apiErr)
-				assert.Equal(t, tc.wantCode, apiErr.GetErrorCode())
-			}
-			require.Len(t, windows, 2)
-			assert.Equal(t, tc.wantCalls, calls.Load())
-			requireContentSafetyDecisions(t, userId, tc.wantDecisions...)
-
+			setupContentSafetyReview(t, reviewerReply(safeReply))
+			operation_setting.GetContentSafetySetting().ReviewToolResults = tc.toolResults
 			c, info := newContentSafetyContext(nextContentSafetyUser())
-			require.Nil(t, checkContent(c, info, windows[1].Text))
-			assert.Equal(t, tc.wantCalls+1, calls.Load(), "the second window alone is reviewed on its own")
-			requireContentSafetyDecisions(t, info.UserId, passed)
+			info.Request = tc.request
+			require.Nil(t, scanRequestContent(c, info, ""))
+			plan := reviewPlan(c)
+			require.NotNil(t, plan)
+			assert.Equal(t, tc.wantRoles, unitRoles(plan.pending))
+			for role, text := range tc.wantText {
+				index := slices.Index(unitRoles(plan.pending), role)
+				require.GreaterOrEqual(t, index, 0)
+				assert.Equal(t, text, plan.pending[index].Text, "the newest %s unit", role)
+			}
 		})
 	}
 }
 
-func TestContentSafetyReviewRejectsACachedUnsafeWindowWithoutAsking(t *testing.T) {
-	calls := setupContentSafetyReview(t, reviewerReply(unsafeReply))
-	userId, text := nextContentSafetyUser(), saltedText("stab someone with a knife")
-	for range 2 {
+// A conversation resends its history on every turn; only messages the
+// reviewer has not judged are asked about.
+func TestContentSafetyReviewAsksOnlyAboutNewMessages(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	userId, first, second := nextContentSafetyUser(), saltedText("first question"), saltedText("second question")
+	turn := func(messages ...kitdto.Message) {
 		c, info := newContentSafetyContext(userId)
-		apiErr := checkContent(c, info, text)
-		require.NotNil(t, apiErr)
-		assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
-		assert.NotContains(t, apiErr.Error(), unsafeReason)
+		info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: messages}
+		require.Nil(t, checkContent(c, info, ""))
 	}
-	assert.Equal(t, int32(1), calls.Load(), "the cached unsafe verdict answers the second request")
+	turn(kitdto.Message{Role: "user", Content: first})
+	assert.Equal(t, int32(1), calls.Load())
+	turn(kitdto.Message{Role: "user", Content: first}, kitdto.Message{Role: "assistant", Content: saltedText("an answer")}, kitdto.Message{Role: "user", Content: second})
+	assert.Equal(t, int32(3), calls.Load(), "the answer and the new question are reviewed, the first question is not")
+	turn(kitdto.Message{Role: "user", Content: first})
+	assert.Equal(t, int32(3), calls.Load(), "a repeat is decided from the cache")
+	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewPassed)
+}
+
+// A cached unsafe verdict stops a synchronously reviewed request in the scan,
+// before anything is reserved.
+func TestContentSafetyReviewRejectsACachedUnsafeUnitWithoutAsking(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(unsafeReply))
+	userId, text := nextContentSafetyUser(), saltedText("stab someone")
+	c, info := newContentSafetyContext(userId)
+	apiErr := checkContent(c, info, text)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
+
+	c, info = newContentSafetyContext(userId)
+	apiErr = scanRequestContent(c, info, text)
+	require.NotNil(t, apiErr, "the scan rejects before pre-consume")
+	assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
+	assert.NotContains(t, apiErr.Error(), unsafeReason)
+	assert.Equal(t, int32(1), calls.Load())
+
 	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewRejected, model.ContentSafetyDecisionReviewRejected)
 	hits := slices.DeleteFunc(logs, func(entry *model.ContentSafetyLog) bool { return !entry.CacheHit })
 	require.Len(t, hits, 1, "only the cache-answered rejection is recorded as a cache hit")
-	assert.Equal(t, "violence", hits[0].AiCategory)
+	assert.Equal(t, "weapons", hits[0].AiCategory)
 	assert.Equal(t, unsafeReason, hits[0].AiReason)
-	assert.JSONEq(t, `["knife"]`, hits[0].HitWords)
+	assert.JSONEq(t, `["weapons"]`, hits[0].HitWords)
 	snippets, err := common.Marshal([]string{text})
 	require.NoError(t, err)
 	assert.JSONEq(t, string(snippets), hits[0].Snippets)
+}
+
+// gatedReviewer answers with reply only once released, so a test can tell a
+// request that waited for its review from one that did not.
+func gatedReviewer(t *testing.T, reply string) (http.HandlerFunc, func()) {
+	release := make(chan struct{})
+	var once sync.Once
+	open := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(open)
+	return func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		reviewerReply(reply)(w, r)
+	}, open
+}
+
+func TestContentSafetyBackgroundReviewsNeverHoldOrBlockTheRequest(t *testing.T) {
+	for _, tc := range []struct {
+		mode         string
+		wantLogMode  string
+		wantDecision string
+	}{
+		{mode: operation_setting.ContentReviewModeShadow, wantLogMode: model.ContentSafetyModeShadow, wantDecision: model.ContentSafetyDecisionReviewFlagged},
+		{mode: operation_setting.ContentReviewModeEnforce, wantLogMode: model.ContentSafetyModeAsync, wantDecision: model.ContentSafetyDecisionReviewFlagged},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			reply, release := gatedReviewer(t, unsafeReply)
+			setupContentSafetyReview(t, reply)
+			reviewInTheBackground(tc.mode)
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			require.Nil(t, checkContent(c, info, saltedText("stab someone")), "the request goes on while the reviewer has not answered")
+			release()
+			logs := requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
+			assert.Equal(t, tc.wantLogMode, logs[0].Mode)
+			assert.Equal(t, "weapons", logs[0].AiCategory)
+		})
+	}
+}
+
+func TestContentSafetySyncReviewIsForAccountsThatNeedIt(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*operation_setting.ContentSafetySetting)
+		info      func(*relaycommon.RelayInfo)
+		createdAt int64
+		wantMode  string
+	}{
+		{name: "an account in a listed group", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncGroups = "vip\nrisky" }, info: func(info *relaycommon.RelayInfo) { info.UserGroup = "risky" }, wantMode: model.ContentSafetyModeSync},
+		{name: "a token choosing a listed group", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncGroups = "risky" }, info: func(info *relaycommon.RelayInfo) { info.UsingGroup = "risky" }, wantMode: model.ContentSafetyModeAsync},
+		{name: "a new account", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncNewUserDays = 3 }, createdAt: -3600, wantMode: model.ContentSafetyModeSync},
+		{name: "an established account", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncNewUserDays = 3 }, createdAt: -4 * 86400, wantMode: model.ContentSafetyModeAsync},
+		{name: "an account whose background reviews were dropped", info: func(info *relaycommon.RelayInfo) { contentsafety.ForceSync(info.UserId) }, wantMode: model.ContentSafetyModeSync},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupContentSafetyReview(t, reviewerReply(safeReply))
+			reviewInTheBackground(operation_setting.ContentReviewModeEnforce)
+			cfg := operation_setting.GetContentSafetySetting()
+			if tc.configure != nil {
+				tc.configure(cfg)
+			}
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			require.NoError(t, model.DB.AutoMigrate(&model.User{}))
+			require.NoError(t, model.DB.Create(&model.User{Id: info.UserId, Username: "cs-" + strconv.Itoa(info.UserId), Status: common.UserStatusEnabled, Group: "default", CreatedAt: common.GetTimestamp() + tc.createdAt}).Error)
+			if tc.info != nil {
+				tc.info(info)
+			}
+			require.Nil(t, scanRequestContent(c, info, saltedText("a question")))
+			require.NotNil(t, reviewPlan(c))
+			assert.Equal(t, tc.wantMode, reviewPlan(c).mode)
+		})
+	}
+}
+
+// More new units than one review covers: a synchronous review cannot leave
+// any unread and rejects; a background review reads the newest and records
+// that the rest went unread.
+func TestContentSafetyReviewOfTooManyNewUnits(t *testing.T) {
+	messages := func() []kitdto.Message {
+		return []kitdto.Message{{Role: "user", Content: saltedText("older question")}, {Role: "assistant", Content: saltedText("answer")}, {Role: "user", Content: saltedText("newest question")}}
+	}
+	t.Run("sync", func(t *testing.T) {
+		calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+		operation_setting.GetContentSafetySetting().MaxUnits = 2
+		c, info := newContentSafetyContext(nextContentSafetyUser())
+		info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: messages()}
+		apiErr := scanRequestContent(c, info, "")
+		require.NotNil(t, apiErr)
+		assert.Equal(t, types.ErrorCodeContentReviewUnavailable, apiErr.GetErrorCode())
+		assert.Zero(t, calls.Load())
+		logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewFailed)
+		assert.Equal(t, model.ContentSafetyFailureTooManyUnits, logs[0].FailureReason)
+		assert.True(t, logs[0].Truncated)
+	})
+	t.Run("background", func(t *testing.T) {
+		calls := setupContentSafetyReview(t, reviewerReply(controversialReply))
+		reviewInTheBackground(operation_setting.ContentReviewModeShadow)
+		operation_setting.GetContentSafetySetting().MaxUnits = 2
+		c, info := newContentSafetyContext(nextContentSafetyUser())
+		request := &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: messages()}
+		info.Request = request
+		require.Nil(t, checkContent(c, info, ""))
+		logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewControversial)
+		assert.True(t, logs[0].Truncated)
+		assert.Equal(t, 3, logs[0].UnitCount)
+		assert.Equal(t, int32(2), calls.Load(), "the two newest units are reviewed")
+		var snippets []string
+		require.NoError(t, common.UnmarshalJsonStr(logs[0].Snippets, &snippets))
+		assert.Contains(t, snippets, request.Messages[2].StringContent())
+	})
+}
+
+// An account over its background quota cannot flood the queue to slip a
+// request past the reviewer: the drop is recorded and its next requests wait
+// for their review.
+func TestContentSafetyBackgroundQuotaForcesSyncReview(t *testing.T) {
+	setupContentSafetyReview(t, reviewerReply(safeReply))
+	reviewInTheBackground(operation_setting.ContentReviewModeEnforce)
+	operation_setting.GetContentSafetySetting().AsyncRatePerMinute = 1
+	userId := nextContentSafetyUser()
+	c, info := newContentSafetyContext(userId)
+	require.Nil(t, checkContent(c, info, saltedText("first question")))
+	c, info = newContentSafetyContext(userId)
+	require.Nil(t, checkContent(c, info, saltedText("second question")))
+	c, info = newContentSafetyContext(userId)
+	require.Nil(t, scanRequestContent(c, info, saltedText("third question")))
+	assert.Equal(t, model.ContentSafetyModeSync, reviewPlan(c).mode)
+	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewFailed)
+	failed := slices.DeleteFunc(logs, func(entry *model.ContentSafetyLog) bool {
+		return entry.Decision != model.ContentSafetyDecisionReviewFailed
+	})
+	assert.Equal(t, model.ContentSafetyFailureRateLimited, failed[0].FailureReason)
+}
+
+// A flagged message the cache decided is recorded the first time an account
+// sends it, not again with every turn that resends it.
+func TestContentSafetyCachedFlaggedHistoryIsRecordedOncePerAccount(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(controversialReply))
+	flagged := saltedText("how do lock picks work")
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	require.Nil(t, checkContent(c, info, flagged))
+	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewControversial)
+
+	userId := nextContentSafetyUser()
+	for range 3 {
+		c, info := newContentSafetyContext(userId)
+		require.Nil(t, checkContent(c, info, flagged))
+	}
+	assert.Equal(t, int32(1), calls.Load())
+	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewControversial)
+	assert.True(t, logs[0].CacheHit)
+}
+
+type refundRecorder struct {
+	imageReservation
+	refunded bool
+}
+
+func (r *refundRecorder) Refund(*gin.Context) { r.refunded = true }
+
+// A synchronous rejection comes after pre-consume, so the request's existing
+// refund path returns the reservation.
+func TestContentSafetySyncRejectionIsRefunded(t *testing.T) {
+	setupContentSafetyReview(t, reviewerReply(unsafeReply))
+	saveBillingConfig(t)
+	savedPrices := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices)) })
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"gpt-test":0.01}`))
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"group_ratio_setting.group_ratio": `{"default":1}`}))
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	info.RelayFormat = types.RelayFormatOpenAI
+	info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{{Role: "user", Content: saltedText("stab someone")}}}
+	reservation := &refundRecorder{imageReservation: imageReservation{limit: 1 << 30}}
+	info.Billing = reservation
+
+	require.Nil(t, PrepareRequestBilling(c, info))
+	assert.Equal(t, 5000, reservation.held, "the review waits holding the reservation")
+	apiErr := EnforceContentSafety(c, info)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
+	RefundFailedRequestBilling(c, info, apiErr)
+	assert.True(t, reservation.refunded)
+	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewRejected)
 }
 
 func TestContentSafetyReviewRateLimitFailsClosed(t *testing.T) {

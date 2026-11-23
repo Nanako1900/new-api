@@ -39,3 +39,27 @@ func GetContentSafetyLogs(c *gin.Context) {
 	page.SetTotal(int(total))
 	common.ApiSuccess(c, page)
 }
+
+// maxContentSafetyStatsHours bounds the window of GetContentSafetyStats to
+// the longest log retention an administrator is likely to look back over.
+const maxContentSafetyStatsHours = 720
+
+// GetContentSafetyStats sums content safety decisions over the last hours,
+// default 24, so an administrator can judge a reviewer in shadow mode.
+func GetContentSafetyStats(c *gin.Context) {
+	hours := 24
+	if raw := c.Query("hours"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > maxContentSafetyStatsHours {
+			common.ApiErrorT(c, "Invalid content safety stats query")
+			return
+		}
+		hours = parsed
+	}
+	stats, err := model.GetContentSafetyStats(common.GetTimestamp()-int64(hours)*3600, c.GetInt("role"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, stats)
+}

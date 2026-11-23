@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	mathrand "math/rand/v2"
 	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -33,48 +35,162 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// maxLoggedWindows caps the excerpts stored for one decision.
-const maxLoggedWindows = 20
+// maxLoggedSnippets caps the excerpts stored for one decision.
+const maxLoggedSnippets = 20
 
-// contentReview is the reviewer's answer for one batch of windows. A
-// non-empty failure is the content_safety_logs failure reason.
-type contentReview struct {
-	verdicts  []contentsafety.Verdict
+// contentReviewPlan is what the scan before pre-consume leaves for
+// EnforceContentSafety: the units the reviewer has not judged yet, newest
+// first and at most max_units of them, the non-safe units the verdict cache
+// already decided, and when the review runs.
+type contentReviewPlan struct {
+	pending   []contentsafety.Unit
+	flagged   []cachedUnit
+	truncated int
+	mode      string
+	prompt    string
+}
+
+type cachedUnit struct {
+	unit    contentsafety.Unit
+	verdict contentsafety.CachedVerdict
+}
+
+// unitReview is the reviewer's answer for one unit. A non-empty failure is
+// the content_safety_logs failure reason of a review that did not conclude.
+// A refusal by the review channel concludes as controversial.
+type unitReview struct {
+	unit      contentsafety.Unit
+	verdict   contentsafety.Verdict
+	refused   bool
 	channelId int
 	tokens    int
+	latencyMs int
 	failure   string
 }
 
-// scanRequestContent is the keyword tier. A block word rejects the request
-// before pre-consume; review windows wait in the context until
-// EnforceContentSafety runs after pre-consume.
-func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, text string) *types.NewAPIError {
-	cfg := operation_setting.GetContentSafetySetting().Bounded()
-	var reviewWords []string
-	if cfg.ReviewEnabled {
-		reviewWords = cfg.ReviewWordList()
+// refusedReason is the verdict reason of a unit the review channel refused.
+const refusedReason = "The review channel refused to review this text"
+
+// scanRequestContent runs before pre-consume. A zero-tolerance word rejects
+// the request; so does, for a request reviewed synchronously, a cached unsafe
+// verdict or more new text than one review covers. What remains to review
+// waits in the context until EnforceContentSafety runs after pre-consume.
+func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText string) *types.NewAPIError {
+	if contentsafety.BlockListActive() {
+		text := combineText
+		if info != nil {
+			text = requestScanText(info.Request, combineText)
+		}
+		if blocked := contentsafety.Scan(text, setting.SensitiveWords); len(blocked) > 0 {
+			words := contentsafety.Words(blocked)
+			logger.LogWarn(c, common.LogText("content safety blocked words: %s", strings.Join(words, ", ")))
+			snippets := make([]string, 0, min(len(blocked), maxLoggedSnippets))
+			for _, window := range blocked[:min(len(blocked), maxLoggedSnippets)] {
+				snippets = append(snippets, window.Snippet(contentsafety.SnippetRadius))
+			}
+			entry := contentSafetyLogEntry(c, info)
+			entry.Decision, entry.Mode = model.ContentSafetyDecisionKeywordBlocked, model.ContentSafetyModeSync
+			recordContentSafetyLog(entry, words, snippets)
+			return rejectContent(c, types.ErrorCodeSensitiveWordsDetected, http.StatusBadRequest, i18n.MsgContentSafetyBlocked)
+		}
 	}
-	// Without words nothing can match, so the request is not decoded at all.
-	if len(setting.SensitiveWords) == 0 && len(reviewWords) == 0 {
+	cfg := operation_setting.GetContentSafetySetting().Bounded()
+	if !cfg.ReviewActive() || info == nil {
 		return nil
 	}
-	if info != nil {
-		text = requestScanText(info.Request, text)
+	prompt := contentsafety.EffectivePrompt(cfg.ReviewPrompt)
+	engine := reviewEngineKey(cfg)
+	units := contentsafety.BuildUnits(requestReviewMessages(info.Request, combineText, cfg.ReviewToolResults), cfg.UnitChars,
+		func(text string) string { return contentsafety.CacheKey(engine, prompt, text) })
+	if len(units) == 0 {
+		return nil
 	}
-	result := contentsafety.Scan(text, setting.SensitiveWords, reviewWords, cfg.WindowChars)
-	if len(result.Blocked) > 0 {
-		logger.LogWarn(c, common.LogText("content safety blocked words: %s", strings.Join(contentsafety.Words(result.Blocked), ", ")))
-		recordContentSafetyLog(c, info, model.ContentSafetyLog{Decision: model.ContentSafetyDecisionKeywordBlocked}, result.Blocked)
-		return rejectContent(c, types.ErrorCodeSensitiveWordsDetected, http.StatusBadRequest, i18n.MsgContentSafetyBlocked)
+	keys := make([]string, len(units))
+	for i, unit := range units {
+		keys[i] = unit.Key
 	}
-	if len(result.Review) > cfg.MaxWindows {
-		recordContentSafetyLog(c, info, model.ContentSafetyLog{Decision: model.ContentSafetyDecisionReviewFailed, FailureReason: model.ContentSafetyFailureTooManyWindows}, result.Review)
-		return rejectContent(c, types.ErrorCodeContentReviewUnavailable, http.StatusServiceUnavailable, i18n.MsgContentSafetyUnavailable)
+	cached := contentsafety.LoadVerdicts(keys, cfg.CacheTTLSeconds)
+	plan := &contentReviewPlan{mode: model.ContentSafetyModeShadow, prompt: prompt}
+	for _, unit := range units {
+		verdict, found := cached[unit.Key]
+		if !found {
+			plan.pending = append(plan.pending, unit)
+		} else if verdict.Level != contentsafety.LevelSafe {
+			plan.flagged = append(plan.flagged, cachedUnit{unit: unit, verdict: verdict})
+		}
 	}
-	if len(result.Review) > 0 {
-		common.SetContextKey(c, constant.ContextKeyContentSafetyWindows, result.Review)
+	if len(plan.pending) == 0 && len(plan.flagged) == 0 {
+		return nil
 	}
+	if len(plan.pending) > cfg.MaxUnits {
+		plan.truncated = len(plan.pending) - cfg.MaxUnits
+		plan.pending = plan.pending[:cfg.MaxUnits]
+	}
+	if cfg.ReviewMode == operation_setting.ContentReviewModeEnforce {
+		plan.mode = model.ContentSafetyModeAsync
+		if needsSyncReview(c, info, cfg) {
+			plan.mode = model.ContentSafetyModeSync
+		}
+	}
+	if plan.mode == model.ContentSafetyModeSync {
+		if apiErr := rejectCachedOrOversized(c, info, cfg, plan); apiErr != nil {
+			return apiErr
+		}
+	}
+	common.SetContextKey(c, constant.ContextKeyContentSafetyPlan, plan)
 	return nil
+}
+
+// reviewEngineKey names the reviewer in verdict cache keys, so a verdict of
+// one model never decides for another.
+func reviewEngineKey(cfg operation_setting.ContentSafetySetting) string {
+	return "llm_json\x00" + cfg.ReviewModel
+}
+
+// needsSyncReview reports whether an enforced review holds the request until
+// the reviewer answers: for every account with sync_all, for accounts in a
+// listed group or younger than sync_new_user_days, and for accounts whose
+// background reviews were recently dropped. The group is the account's own;
+// the group a token selects is the caller's choice.
+func needsSyncReview(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting) bool {
+	if cfg.SyncAll || slices.Contains(cfg.SyncGroupList(), info.UserGroup) {
+		return true
+	}
+	if cfg.SyncNewUserDays > 0 {
+		createdAt, err := contentsafety.AccountCreatedAt(info.UserId)
+		if err != nil {
+			logger.LogError(c, common.LogText("content safety account age read failed: %s", err.Error()))
+			return true
+		}
+		if common.GetTimestamp()-createdAt < int64(cfg.SyncNewUserDays)*86400 {
+			return true
+		}
+	}
+	return contentsafety.SyncForced(c.Request.Context(), info.UserId)
+}
+
+// rejectCachedOrOversized stops a synchronously reviewed request that the
+// cache already judged unsafe, or that carries more new text than one review
+// covers, before anything is reserved.
+func rejectCachedOrOversized(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting, plan *contentReviewPlan) *types.NewAPIError {
+	for _, hit := range plan.flagged {
+		if hit.verdict.Level != contentsafety.LevelUnsafe {
+			continue
+		}
+		entry := contentSafetyLogEntry(c, info)
+		entry.Decision, entry.Mode, entry.CacheHit = model.ContentSafetyDecisionReviewRejected, model.ContentSafetyModeSync, true
+		entry.ReviewModel, entry.AiCategory, entry.AiReason, entry.UnitCount = cfg.ReviewModel, hit.verdict.Category, hit.verdict.Reason, 1
+		recordContentSafetyLog(entry, []string{hit.verdict.Category}, []string{unitSnippet(hit.unit)})
+		return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
+	}
+	if plan.truncated == 0 {
+		return nil
+	}
+	entry := contentSafetyLogEntry(c, info)
+	entry.Decision, entry.Mode, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, model.ContentSafetyModeSync, model.ContentSafetyFailureTooManyUnits
+	entry.ReviewModel, entry.UnitCount, entry.Truncated = cfg.ReviewModel, len(plan.pending)+plan.truncated, true
+	recordContentSafetyLog(entry, nil, nil)
+	return rejectContent(c, types.ErrorCodeContentReviewUnavailable, http.StatusServiceUnavailable, i18n.MsgContentSafetyUnavailable)
 }
 
 // requestScanText is the text of a request the keyword tier scans, given the
@@ -142,9 +258,9 @@ func requestScanText(request dto.Request, combineText string) string {
 		counted := *r
 		counted.System, counted.Messages = nil, nil
 		parts = []string{counted.GetTokenCountMeta().CombineText, r.Prompt}
-		parts = append(parts, claudeContentText(r.System)...)
+		parts = append(parts, claudeContentText(r.System, true)...)
 		for _, message := range r.Messages {
-			parts = append(parts, claudeContentText(message.Content)...)
+			parts = append(parts, claudeContentText(message.Content, true)...)
 		}
 	case *dto.AudioRequest:
 		// Speech instructions are plain text, not JSON.
@@ -159,8 +275,8 @@ func requestScanText(request dto.Request, combineText string) string {
 // claudeContentText is the plain text a model reads from Claude content as
 // decoded from request JSON: a string, or the text, tool use, tool result,
 // document and search result blocks of a list. Images and thinking are not
-// read as text.
-func claudeContentText(content any) []string {
+// read as text. Tool results are left out unless includeToolResults is set.
+func claudeContentText(content any, includeToolResults bool) []string {
 	if text, ok := content.(string); ok {
 		return []string{text}
 	}
@@ -176,14 +292,16 @@ func claudeContentText(content any) []string {
 			name, _ := item["name"].(string)
 			texts = append(texts, name, contentsafety.CollectValueText(item["input"]))
 		case "tool_result":
-			texts = append(texts, claudeContentText(item["content"])...)
+			if includeToolResults {
+				texts = append(texts, claudeContentText(item["content"], true)...)
+			}
 		case "document":
 			texts = append(texts, claudeDocumentText(item)...)
 		case "search_result":
 			title, _ := item["title"].(string)
 			source, _ := item["source"].(string)
 			texts = append(texts, title, source)
-			texts = append(texts, claudeContentText(item["content"])...)
+			texts = append(texts, claudeContentText(item["content"], includeToolResults)...)
 		}
 	}
 	return texts
@@ -202,15 +320,16 @@ func claudeDocumentText(document map[string]any) []string {
 		data, _ := source["data"].(string)
 		texts = append(texts, data)
 	case "content":
-		texts = append(texts, claudeContentText(source["content"])...)
+		texts = append(texts, claudeContentText(source["content"], true)...)
 	}
 	return texts
 }
 
-// EnforceContentSafety is the AI review tier. It runs after pre-consume, so
-// the caller's existing refund path returns the reservation when the review
-// rejects the request or cannot conclude. Only a pass is remembered as
-// checked; a rejection is returned again on every retry of the request.
+// EnforceContentSafety runs the AI review after pre-consume, so the caller's
+// existing refund path returns the reservation when a synchronous review
+// rejects the request or cannot conclude. A background review only queues
+// the units and returns. Only a pass is remembered as checked; a rejection is
+// returned again on every retry of the request.
 func EnforceContentSafety(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	if rejection, ok := common.GetContextKeyType[*types.NewAPIError](c, constant.ContextKeyContentSafetyRejection); ok {
 		return rejection
@@ -218,10 +337,15 @@ func EnforceContentSafety(c *gin.Context, info *relaycommon.RelayInfo) *types.Ne
 	if common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked) {
 		return nil
 	}
-	windows, _ := common.GetContextKeyType[[]contentsafety.Window](c, constant.ContextKeyContentSafetyWindows)
-	if len(windows) > 0 {
-		if apiErr := reviewContentWindows(c, info, windows); apiErr != nil {
-			return apiErr
+	if plan, ok := common.GetContextKeyType[*contentReviewPlan](c, constant.ContextKeyContentSafetyPlan); ok && plan != nil {
+		cfg := operation_setting.GetContentSafetySetting().Bounded()
+		recordFlaggedSightings(c, info, cfg, plan)
+		if len(plan.pending) > 0 && plan.mode == model.ContentSafetyModeSync {
+			if apiErr := reviewSynchronously(c, info, cfg, plan); apiErr != nil {
+				return apiErr
+			}
+		} else if len(plan.pending) > 0 {
+			queueContentReview(c, info, cfg, plan)
 		}
 	}
 	common.SetContextKey(c, constant.ContextKeyContentSafetyChecked, true)
@@ -234,7 +358,7 @@ func EnforceContentSafetyText(c *gin.Context, info *relaycommon.RelayInfo, text 
 	if rejection, ok := common.GetContextKeyType[*types.NewAPIError](c, constant.ContextKeyContentSafetyRejection); ok {
 		return rejection
 	}
-	if !setting.ShouldCheckPromptSensitive() || common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked) {
+	if !contentsafety.Active() || common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked) {
 		return nil
 	}
 	if apiErr := scanRequestContent(c, info, text); apiErr != nil {
@@ -243,90 +367,69 @@ func EnforceContentSafetyText(c *gin.Context, info *relaycommon.RelayInfo, text 
 	return EnforceContentSafety(c, info)
 }
 
-// reviewContentWindows asks the review model about windows the cache has not
-// decided. Any unsafe or inconclusive window rejects the request.
-func reviewContentWindows(c *gin.Context, info *relaycommon.RelayInfo, windows []contentsafety.Window) *types.NewAPIError {
-	cfg := operation_setting.GetContentSafetySetting().Bounded()
-	prompt := contentsafety.EffectivePrompt(cfg.ReviewPrompt)
-	started := time.Now()
-	entry := model.ContentSafetyLog{ReviewModel: cfg.ReviewModel}
-	pending := make([]contentsafety.Window, 0, len(windows))
-	pendingKeys := make([]string, 0, len(windows))
-	for _, window := range windows {
-		key := contentsafety.CacheKey(cfg.ReviewModel, prompt, window.Text)
-		cached, found := contentsafety.LoadVerdict(key, cfg.CacheTTLSeconds)
-		if !found {
-			pending, pendingKeys = append(pending, window), append(pendingKeys, key)
-			continue
-		}
-		entry.CacheHit = true
-		if !cached.Safe {
-			entry.Decision, entry.AiCategory, entry.AiReason = model.ContentSafetyDecisionReviewRejected, cached.Category, cached.Reason
-			recordContentSafetyLog(c, info, entry, []contentsafety.Window{window})
-			return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
+// recordFlaggedSightings records the non-safe units the cache decided, once
+// per account and unit: a conversation resends its history on every turn.
+func recordFlaggedSightings(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting, plan *contentReviewPlan) {
+	var reviews []unitReview
+	for _, hit := range plan.flagged {
+		if contentsafety.FirstSighting(c.Request.Context(), info.UserId, hit.unit.Key) {
+			reviews = append(reviews, unitReview{unit: hit.unit, verdict: contentsafety.Verdict{Level: hit.verdict.Level, Category: hit.verdict.Category, Reason: hit.verdict.Reason}})
 		}
 	}
-	if len(pending) == 0 {
-		return nil
+	if len(reviews) == 0 {
+		return
 	}
-	batchKey := ""
-	if len(pending) > 1 {
-		batchKey = contentsafety.BatchCacheKey(cfg.ReviewModel, prompt, pendingKeys)
-		if cached, found := contentsafety.LoadVerdict(batchKey, cfg.CacheTTLSeconds); found && cached.Safe {
-			return nil
-		}
-	}
-	review := contentReview{failure: model.ContentSafetyFailureRateLimited}
-	if contentsafety.AllowReview(c.Request.Context(), info.UserId, cfg.ReviewRateLimitPerMinute) {
-		review = callContentReviewer(c, cfg, prompt, pending)
-	}
-	entry.LatencyMs = int(time.Since(started).Milliseconds())
-	entry.ReviewChannelId, entry.ReviewTokens = review.channelId, review.tokens
-	if review.failure != "" {
-		entry.Decision, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, review.failure
-		recordContentSafetyLog(c, info, entry, pending)
+	entry := contentSafetyLogEntry(c, info)
+	entry.Mode, entry.ReviewModel, entry.CacheHit = plan.mode, cfg.ReviewModel, true
+	entry, categories, snippets := summarizeReviews(entry, reviews)
+	recordContentSafetyLog(entry, categories, snippets)
+}
+
+// reviewSynchronously asks the reviewer about every pending unit at once,
+// within the review timeout and the synchronous slots. An unsafe verdict
+// rejects the request, and so does any unit the reviewer could not judge.
+func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting, plan *contentReviewPlan) *types.NewAPIError {
+	entry := contentSafetyLogEntry(c, info)
+	entry.Mode, entry.ReviewModel, entry.UnitCount = model.ContentSafetyModeSync, cfg.ReviewModel, len(plan.pending)
+	if !contentsafety.AllowReview(c.Request.Context(), info.UserId, cfg.ReviewRateLimitPerMinute) {
+		entry.Decision, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, model.ContentSafetyFailureRateLimited
+		recordContentSafetyLog(entry, nil, nil)
 		return rejectContent(c, types.ErrorCodeContentReviewUnavailable, http.StatusServiceUnavailable, i18n.MsgContentSafetyUnavailable)
 	}
-	entry.Decision = model.ContentSafetyDecisionReviewPassed
-	for i, verdict := range review.verdicts {
-		// Only a single-window batch is cached per window. In a larger batch,
-		// text injected into one window can sway the verdict of another either
-		// way, and a cached verdict would then decide that window for everyone.
-		// A larger batch is cached whole, and only when every window is safe,
-		// so it lets nothing but the same set of windows pass unasked.
-		if len(review.verdicts) == 1 {
-			contentsafety.StoreVerdict(pendingKeys[i], contentsafety.CachedVerdict{Safe: verdict.IsSafe(), Category: verdict.Category, Reason: verdict.Reason}, cfg.CacheTTLSeconds)
-		}
-		if !verdict.IsSafe() && entry.Decision == model.ContentSafetyDecisionReviewPassed {
-			entry.Decision, entry.AiCategory, entry.AiReason = model.ContentSafetyDecisionReviewRejected, verdict.Category, verdict.Reason
-		}
+	parent := c.Request.Context()
+	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.ReviewTimeoutSeconds)*time.Second)
+	defer cancel()
+	requestId := c.GetString(common.RequestIdKey)
+	reviews := make([]unitReview, len(plan.pending))
+	var wg sync.WaitGroup
+	for i, unit := range plan.pending {
+		wg.Go(func() { reviews[i] = reviewWithSlot(ctx, parent, requestId, cfg, plan.prompt, unit) })
 	}
-	recordContentSafetyLog(c, info, entry, pending)
-	if entry.Decision == model.ContentSafetyDecisionReviewRejected {
+	wg.Wait()
+	storeVerdicts(reviews, cfg.CacheTTLSeconds)
+	entry, categories, snippets := summarizeReviews(entry, reviews)
+	recordReview(entry, categories, snippets, cfg.PassLogPercent, recordContentSafetyLog)
+	switch entry.Decision {
+	case model.ContentSafetyDecisionReviewRejected:
 		return rejectContent(c, types.ErrorCodeContentReviewRejected, http.StatusBadRequest, i18n.MsgContentSafetyRejected)
-	}
-	if batchKey != "" {
-		contentsafety.StoreVerdict(batchKey, contentsafety.CachedVerdict{Safe: true}, cfg.CacheTTLSeconds)
+	case model.ContentSafetyDecisionReviewFailed:
+		return rejectContent(c, types.ErrorCodeContentReviewUnavailable, http.StatusServiceUnavailable, i18n.MsgContentSafetyUnavailable)
 	}
 	return nil
 }
 
-// callContentReviewer runs one review within the review timeout. The upstream
-// call is bound to the same context, so it ends with the timeout or with the
-// client request; the concurrency slot is held until the call truly returns.
-func callContentReviewer(c *gin.Context, cfg operation_setting.ContentSafetySetting, prompt string, windows []contentsafety.Window) contentReview {
-	parent := c.Request.Context()
-	ctx, cancel := context.WithTimeout(parent, time.Duration(cfg.ReviewTimeoutSeconds)*time.Second)
-	defer cancel()
+// reviewWithSlot runs one synchronous review within ctx. The upstream call is
+// bound to ctx, so it ends with the timeout or with the client request; the
+// slot is held until the call truly returns.
+func reviewWithSlot(ctx, parent context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
 	release, err := contentsafety.AcquireSlot(ctx, cfg.ReviewMaxConcurrency)
 	if err != nil {
-		return contentReview{failure: interruptedReviewFailure(parent)}
+		return unitReview{unit: unit, failure: interruptedReviewFailure(parent)}
 	}
-	done := make(chan contentReview, 1)
-	requestId, group, modelName := c.GetString(common.RequestIdKey), cfg.ReviewGroup, cfg.ReviewModel
+	done := make(chan unitReview, 1)
 	gopool.Go(func() {
 		defer release()
-		done <- runContentReview(ctx, requestId, group, modelName, prompt, windows)
+		done <- reviewUnit(ctx, requestId, cfg, prompt, unit)
 	})
 	select {
 	case review := <-done:
@@ -336,7 +439,7 @@ func callContentReviewer(c *gin.Context, cfg operation_setting.ContentSafetySett
 		}
 		return review
 	case <-ctx.Done():
-		return contentReview{failure: interruptedReviewFailure(parent)}
+		return unitReview{unit: unit, failure: interruptedReviewFailure(parent)}
 	}
 }
 
@@ -349,38 +452,189 @@ func interruptedReviewFailure(parent context.Context) string {
 	return model.ContentSafetyFailureTimeout
 }
 
-// runContentReview tries up to two channels that serve the review model, and
-// stops as soon as ctx ends because nobody waits for the answer any more.
-func runContentReview(ctx context.Context, requestId, group, modelName, prompt string, windows []contentsafety.Window) contentReview {
-	system, user, err := contentsafety.ReviewMessages(prompt, windows, rand.Text())
+// queueContentReview hands the pending units to the background reviewers.
+// An account over its queue quota, or a full queue, is recorded and, when
+// reviews are enforced, has its next requests reviewed synchronously, so
+// flooding the queue never lets a request skip its review.
+func queueContentReview(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting, plan *contentReviewPlan) {
+	entry := contentSafetyLogEntry(c, info)
+	entry.Mode, entry.ReviewModel = plan.mode, cfg.ReviewModel
+	entry.UnitCount, entry.Truncated = len(plan.pending)+plan.truncated, plan.truncated > 0
+	failure := ""
+	size := int64(0)
+	for _, unit := range plan.pending {
+		size += int64(len(unit.Text) + len(unit.Context))
+	}
+	requestId := entry.RequestId
+	if !contentsafety.AllowEnqueue(c.Request.Context(), info.UserId, cfg.AsyncRatePerMinute) {
+		failure = model.ContentSafetyFailureRateLimited
+	} else if !contentsafety.EnqueueReview(size, func() { reviewInBackground(entry, requestId, plan) }) {
+		failure = model.ContentSafetyFailureQueueFull
+	}
+	if failure == "" {
+		return
+	}
+	if plan.mode == model.ContentSafetyModeAsync {
+		contentsafety.ForceSync(info.UserId)
+	}
+	entry.Decision, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, failure
+	recordContentSafetyLog(entry, nil, nil)
+}
+
+// reviewInBackground reviews queued units one after another, each within the
+// review timeout, and records the outcome.
+func reviewInBackground(entry model.ContentSafetyLog, requestId string, plan *contentReviewPlan) {
+	cfg := operation_setting.GetContentSafetySetting().Bounded()
+	reviews := make([]unitReview, 0, len(plan.pending))
+	for _, unit := range plan.pending {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.ReviewTimeoutSeconds)*time.Second)
+		review := reviewUnit(ctx, requestId, cfg, plan.prompt, unit)
+		if review.failure != "" && ctx.Err() != nil {
+			review.failure = model.ContentSafetyFailureTimeout
+		}
+		cancel()
+		reviews = append(reviews, review)
+	}
+	storeVerdicts(reviews, cfg.CacheTTLSeconds)
+	entry, categories, snippets := summarizeReviews(entry, reviews)
+	recordReview(entry, categories, snippets, cfg.PassLogPercent, func(entry model.ContentSafetyLog, categories, snippets []string) {
+		if encoded, ok := encodeLogLists(entry, categories, snippets); ok {
+			model.RecordContentSafetyLog(encoded)
+		}
+	})
+}
+
+// reviewUnit tries up to two channels that serve the review model, and stops
+// as soon as ctx ends because nobody waits for the answer any more. An HTTP
+// 400 from a channel is the provider refusing the text itself; it concludes
+// as controversial unless another channel judges the text.
+func reviewUnit(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
+	started := time.Now()
+	review := reviewUnitOnChannels(ctx, requestId, cfg, prompt, unit)
+	review.latencyMs = int(time.Since(started).Milliseconds())
+	return review
+}
+
+func reviewUnitOnChannels(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
+	system, user, err := contentsafety.ReviewMessages(prompt, []contentsafety.Unit{unit}, rand.Text())
 	if err != nil {
-		return contentReview{failure: model.ContentSafetyFailureUpstreamError}
+		return unitReview{unit: unit, failure: model.ContentSafetyFailureUpstreamError}
 	}
 	// Reasoning models spend part of max_tokens on hidden reasoning before the
 	// JSON reply, so the budget leaves room well beyond the reply itself.
-	maxTokens := uint(min(4096, 512+64*len(windows)))
-	review := contentReview{failure: model.ContentSafetyFailureNoChannel}
+	const maxTokens = uint(1024)
+	review := unitReview{unit: unit, failure: model.ContentSafetyFailureNoChannel}
 	for retry := range 2 {
 		if ctx.Err() != nil {
 			return review
 		}
-		channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, nil)
+		channel, err := model.GetRandomSatisfiedChannel(cfg.ReviewGroup, cfg.ReviewModel, retry, nil)
 		if err != nil || channel == nil {
 			return review
 		}
-		reply, tokens, err := askContentReviewer(ctx, requestId, channel, modelName, system, user, maxTokens)
+		reply, tokens, err := askContentReviewer(ctx, requestId, channel, cfg.ReviewModel, system, user, maxTokens)
 		if err != nil {
 			common.SysError(common.LogText("content safety review via channel %d failed (request_id=%s): %s", channel.Id, requestId, err.Error()))
-			review = contentReview{channelId: channel.Id, failure: model.ContentSafetyFailureUpstreamError}
+			var apiErr *types.NewAPIError
+			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusBadRequest {
+				review = unitReview{unit: unit, channelId: channel.Id, refused: true,
+					verdict: contentsafety.Verdict{Level: contentsafety.LevelControversial, Category: "other", Reason: refusedReason}}
+				continue
+			}
+			if !review.refused {
+				review = unitReview{unit: unit, channelId: channel.Id, failure: model.ContentSafetyFailureUpstreamError}
+			}
 			continue
 		}
-		verdicts, err := contentsafety.ParseVerdicts(reply, len(windows))
+		verdicts, err := contentsafety.ParseVerdicts(reply, 1)
 		if err != nil {
-			return contentReview{channelId: channel.Id, tokens: tokens, failure: model.ContentSafetyFailureUnparseable}
+			return unitReview{unit: unit, channelId: channel.Id, tokens: tokens, failure: model.ContentSafetyFailureUnparseable}
 		}
-		return contentReview{verdicts: verdicts, channelId: channel.Id, tokens: tokens}
+		return unitReview{unit: unit, verdict: verdicts[0], channelId: channel.Id, tokens: tokens}
 	}
 	return review
+}
+
+// storeVerdicts caches every verdict the reviewer gave. Refusals and failed
+// reviews are asked again next time.
+func storeVerdicts(reviews []unitReview, ttlSeconds int) {
+	for _, review := range reviews {
+		if review.failure != "" || review.refused {
+			continue
+		}
+		contentsafety.StoreVerdict(review.unit.Key, contentsafety.CachedVerdict{Level: review.verdict.Level, Category: review.verdict.Category, Reason: review.verdict.Reason}, ttlSeconds)
+	}
+}
+
+// summarizeReviews folds unit reviews into one log entry. An unsafe unit
+// decides the request: rejected when it was reviewed synchronously, flagged
+// otherwise. Without one, a failed review decides, then a controversial unit,
+// then a pass. It returns the categories and excerpts of the units behind the
+// decision.
+func summarizeReviews(entry model.ContentSafetyLog, reviews []unitReview) (model.ContentSafetyLog, []string, []string) {
+	entry.UnitCount = max(entry.UnitCount, len(reviews))
+	var unsafe, failed, controversial []unitReview
+	for _, review := range reviews {
+		entry.LatencyMs = max(entry.LatencyMs, review.latencyMs)
+		entry.ReviewTokens += review.tokens
+		if entry.ReviewChannelId == 0 {
+			entry.ReviewChannelId = review.channelId
+		}
+		switch {
+		case review.failure != "":
+			failed = append(failed, review)
+		case review.verdict.Level == contentsafety.LevelUnsafe:
+			unsafe = append(unsafe, review)
+		case review.verdict.Level == contentsafety.LevelControversial:
+			controversial = append(controversial, review)
+		}
+	}
+	decisive := controversial
+	switch {
+	case len(unsafe) > 0:
+		decisive, entry.Decision = unsafe, model.ContentSafetyDecisionReviewFlagged
+		if entry.Mode == model.ContentSafetyModeSync {
+			entry.Decision = model.ContentSafetyDecisionReviewRejected
+		}
+	case len(failed) > 0:
+		decisive, entry.Decision, entry.FailureReason = failed, model.ContentSafetyDecisionReviewFailed, failed[0].failure
+	case len(controversial) > 0:
+		entry.Decision = model.ContentSafetyDecisionReviewControversial
+	default:
+		entry.Decision = model.ContentSafetyDecisionReviewPassed
+		return entry, nil, nil
+	}
+	var categories, snippets []string
+	for _, review := range decisive[:min(len(decisive), maxLoggedSnippets)] {
+		snippets = append(snippets, unitSnippet(review.unit))
+		if review.verdict.Category != "" && !slices.Contains(categories, review.verdict.Category) {
+			categories = append(categories, review.verdict.Category)
+		}
+		if review.refused && entry.FailureReason == "" {
+			entry.FailureReason = model.ContentSafetyFailureRefused
+		}
+	}
+	entry.AiCategory, entry.AiReason = decisive[0].verdict.Category, decisive[0].verdict.Reason
+	return entry, categories, snippets
+}
+
+// unitSnippet is the stored excerpt of a unit: its start, within two
+// snippet radii.
+func unitSnippet(unit contentsafety.Unit) string {
+	runes := []rune(unit.Text)
+	return string(runes[:min(len(runes), 2*contentsafety.SnippetRadius)])
+}
+
+// recordReview writes a review decision through record. Passed reviews are
+// sampled at percent, and a kept one stands for the ones left out.
+func recordReview(entry model.ContentSafetyLog, categories, snippets []string, percent int, record func(model.ContentSafetyLog, []string, []string)) {
+	if entry.Decision == model.ContentSafetyDecisionReviewPassed {
+		if percent <= 0 || mathrand.IntN(100) >= percent {
+			return
+		}
+		entry.Weight = (100 + percent/2) / percent
+	}
+	record(entry, categories, snippets)
 }
 
 // askContentReviewer sends one non-stream chat completion to channel through
@@ -474,33 +728,51 @@ func rejectContent(c *gin.Context, code types.ErrorCode, status int, messageKey 
 	return rejection
 }
 
-// recordContentSafetyLog stores one decision with short excerpts around the
-// hits, without delaying the request.
-func recordContentSafetyLog(c *gin.Context, info *relaycommon.RelayInfo, entry model.ContentSafetyLog, windows []contentsafety.Window) {
-	hitWords, err := common.Marshal(contentsafety.Words(windows))
-	if err != nil {
-		logger.LogError(c, common.LogText("content safety log encode failed: %s", err.Error()))
-		return
+// contentSafetyLogEntry starts a log entry with who sent the request and
+// where, read while the request context is still live.
+func contentSafetyLogEntry(c *gin.Context, info *relaycommon.RelayInfo) model.ContentSafetyLog {
+	entry := model.ContentSafetyLog{
+		RequestId:   c.GetString(common.RequestIdKey),
+		Username:    c.GetString(string(constant.ContextKeyUserName)),
+		TokenName:   c.GetString("token_name"),
+		RequestPath: c.Request.URL.Path,
 	}
-	logged := windows[:min(len(windows), maxLoggedWindows)]
-	snippets := make([]string, len(logged))
-	for i, window := range logged {
-		snippets[i] = window.Snippet(contentsafety.SnippetRadius)
-	}
-	encodedSnippets, err := common.Marshal(snippets)
-	if err != nil {
-		logger.LogError(c, common.LogText("content safety log encode failed: %s", err.Error()))
-		return
-	}
-	entry.HitWords, entry.Snippets = string(hitWords), string(encodedSnippets)
-	entry.RequestId = c.GetString(common.RequestIdKey)
-	entry.Username = c.GetString(string(constant.ContextKeyUserName))
-	entry.TokenName = c.GetString("token_name")
-	entry.RequestPath = c.Request.URL.Path
 	if info != nil {
 		entry.UserId, entry.TokenId, entry.UsingGroup, entry.Model = info.UserId, info.TokenId, info.UsingGroup, info.OriginModelName
 	}
-	gopool.Go(func() { model.RecordContentSafetyLog(entry) })
+	return entry
+}
+
+// encodeLogLists stores the hit words or categories and the excerpts of an
+// entry as JSON string arrays.
+func encodeLogLists(entry model.ContentSafetyLog, words, snippets []string) (model.ContentSafetyLog, bool) {
+	if words == nil {
+		words = []string{}
+	}
+	if snippets == nil {
+		snippets = []string{}
+	}
+	hitWords, err := common.Marshal(words)
+	if err != nil {
+		common.SysError(common.LogText("content safety log encode failed: %s", err.Error()))
+		return entry, false
+	}
+	encodedSnippets, err := common.Marshal(snippets)
+	if err != nil {
+		common.SysError(common.LogText("content safety log encode failed: %s", err.Error()))
+		return entry, false
+	}
+	entry.HitWords, entry.Snippets = string(hitWords), string(encodedSnippets)
+	return entry, true
+}
+
+// recordContentSafetyLog stores one decision without delaying the request.
+func recordContentSafetyLog(entry model.ContentSafetyLog, words, snippets []string) {
+	encoded, ok := encodeLogLists(entry, words, snippets)
+	if !ok {
+		return
+	}
+	gopool.Go(func() { model.RecordContentSafetyLog(encoded) })
 }
 
 // taskRequestText is the prompt-bearing text of a task submission, read from

@@ -5,35 +5,59 @@ import (
 	"slices"
 
 	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
 )
 
+// Decisions. review_rejected is an unsafe verdict that stopped the request;
+// review_flagged is an unsafe verdict on a request that went on, because it
+// was reviewed in the background or in shadow mode.
 const (
-	ContentSafetyDecisionKeywordBlocked = "keyword_blocked"
-	ContentSafetyDecisionReviewPassed   = "review_passed"
-	ContentSafetyDecisionReviewRejected = "review_rejected"
-	ContentSafetyDecisionReviewFailed   = "review_failed"
+	ContentSafetyDecisionKeywordBlocked      = "keyword_blocked"
+	ContentSafetyDecisionReviewPassed        = "review_passed"
+	ContentSafetyDecisionReviewControversial = "review_controversial"
+	ContentSafetyDecisionReviewFlagged       = "review_flagged"
+	ContentSafetyDecisionReviewRejected      = "review_rejected"
+	ContentSafetyDecisionReviewFailed        = "review_failed"
 
 	ContentSafetyFailureTimeout        = "timeout"
 	ContentSafetyFailureNoChannel      = "no_channel"
 	ContentSafetyFailureUnparseable    = "unparseable"
-	ContentSafetyFailureTooManyWindows = "too_many_windows"
+	ContentSafetyFailureRefused        = "refused"
+	ContentSafetyFailureTooManyUnits   = "too_many_units"
 	ContentSafetyFailureRateLimited    = "rate_limited"
+	ContentSafetyFailureQueueFull      = "queue_full"
 	ContentSafetyFailureUpstreamError  = "upstream_error"
 	ContentSafetyFailureClientCanceled = "client_canceled"
+
+	// Modes say when a review ran: before the request went upstream (sync),
+	// in the background with actions (async) or in the background without
+	// them (shadow).
+	ContentSafetyModeSync   = "sync"
+	ContentSafetyModeAsync  = "async"
+	ContentSafetyModeShadow = "shadow"
 )
 
-const contentSafetyDeleteBatch = 1000
+const (
+	contentSafetyDeleteBatch = 1000
+	// contentSafetyStatsLatencyRows bounds the reviews read for latency
+	// percentiles.
+	contentSafetyStatsLatencyRows = 5000
+)
 
 var contentSafetyDecisions = []string{
 	ContentSafetyDecisionKeywordBlocked,
 	ContentSafetyDecisionReviewPassed,
+	ContentSafetyDecisionReviewControversial,
+	ContentSafetyDecisionReviewFlagged,
 	ContentSafetyDecisionReviewRejected,
 	ContentSafetyDecisionReviewFailed,
 }
 
 // ContentSafetyLog records one keyword block or AI review of request content.
 // HitWords and Snippets are JSON string arrays; snippets keep only short
-// excerpts around hits, never the whole request.
+// excerpts around hits, never the whole request. Weight is how many reviews
+// the row stands for: passed reviews are sampled, and each kept one counts
+// for the ones left out.
 type ContentSafetyLog struct {
 	Id              int    `json:"id"`
 	EventId         string `json:"event_id" gorm:"type:varchar(64);uniqueIndex;index:idx_csl_time_event,priority:2;index:idx_csl_user_time,priority:3;index:idx_csl_decision_time,priority:3"`
@@ -57,6 +81,10 @@ type ContentSafetyLog struct {
 	LatencyMs       int    `json:"latency_ms"`
 	ReviewTokens    int    `json:"review_tokens"`
 	CacheHit        bool   `json:"cache_hit"`
+	Mode            string `json:"mode" gorm:"type:varchar(16)"`
+	UnitCount       int    `json:"unit_count"`
+	Truncated       bool   `json:"truncated"`
+	Weight          int    `json:"weight"`
 }
 
 type ContentSafetyLogFilter struct {
@@ -81,6 +109,7 @@ func RecordContentSafetyLog(entry ContentSafetyLog) {
 	if entry.EventId == "" {
 		entry.EventId = common.NewRequestId()
 	}
+	entry.Weight = max(entry.Weight, 1)
 	// MySQL strict mode and PostgreSQL reject over-long values, which would lose the record.
 	for _, field := range []struct {
 		value *string
@@ -88,7 +117,7 @@ func RecordContentSafetyLog(entry ContentSafetyLog) {
 	}{
 		{&entry.EventId, 64}, {&entry.RequestId, 64}, {&entry.Username, 64}, {&entry.TokenName, 128},
 		{&entry.UsingGroup, 64}, {&entry.Model, 255}, {&entry.RequestPath, 255}, {&entry.Decision, 32},
-		{&entry.FailureReason, 32}, {&entry.AiCategory, 64}, {&entry.ReviewModel, 128},
+		{&entry.FailureReason, 32}, {&entry.AiCategory, 64}, {&entry.ReviewModel, 128}, {&entry.Mode, 16},
 	} {
 		if runes := []rune(*field.value); len(runes) > field.width {
 			*field.value = string(runes[:field.width])
@@ -108,16 +137,9 @@ func RecordContentSafetyLog(entry ContentSafetyLog) {
 func GetContentSafetyLogs(filter ContentSafetyLogFilter, start, limit int, viewerRole int) ([]*ContentSafetyLog, int64, error) {
 	start = max(start, 0)
 	limit = min(max(limit, 1), 100)
-	query := LOG_DB.Model(&ContentSafetyLog{})
-	if viewerRole < common.RoleRootUser {
-		var rootIds []int
-		if err := DB.Unscoped().Model(&User{}).Where("role >= ?", common.RoleRootUser).Pluck("id", &rootIds).Error; err != nil {
-			return nil, 0, err
-		}
-		// An empty slice would render as NOT IN (NULL) and match nothing.
-		if len(rootIds) > 0 {
-			query = query.Where("user_id NOT IN ?", rootIds)
-		}
+	query, err := contentSafetyLogsVisibleTo(viewerRole)
+	if err != nil {
+		return nil, 0, err
 	}
 	if filter.RequestId != "" {
 		query = query.Where("request_id = ?", filter.RequestId)
@@ -146,6 +168,77 @@ func GetContentSafetyLogs(filter ContentSafetyLogFilter, start, limit int, viewe
 		return nil, 0, err
 	}
 	return logs, total, nil
+}
+
+// contentSafetyLogsVisibleTo starts a query over the records a viewer may
+// read: below root, never those of root users.
+func contentSafetyLogsVisibleTo(viewerRole int) (*gorm.DB, error) {
+	query := LOG_DB.Model(&ContentSafetyLog{})
+	if viewerRole >= common.RoleRootUser {
+		return query, nil
+	}
+	var rootIds []int
+	if err := DB.Unscoped().Model(&User{}).Where("role >= ?", common.RoleRootUser).Pluck("id", &rootIds).Error; err != nil {
+		return nil, err
+	}
+	// An empty slice would render as NOT IN (NULL) and match nothing.
+	if len(rootIds) > 0 {
+		query = query.Where("user_id NOT IN ?", rootIds)
+	}
+	return query, nil
+}
+
+// ContentSafetyStatsCount is the number of checks with one outcome. Sampled
+// passed reviews count with their weight.
+type ContentSafetyStatsCount struct {
+	Decision      string `json:"decision"`
+	Mode          string `json:"mode"`
+	FailureReason string `json:"failure_reason"`
+	Total         int64  `json:"total"`
+}
+
+// ContentSafetyStats sums the checks since a time, so an administrator can
+// judge a reviewer before enforcing it. Latency covers the reviews that asked
+// the reviewer, the most recent contentSafetyStatsLatencyRows of them.
+type ContentSafetyStats struct {
+	Counts         []ContentSafetyStatsCount `json:"counts"`
+	LatencyP50Ms   int                       `json:"latency_p50_ms"`
+	LatencyP95Ms   int                       `json:"latency_p95_ms"`
+	LatencySamples int                       `json:"latency_samples"`
+}
+
+func GetContentSafetyStats(since int64, viewerRole int) (*ContentSafetyStats, error) {
+	stats := &ContentSafetyStats{Counts: make([]ContentSafetyStatsCount, 0)}
+	counts, err := contentSafetyLogsVisibleTo(viewerRole)
+	if err != nil {
+		return nil, err
+	}
+	err = counts.Where("created_at >= ?", since).
+		Select("decision, mode, failure_reason, SUM(CASE WHEN weight > 0 THEN weight ELSE 1 END) AS total").
+		Group("decision, mode, failure_reason").
+		Scan(&stats.Counts).Error
+	if err != nil {
+		return nil, err
+	}
+	latencies, err := contentSafetyLogsVisibleTo(viewerRole)
+	if err != nil {
+		return nil, err
+	}
+	var samples []int
+	err = latencies.Where("created_at >= ? AND latency_ms > 0", since).
+		Order("created_at DESC").Limit(contentSafetyStatsLatencyRows).
+		Pluck("latency_ms", &samples).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(samples) == 0 {
+		return stats, nil
+	}
+	slices.Sort(samples)
+	stats.LatencySamples = len(samples)
+	stats.LatencyP50Ms = samples[(len(samples)-1)*50/100]
+	stats.LatencyP95Ms = samples[(len(samples)-1)*95/100]
+	return stats, nil
 }
 
 // DeleteContentSafetyLogsBefore removes records older than cutoff. ClickHouse
@@ -189,13 +282,24 @@ func MigrateContentSafetyLogs() error {
 	if !common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		return LOG_DB.AutoMigrate(&ContentSafetyLog{})
 	}
-	return LOG_DB.Exec(`CREATE TABLE IF NOT EXISTS content_safety_logs (
+	if err := LOG_DB.Exec(`CREATE TABLE IF NOT EXISTS content_safety_logs (
 		id Int64 DEFAULT 0, event_id String, created_at Int64, request_id String, user_id Int64,
 		username String, token_id Int64, token_name String, using_group String, model String,
 		request_path String, decision String, failure_reason String, hit_words String, snippets String,
 		ai_category String, ai_reason String, review_channel_id Int64, review_model String,
-		latency_ms Int64, review_tokens Int64, cache_hit UInt8
+		latency_ms Int64, review_tokens Int64, cache_hit UInt8,
+		mode String, unit_count Int64, truncated UInt8, weight Int64 DEFAULT 1
 	) ENGINE = MergeTree()
 	PARTITION BY toYYYYMM(toDateTime(created_at))
-	ORDER BY (created_at, event_id)`).Error
+	ORDER BY (created_at, event_id)`).Error; err != nil {
+		return err
+	}
+	// Tables created before these columns get them; IF NOT EXISTS makes a
+	// second start a no-op.
+	for _, column := range []string{"mode String", "unit_count Int64", "truncated UInt8", "weight Int64 DEFAULT 1"} {
+		if err := LOG_DB.Exec("ALTER TABLE content_safety_logs ADD COLUMN IF NOT EXISTS " + column).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -1,10 +1,9 @@
 package contentsafety
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -14,14 +13,20 @@ import (
 )
 
 const (
-	verdictCacheNamespace  = "new-api:content_safety:verdict:v1"
+	verdictCacheNamespace  = "new-api:content_safety:verdict:v2"
 	verdictCacheCapacity   = 100000
 	verdictCacheDefaultTTL = 7 * 24 * time.Hour
+	// localVerdictTTL bounds how long a node keeps a verdict it read from
+	// Redis. A verdict never changes for its key, so this only bounds memory
+	// and how long a lowered cache TTL takes to apply.
+	localVerdictTTL      = 10 * time.Minute
+	verdictReadTimeout   = 2 * time.Second
+	localVerdictCapacity = 50000
 )
 
-// CachedVerdict is a definitive conclusion kept for one window text.
+// CachedVerdict is a stored review conclusion for one unit text.
 type CachedVerdict struct {
-	Safe     bool   `json:"safe"`
+	Level    string `json:"level"`
 	Category string `json:"category"`
 	Reason   string `json:"reason"`
 }
@@ -29,6 +34,7 @@ type CachedVerdict struct {
 var (
 	verdictCacheOnce sync.Once
 	verdictCache     *cachex.HybridCache[CachedVerdict]
+	localVerdicts    *hot.HotCache[string, CachedVerdict]
 )
 
 func getVerdictCache() *cachex.HybridCache[CachedVerdict] {
@@ -47,44 +53,88 @@ func getVerdictCache() *cachex.HybridCache[CachedVerdict] {
 					Build()
 			},
 		})
+		localVerdicts = hot.NewHotCache[string, CachedVerdict](hot.LRU, localVerdictCapacity).
+			WithTTL(localVerdictTTL).
+			WithJanitor().
+			Build()
 	})
 	return verdictCache
 }
 
-// CacheKey identifies a window text under one review model, prompt and reply
-// contract, so changing any of them invalidates earlier conclusions.
-func CacheKey(model, prompt, text string) string {
-	sum := sha256.Sum256([]byte(model + "\x00" + prompt + "\x00" + outputContract + "\x00" + text))
+func redisVerdicts() bool {
+	return common.RedisEnabled && common.RDB != nil
+}
+
+// CacheKey identifies a verdict by everything that decides it: the review
+// engine and model, the prompt, the reply contract and the unit text.
+func CacheKey(engine, prompt, text string) string {
+	sum := sha256.Sum256([]byte(engine + "\x00" + prompt + "\x00" + outputContract + "\x00" + text))
 	return hex.EncodeToString(sum[:])
 }
 
-// BatchCacheKey identifies a set of windows reviewed together, by their window
-// keys in any order, under one review model and prompt. The marker after the
-// model keeps it apart from the key of a single window, whose text a client
-// chooses and could make spell out the window keys of a batch.
-func BatchCacheKey(model, prompt string, windowKeys []string) string {
-	return CacheKey(model+"\x00batch", prompt, strings.Join(slices.Sorted(slices.Values(windowKeys)), "\n"))
-}
-
-// LoadVerdict returns a cached conclusion. A zero ttlSeconds disables the cache.
-func LoadVerdict(key string, ttlSeconds int) (CachedVerdict, bool) {
-	if ttlSeconds <= 0 {
-		return CachedVerdict{}, false
+// LoadVerdicts returns the cached verdicts among keys. A node's own copy is
+// read first; the rest come from Redis in one round trip, or from the memory
+// cache without Redis. A failed read finds nothing, so the unit is reviewed.
+func LoadVerdicts(keys []string, ttlSeconds int) map[string]CachedVerdict {
+	found := make(map[string]CachedVerdict, len(keys))
+	if ttlSeconds <= 0 || len(keys) == 0 {
+		return found
 	}
-	verdict, found, err := getVerdictCache().Get(key)
+	cache := getVerdictCache()
+	missing := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if verdict, ok, _ := localVerdicts.Get(key); ok {
+			found[key] = verdict
+			continue
+		}
+		missing = append(missing, key)
+	}
+	if len(missing) == 0 {
+		return found
+	}
+	if !redisVerdicts() {
+		for _, key := range missing {
+			if verdict, ok, err := cache.Get(key); err == nil && ok {
+				found[key] = verdict
+			}
+		}
+		return found
+	}
+	fullKeys := make([]string, len(missing))
+	for i, key := range missing {
+		fullKeys[i] = cache.FullKey(key)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), verdictReadTimeout)
+	defer cancel()
+	values, err := common.RDB.MGet(ctx, fullKeys...).Result()
 	if err != nil {
 		common.SysError(common.LogText("content safety verdict cache read failed: %s", err.Error()))
-		return CachedVerdict{}, false
+		return found
 	}
-	return verdict, found
+	for i, value := range values {
+		raw, ok := value.(string)
+		if !ok {
+			continue
+		}
+		var verdict CachedVerdict
+		if err := common.UnmarshalJsonStr(raw, &verdict); err != nil {
+			continue
+		}
+		found[missing[i]] = verdict
+		localVerdicts.SetWithTTL(missing[i], verdict, min(localVerdictTTL, time.Duration(ttlSeconds)*time.Second))
+	}
+	return found
 }
 
-// StoreVerdict keeps a conclusion for ttlSeconds. A zero ttlSeconds disables the cache.
+// StoreVerdict remembers the verdict for key for ttlSeconds.
 func StoreVerdict(key string, verdict CachedVerdict, ttlSeconds int) {
 	if ttlSeconds <= 0 {
 		return
 	}
-	if err := getVerdictCache().SetWithTTL(key, verdict, time.Duration(ttlSeconds)*time.Second); err != nil {
+	ttl := time.Duration(ttlSeconds) * time.Second
+	if err := getVerdictCache().SetWithTTL(key, verdict, ttl); err != nil {
 		common.SysError(common.LogText("content safety verdict cache write failed: %s", err.Error()))
+		return
 	}
+	localVerdicts.SetWithTTL(key, verdict, min(localVerdictTTL, ttl))
 }
