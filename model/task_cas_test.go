@@ -150,7 +150,7 @@ func TestUnfinishedTaskQueriesDatabaseMatrix(t *testing.T) {
 			assert.False(t, HasUnfinishedSyncTasks())
 
 			const cutoff int64 = 1_800_000_000
-			for _, status := range []TaskStatus{TaskStatusNotStart, TaskStatusSubmitted, TaskStatusQueued, TaskStatusInProgress, TaskStatusSuccess, TaskStatusFailure} {
+			for _, status := range []TaskStatus{TaskStatusNotStart, TaskStatusSubmitted, TaskStatusQueued, TaskStatusInProgress, TaskStatusUnknown, TaskStatusSuccess, TaskStatusFailure} {
 				for _, progress := range []string{"99%", "100%"} {
 					t.Run(string(status)+"/"+progress, func(t *testing.T) {
 						task := &Task{TaskID: "query_candidate", Status: status, Progress: progress, SubmitTime: cutoff - 1}
