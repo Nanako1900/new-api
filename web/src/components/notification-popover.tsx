@@ -17,19 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
-import { Bell, Megaphone } from 'lucide-react'
+import { Bell, CheckCheck, CircleAlert, Megaphone } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { EmptyState } from '@/components/empty-state'
 import { RichContent } from '@/components/rich-content'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
 import {
   Popover,
   PopoverContent,
@@ -40,9 +34,12 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { AlertHistoryList } from '@/features/console-alerts/components/alert-history-list'
+import type { ConsoleAlert } from '@/features/console-alerts/types'
 import { getAnnouncementColorClass } from '@/lib/colors'
 import { formatDateTimeObject } from '@/lib/time'
 import { cn } from '@/lib/utils'
+import type { NotificationTab } from '@/stores/notification-store'
 
 interface AnnouncementItem {
   id?: number | string
@@ -56,8 +53,18 @@ interface NotificationPopoverProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   unreadCount: number
-  activeTab: 'notice' | 'announcements'
-  onTabChange: (tab: 'notice' | 'announcements') => void
+  unreadAlertsCount?: number
+  unreadNoticeCount?: number
+  unreadAnnouncementsCount?: number
+  activeTab: NotificationTab
+  onTabChange: (tab: NotificationTab) => void
+  showAlertsTab?: boolean
+  alerts?: ConsoleAlert[]
+  dismissedAlertKeys?: string[]
+  onDismissAlert?: (alert: ConsoleAlert) => void
+  onRestoreAlert?: (alert: ConsoleAlert) => void
+  onRestoreAllAlerts?: () => void
+  onMarkAllRead?: () => void
   notice: string
   announcements: AnnouncementItem[]
   loading: boolean
@@ -151,61 +158,37 @@ function getAnnouncementRenderKey(announcement: AnnouncementItem): string {
 }
 
 /**
- * Empty state component
- */
-function EmptyState({
-  icon,
-  title,
-  description,
-}: {
-  icon: React.ReactNode
-  title: string
-  description?: string
-}) {
-  return (
-    <Empty className='min-h-48 border-0 p-4'>
-      <EmptyHeader>
-        <EmptyMedia variant='icon'>{icon}</EmptyMedia>
-        <EmptyTitle>{title}</EmptyTitle>
-        {description ? (
-          <EmptyDescription>{description}</EmptyDescription>
-        ) : null}
-      </EmptyHeader>
-    </Empty>
-  )
-}
-
-/**
  * Notice tab content
  */
-function NoticeContent({
-  notice,
-  loading,
-  t,
-}: {
+function NoticeContent(props: {
   notice: string
   loading: boolean
   t: TFunction
 }) {
-  if (loading) {
+  if (props.loading) {
     return (
       <EmptyState
-        icon={<Bell />}
-        title={t('Loading...')}
-        description={t('Latest platform updates and notices')}
+        icon={Bell}
+        title={props.t('Loading...')}
+        description={props.t('Latest platform updates and notices')}
+        className='min-h-48 border-0 p-4'
       />
     )
   }
 
-  if (!notice) {
+  if (!props.notice) {
     return (
-      <EmptyState icon={<Bell />} title={t('No announcements at this time')} />
+      <EmptyState
+        icon={Bell}
+        title={props.t('No announcements at this time')}
+        className='min-h-48 border-0 p-4'
+      />
     )
   }
 
   return (
     <ScrollArea className='h-[min(52vh,28rem)] pr-3'>
-      <RichContent breaks content={notice} />
+      <RichContent breaks content={props.notice} />
     </ScrollArea>
   )
 }
@@ -213,41 +196,42 @@ function NoticeContent({
 /**
  * Announcements tab content
  */
-function AnnouncementsContent({
-  announcements,
-  loading,
-  t,
-}: {
+function AnnouncementsContent(props: {
   announcements: AnnouncementItem[]
   loading: boolean
   t: TFunction
 }) {
-  if (loading) {
+  if (props.loading) {
     return (
       <EmptyState
-        icon={<Megaphone />}
-        title={t('Loading...')}
-        description={t('Latest platform updates and notices')}
+        icon={Megaphone}
+        title={props.t('Loading...')}
+        description={props.t('Latest platform updates and notices')}
+        className='min-h-48 border-0 p-4'
       />
     )
   }
 
-  if (announcements.length === 0) {
+  if (props.announcements.length === 0) {
     return (
-      <EmptyState icon={<Megaphone />} title={t('No system announcements')} />
+      <EmptyState
+        icon={Megaphone}
+        title={props.t('No system announcements')}
+        className='min-h-48 border-0 p-4'
+      />
     )
   }
 
   return (
     <ScrollArea className='h-[min(52vh,28rem)] pr-3'>
       <div className='flex flex-col'>
-        {announcements.map((item, idx) => {
+        {props.announcements.map((item, idx) => {
           const announcementKey = getAnnouncementRenderKey(item)
           const publishDate = item.publishDate
             ? new Date(item.publishDate)
             : null
           const relativeTime = publishDate
-            ? getRelativeTime(publishDate, t)
+            ? getRelativeTime(publishDate, props.t)
             : ''
           const absoluteTime = publishDate
             ? formatDateTimeObject(publishDate)
@@ -278,7 +262,7 @@ function AnnouncementsContent({
                   </div>
                 </div>
               </div>
-              {idx < announcements.length - 1 ? <Separator /> : null}
+              {idx < props.announcements.length - 1 ? <Separator /> : null}
             </div>
           )
         })}
@@ -288,39 +272,34 @@ function AnnouncementsContent({
 }
 
 /**
- * Notification popover with Notice and Announcements tabs
+ * Notification popover with Site Alerts, Notice and Timeline tabs
  */
-export function NotificationPopover({
-  open,
-  onOpenChange,
-  unreadCount,
-  activeTab,
-  onTabChange,
-  notice,
-  announcements,
-  loading,
-  className,
-}: NotificationPopoverProps) {
+export function NotificationPopover(props: NotificationPopoverProps) {
   const { t } = useTranslation()
+  const showAlertsTab = props.showAlertsTab ?? false
+  const unreadAlerts = props.unreadAlertsCount ?? 0
+  const unreadNotice = props.unreadNoticeCount ?? 0
+  const unreadAnnouncements = props.unreadAnnouncementsCount ?? 0
+
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover open={props.open} onOpenChange={props.onOpenChange}>
       <PopoverTrigger
         render={
           <Button
             variant='ghost'
             size='icon'
-            className={cn('relative size-9', className)}
+            className={cn('relative size-9', props.className)}
             aria-label={t('Notifications')}
           />
         }
       >
-        <Bell className='size-[1.2rem]' />
-        {unreadCount > 0 ? (
+        <Bell className='size-[1.2rem]' aria-hidden='true' />
+        {props.unreadCount > 0 ? (
           <Badge
             variant='destructive'
             className='absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center px-1 text-[10px] font-semibold tabular-nums'
           >
-            {unreadCount > 99 ? '99+' : unreadCount}
+            {props.unreadCount > 99 ? '99+' : props.unreadCount}
           </Badge>
         ) : null}
       </PopoverTrigger>
@@ -330,43 +309,103 @@ export function NotificationPopover({
         sideOffset={8}
         className='w-[min(26rem,calc(100vw-1rem))] gap-3 p-3'
       >
-        <PopoverHeader className='gap-1 px-1'>
-          <PopoverTitle>{t('System Announcements')}</PopoverTitle>
-          <p className='text-muted-foreground text-xs'>
-            {t('Latest platform updates and notices')}
-          </p>
-        </PopoverHeader>
+        <div className='flex items-start justify-between gap-2 px-1'>
+          <PopoverHeader className='gap-1'>
+            <PopoverTitle>{t('System Announcements')}</PopoverTitle>
+            <p className='text-muted-foreground text-xs'>
+              {t('Latest platform updates and notices')}
+            </p>
+          </PopoverHeader>
+          {props.unreadCount > 0 && props.onMarkAllRead ? (
+            <Button
+              type='button'
+              variant='ghost'
+              size='xs'
+              className='text-muted-foreground hover:text-foreground shrink-0 gap-1 text-xs'
+              onClick={props.onMarkAllRead}
+            >
+              <CheckCheck aria-hidden='true' className='size-3.5' />
+              {t('Mark all read')}
+            </Button>
+          ) : null}
+        </div>
 
         <Tabs
-          value={activeTab}
-          onValueChange={onTabChange as (value: string) => void}
+          value={props.activeTab}
+          onValueChange={props.onTabChange as (value: string) => void}
         >
-          <TabsList className='grid w-full grid-cols-2'>
+          <TabsList
+            className={cn(
+              'grid w-full',
+              showAlertsTab ? 'grid-cols-3' : 'grid-cols-2'
+            )}
+          >
+            {showAlertsTab ? (
+              <TabsTrigger value='alerts' className='gap-1.5'>
+                <CircleAlert aria-hidden='true' className='size-3.5' />
+                <span className='truncate'>{t('Alerts')}</span>
+                {unreadAlerts > 0 ? (
+                  <span
+                    aria-hidden='true'
+                    className='bg-destructive size-1.5 shrink-0 rounded-full'
+                  />
+                ) : null}
+              </TabsTrigger>
+            ) : null}
             <TabsTrigger value='notice' className='gap-1.5'>
-              <Bell className='size-3.5' />
-              {t('Notice')}
+              <Bell aria-hidden='true' className='size-3.5' />
+              <span className='truncate'>{t('Notice')}</span>
+              {unreadNotice > 0 ? (
+                <span
+                  aria-hidden='true'
+                  className='bg-destructive size-1.5 shrink-0 rounded-full'
+                />
+              ) : null}
             </TabsTrigger>
             <TabsTrigger value='announcements' className='gap-1.5'>
-              <Megaphone className='size-3.5' />
-              {t('Timeline')}
+              <Megaphone aria-hidden='true' className='size-3.5' />
+              <span className='truncate'>{t('Timeline')}</span>
+              {unreadAnnouncements > 0 ? (
+                <span
+                  aria-hidden='true'
+                  className='bg-destructive size-1.5 shrink-0 rounded-full'
+                />
+              ) : null}
             </TabsTrigger>
           </TabsList>
 
+          {showAlertsTab ? (
+            <TabsContent value='alerts' className='mt-2'>
+              <AlertHistoryList
+                alerts={props.alerts ?? []}
+                dismissedKeys={props.dismissedAlertKeys ?? []}
+                loading={props.loading}
+                onDismissAlert={props.onDismissAlert}
+                onRestoreAlert={props.onRestoreAlert}
+                onRestoreAllAlerts={props.onRestoreAllAlerts}
+              />
+            </TabsContent>
+          ) : null}
+
           <TabsContent value='notice' className='mt-2'>
-            <NoticeContent notice={notice} loading={loading} t={t} />
+            <NoticeContent
+              notice={props.notice}
+              loading={props.loading}
+              t={t}
+            />
           </TabsContent>
 
           <TabsContent value='announcements' className='mt-2'>
             <AnnouncementsContent
-              announcements={announcements}
-              loading={loading}
+              announcements={props.announcements}
+              loading={props.loading}
               t={t}
             />
           </TabsContent>
         </Tabs>
 
         <div className='flex justify-end'>
-          <Button size='sm' onClick={() => onOpenChange(false)}>
+          <Button size='sm' onClick={() => props.onOpenChange(false)}>
             {t('Close')}
           </Button>
         </div>

@@ -19,53 +19,101 @@ For commercial licensing, please contact support@quantumnous.com
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+export type NotificationTab = 'alerts' | 'notice' | 'announcements'
+
 interface NotificationState {
   // Last read Notice content signature (full trimmed message)
   lastReadNotice: string
   // Array of read announcement keys (id or content hash)
   readAnnouncementKeys: string[]
+  // Array of read console alert keys (id:contentHash)
+  readAlertKeys: string[]
   // Timestamp of last "Close Today" action
   closedUntilDate: string | null
+
+  // Non-persisted popover UI coordination state
+  popoverOpen: boolean
+  activeTab: NotificationTab
 
   // Actions
   markNoticeRead: (noticeContent: string) => void
   markAnnouncementsRead: (keys: string[]) => void
+  markAlertsRead: (keys: string[]) => void
+  pruneReadAlerts: (validKeys: string[]) => void
   setClosedUntilDate: (date: string | null) => void
+  setPopoverOpen: (open: boolean) => void
+  setActiveTab: (tab: NotificationTab) => void
+  openNotificationTab: (tab: NotificationTab) => void
   isAnnouncementRead: (key: string) => boolean
+  isAlertRead: (key: string) => boolean
   isNoticeClosed: () => boolean
 }
 
 /**
- * Notification store for tracking read status of Notice and Announcements
- * Persists to localStorage to maintain state across sessions
+ * Notification store for tracking read status of Alerts, Notice and Announcements
+ * Persists read state to localStorage to maintain state across sessions
  */
 export const useNotificationStore = create<NotificationState>()(
   persist(
     (set, get) => ({
       lastReadNotice: '',
       readAnnouncementKeys: [],
+      readAlertKeys: [],
       closedUntilDate: null,
+      popoverOpen: false,
+      activeTab: 'notice',
 
       markNoticeRead: (noticeContent: string) => {
         // Persist the full trimmed content so edits beyond 100 chars register
         const normalizedContent = noticeContent.trim()
+        if (get().lastReadNotice === normalizedContent) return
         set({ lastReadNotice: normalizedContent })
       },
 
       markAnnouncementsRead: (keys: string[]) => {
-        set((state) => ({
-          readAnnouncementKeys: [
-            ...new Set([...state.readAnnouncementKeys, ...keys]),
-          ],
-        }))
+        const existing = get().readAnnouncementKeys
+        const next = [...new Set([...existing, ...keys])]
+        if (next.length === existing.length) return
+        set({ readAnnouncementKeys: next })
+      },
+
+      markAlertsRead: (keys: string[]) => {
+        const existing = get().readAlertKeys
+        const next = [...new Set([...existing, ...keys])]
+        if (next.length === existing.length) return
+        set({ readAlertKeys: next })
+      },
+
+      pruneReadAlerts: (validKeys: string[]) => {
+        const existing = get().readAlertKeys
+        const kept = existing.filter((key) => validKeys.includes(key))
+        if (kept.length !== existing.length) {
+          set({ readAlertKeys: kept })
+        }
       },
 
       setClosedUntilDate: (date: string | null) => {
         set({ closedUntilDate: date })
       },
 
+      setPopoverOpen: (open: boolean) => {
+        set({ popoverOpen: open })
+      },
+
+      setActiveTab: (tab: NotificationTab) => {
+        set({ activeTab: tab })
+      },
+
+      openNotificationTab: (tab: NotificationTab) => {
+        set({ activeTab: tab, popoverOpen: true })
+      },
+
       isAnnouncementRead: (key: string) => {
         return get().readAnnouncementKeys.includes(key)
+      },
+
+      isAlertRead: (key: string) => {
+        return get().readAlertKeys.includes(key)
       },
 
       isNoticeClosed: () => {
@@ -81,6 +129,7 @@ export const useNotificationStore = create<NotificationState>()(
       partialize: (state) => ({
         lastReadNotice: state.lastReadNotice,
         readAnnouncementKeys: state.readAnnouncementKeys,
+        readAlertKeys: state.readAlertKeys,
         closedUntilDate: state.closedUntilDate,
       }),
     }
