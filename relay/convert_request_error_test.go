@@ -367,3 +367,20 @@ func TestImageHelperKeepsAdaptorClassifiedConvertError(t *testing.T) {
 	assert.True(t, types.IsSkipRetryError(apiErr), "other channels must not be asked to serve the same name")
 	assert.Contains(t, apiErr.Error(), "not served by the alibaba task plugin")
 }
+
+func TestImageHelperAdaptorConversionFailureIsLocal(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAnthropic)
+	request := &dto.ImageRequest{Model: "gpt-image-2", Prompt: "a cat"}
+	info := &relaycommon.RelayInfo{Request: request, OriginModelName: request.Model, RelayMode: relayconstant.RelayModeImagesGenerations}
+
+	apiErr := ImageHelper(c, info)
+
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeConvertRequestFailed, apiErr.GetErrorCode())
+	assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+	assert.True(t, types.IsSkipRetryError(apiErr))
+	assert.False(t, types.IsChannelError(apiErr))
+	assert.Equal(t, "local", service.RelayErrorSource(apiErr))
+}
