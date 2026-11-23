@@ -360,6 +360,28 @@ func TestEpayCallbacksVerifyBeforeSettlement(t *testing.T) {
 	assertEpayCallbacksVerifyBeforeSettlement(t, cases)
 }
 
+// Signature verification is covered by the endpoint tests; this decision needs no signed payload.
+func TestEpayCallbackPartnerPolicy(t *testing.T) {
+	const merchant = "merchant-a"
+	for _, tc := range []struct {
+		name     string
+		signType string
+		params   map[string]string
+		accept   bool
+	}{
+		{"RSA accepts own merchant", epay.SignTypeRSA, map[string]string{"pid": merchant}, true},
+		{"RSA rejects missing merchant", epay.SignTypeRSA, map[string]string{}, false},
+		{"RSA rejects different merchant", epay.SignTypeRSA, map[string]string{"pid": "merchant-b"}, false},
+		{"MD5 does not require merchant", epay.SignTypeMD5, map[string]string{}, true},
+		{"default MD5 does not compare merchant", "", map[string]string{"pid": "merchant-b"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &epay.Client{Config: &epay.Config{PartnerID: merchant, SignType: tc.signType}}
+			assert.Equal(t, tc.accept, epayCallbackPartnerMatches(client, tc.params))
+		})
+	}
+}
+
 func TestEpayRSAModeSignsOrdersAndVerifiesCallbacks(t *testing.T) {
 	setupEpayCallbackTest(t)
 	paymentSetting := operation_setting.GetPaymentSetting()
