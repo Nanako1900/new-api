@@ -1196,3 +1196,112 @@ func TestFrontendSimulationContract(t *testing.T) {
 		})
 	}
 }
+
+func TestTierUnitPrices(t *testing.T) {
+	const claude = `v1:len <= 200000 ? tier("standard", p * 3 + c * 15 + cr * 0.3 + cc * 3.75 + cc1h * 6) : tier("long_context", p * 6 + c * 22.5 + cr * 0.6 + cc * 7.5 + cc1h * 12)`
+	for _, tc := range []struct {
+		name         string
+		expr         string
+		label        string
+		prices       map[string]float64
+		requestRules bool
+		wantErr      bool
+	}{
+		{
+			name:   "selects the matched tier",
+			expr:   claude,
+			label:  "long_context",
+			prices: map[string]float64{"p": 6, "c": 22.5, "cr": 0.6, "cc": 7.5, "cc1h": 12},
+		},
+		{
+			name:   "constant on the left, division and subtraction",
+			expr:   `tier("base", 2 * p + c / 4 - cr * 0.5 + 0.1 * (cc + cc12h))`,
+			label:  "base",
+			prices: map[string]float64{"p": 2, "c": 0.25, "cr": -0.5, "cc": 0.1, "cc12h": 0.1},
+		},
+		{
+			name:   "single tier with an empty label request",
+			expr:   `tier("base", p * 2 + c * 8)`,
+			label:  "",
+			prices: map[string]float64{"p": 2, "c": 8},
+		},
+		{
+			name:         "request rules outside the tier are reported",
+			expr:         `tier("base", p * 2 + cr * 0.2) * (param("service_tier") == "flex" ? 0.5 : 1)`,
+			label:        "base",
+			prices:       map[string]float64{"p": 2, "cr": 0.2},
+			requestRules: true,
+		},
+		{
+			name:    "rule inside a tier body is not linear",
+			expr:    `tier("base", p * (header("x") == "y" ? 2 : 1))`,
+			label:   "base",
+			wantErr: true,
+		},
+		{
+			name:    "fixed price tier has no token prices",
+			expr:    `tier("base", fixed(0.01))`,
+			label:   "base",
+			wantErr: true,
+		},
+		{
+			name:    "product of two variables is not linear",
+			expr:    `tier("base", p * c)`,
+			label:   "base",
+			wantErr: true,
+		},
+		{
+			name:   "time windows that pick the tier are not request rules",
+			expr:   `weekday("Asia/Shanghai") >= 1 && hour("Asia/Shanghai") >= 9 ? tier("peak", p * 0.3 + cr * 0.006 + c * 1.2) : tier("off_peak", p * 0.15 + cr * 0.003 + c * 0.6)`,
+			label:  "off_peak",
+			prices: map[string]float64{"p": 0.15, "cr": 0.003, "c": 0.6},
+		},
+		{
+			name:    "a constant factor outside the tier changes every price",
+			expr:    `(tier("base", p * 2 + cr * 1)) * 0.5`,
+			label:   "base",
+			wantErr: true,
+		},
+		{
+			name:    "an untraced conditional factor is unknown after the fact",
+			expr:    `tier("base", p * 2 + cr * 1) * (param("a") == 1 ? 2 : 1.5)`,
+			label:   "base",
+			wantErr: true,
+		},
+		{
+			name:    "a function around the tier is not a price list",
+			expr:    `max(tier("base", p * 2 + cr * 1), 1)`,
+			label:   "base",
+			wantErr: true,
+		},
+		{
+			name:    "an empty label cannot tell a tier branch from a plain branch",
+			expr:    `len > 1000 ? tier("a", p * 2 + cr * 1) : p * 2`,
+			label:   "",
+			wantErr: true,
+		},
+		{
+			name:    "unknown label",
+			expr:    claude,
+			label:   "missing",
+			wantErr: true,
+		},
+		{
+			name:    "empty label is ambiguous with several tiers",
+			expr:    claude,
+			label:   "",
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := billingexpr.TierUnitPrices(tc.expr, tc.label)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.prices, got.Unit)
+			assert.Equal(t, tc.requestRules, got.HasRequestRules)
+		})
+	}
+}

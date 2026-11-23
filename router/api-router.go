@@ -159,6 +159,10 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)
 				selfRoute.POST("/checkin", middleware.UserCriticalRateLimit("checkin"), middleware.CaptchaGate(middleware.CaptchaScopeCheckin), controller.DoCheckin)
 
+				// Cache subsidy campaigns
+				selfRoute.GET("/cache_subsidy", controller.GetUserCacheSubsidies)
+				selfRoute.POST("/cache_subsidy/claim", middleware.UserCriticalRateLimit("cache_subsidy"), middleware.CaptchaGate(middleware.CaptchaScopeCacheSubsidy), controller.ClaimUserCacheSubsidy)
+
 				// Custom OAuth bindings
 				selfRoute.GET("/oauth/bindings", controller.GetUserOAuthBindings)
 				selfRoute.DELETE("/oauth/bindings/:provider_id", controller.UnbindCustomOAuth)
@@ -205,6 +209,20 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionRoute.POST("/creem/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestCreemPay)
 			subscriptionRoute.POST("/waffo-pancake/pay", middleware.CriticalRateLimit(), controller.SubscriptionRequestWaffoPancakePay)
 		}
+		cacheSubsidyAdminRoute := apiRouter.Group("/cache_subsidy/admin")
+		cacheSubsidyAdminRoute.Use(middleware.AdminAuth())
+		{
+			cacheSubsidyAdminRoute.GET("/campaigns", controller.AdminListCacheSubsidyCampaigns)
+			cacheSubsidyAdminRoute.POST("/campaigns", controller.AdminCreateCacheSubsidyCampaign)
+			cacheSubsidyAdminRoute.GET("/campaigns/:id", controller.AdminGetCacheSubsidyCampaign)
+			cacheSubsidyAdminRoute.PUT("/campaigns/:id", controller.AdminUpdateCacheSubsidyCampaign)
+			cacheSubsidyAdminRoute.DELETE("/campaigns/:id", controller.AdminDeleteCacheSubsidyCampaign)
+			cacheSubsidyAdminRoute.GET("/campaigns/:id/grants", controller.AdminListCacheSubsidyGrants)
+			for _, action := range []string{"calculate", "reset", "open", "close"} {
+				cacheSubsidyAdminRoute.POST("/campaigns/:id/"+action, controller.AdminCacheSubsidyCampaignAction(action))
+			}
+		}
+
 		subscriptionAdminRoute := apiRouter.Group("/subscription/admin")
 		subscriptionAdminRoute.Use(middleware.AdminAuth())
 		{

@@ -50,12 +50,11 @@ func (p *requestRulePatcher) Visit(node *ast.Node) {
 	}
 
 	conditional, ok := (*node).(*ast.ConditionalNode)
-	if !ok || !conditional.Ternary || !usesRequestProbe(conditional.Cond) {
+	if !ok {
 		return
 	}
-	multiplier, ok := requestRuleNumber(conditional.Exp1)
-	fallback, fallbackOK := requestRuleNumber(conditional.Exp2)
-	if !ok || !fallbackOK || fallback != 1 {
+	multiplier, ok := tracedRequestRule(conditional)
+	if !ok {
 		return
 	}
 
@@ -82,6 +81,20 @@ func (p *requestRulePatcher) Visit(node *ast.Node) {
 			multiplierNode,
 		},
 	})
+}
+
+// tracedRequestRule reports whether conditional is a request multiplier the
+// patcher traces: `request condition ? N : 1`, and returns N.
+func tracedRequestRule(conditional *ast.ConditionalNode) (float64, bool) {
+	if !conditional.Ternary || !usesRequestProbe(conditional.Cond) {
+		return 0, false
+	}
+	multiplier, ok := requestRuleNumber(conditional.Exp1)
+	fallback, fallbackOK := requestRuleNumber(conditional.Exp2)
+	if !ok || !fallbackOK || fallback != 1 {
+		return 0, false
+	}
+	return multiplier, true
 }
 
 func requestRuleNumber(node ast.Node) (float64, bool) {

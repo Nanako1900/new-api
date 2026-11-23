@@ -259,3 +259,46 @@ func TestGlobalCacheUsageDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+// TestScanConsumeLogBatchDatabaseMatrix pages through a window with a batch
+// smaller than a run of logs sharing one second, on every log database.
+func TestScanConsumeLogBatchDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres", "clickhouse"} {
+		t.Run(dialect, func(t *testing.T) {
+			db := openGlobalLogTestDB(t, dialect)
+			rows := []Log{
+				{UserId: 1, Type: LogTypeConsume, CreatedAt: 999, ModelName: "before"},
+				{UserId: 1, Type: LogTypeConsume, CreatedAt: 1500, ModelName: "a"},
+				{UserId: 2, Type: LogTypeConsume, CreatedAt: 1500, ModelName: "b"},
+				{UserId: 3, Type: LogTypeConsume, CreatedAt: 1500, ModelName: "c"},
+				{UserId: 1, Type: LogTypeError, CreatedAt: 1600, ModelName: "error"},
+				{UserId: 2, Type: LogTypeConsume, CreatedAt: 1700, ModelName: "d", Other: `{"cache_tokens":5}`},
+				{UserId: 2, Type: LogTypeConsume, CreatedAt: 2000, ModelName: "end"},
+			}
+			for i := range rows {
+				rows[i].RequestId = fmt.Sprintf("req-%02d", i)
+				require.NoError(t, db.Create(&rows[i]).Error)
+			}
+
+			var seen []string
+			cursor := ConsumeLogCursor{}
+			for range 10 {
+				batch, err := ScanConsumeLogBatch(context.Background(), cursor, 1000, 2000, 2)
+				require.NoError(t, err)
+				for _, log := range batch {
+					seen = append(seen, log.ModelName)
+					cursor = ConsumeLogCursor{CreatedAt: log.CreatedAt, Id: int64(log.Id), RequestId: log.RequestId}
+				}
+				if len(batch) < 2 {
+					break
+				}
+			}
+			assert.Equal(t, []string{"a", "b", "c", "d"}, seen)
+
+			last, err := ScanConsumeLogBatch(context.Background(), ConsumeLogCursor{CreatedAt: 1500, Id: int64(rows[3].Id), RequestId: rows[3].RequestId}, 1000, 2000, 5)
+			require.NoError(t, err)
+			require.Len(t, last, 1)
+			assert.Equal(t, `{"cache_tokens":5}`, last[0].Other, "billing fields are read unredacted")
+		})
+	}
+}
