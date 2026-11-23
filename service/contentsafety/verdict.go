@@ -49,6 +49,29 @@ func IsDecisionErrorCode(code string) bool {
 	return false
 }
 
+// refusalMarkers are the error codes and message phrases, lowercased, with
+// which providers refuse a text on content grounds: DeepSeek's "Content
+// Exists Risk", OpenAI's and Azure's content filter and policy errors,
+// Alibaba's data inspection, and messages about risky, unsafe, sensitive or
+// inappropriate content.
+var refusalMarkers = []string{
+	"content exists risk", "content risk", "content_filter", "content filter", "content_policy", "content policy",
+	"content management policy", "data_inspection_failed", "datainspectionfailed", "safety", "sensitive",
+	"moderation", "inappropriate",
+}
+
+// IsReviewRefusal reports whether err, returned by a review channel, is the
+// provider refusing to read the text on content grounds: a 4xx whose code,
+// type or message names a content refusal. Any other error is a failure of
+// the channel, which a synchronous review does not let through.
+func IsReviewRefusal(err *types.NewAPIError) bool {
+	if err == nil || err.StatusCode < 400 || err.StatusCode >= 500 {
+		return false
+	}
+	described := strings.ToLower(string(err.GetErrorCode()) + "\n" + err.ToOpenAIError().Type + "\n" + err.Error())
+	return slices.ContainsFunc(refusalMarkers, func(marker string) bool { return strings.Contains(described, marker) })
+}
+
 // Verdict is the reviewer's conclusion for one unit.
 type Verdict struct {
 	Id       int    `json:"id"`

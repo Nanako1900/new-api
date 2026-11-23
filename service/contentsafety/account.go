@@ -32,15 +32,17 @@ func accountCaches() {
 	})
 }
 
-// AccountCreatedAt is when userId registered, in Unix seconds. It never
-// changes, so each node reads it once per accountAgeCacheTTL.
+// AccountCreatedAt is when userId registered, in Unix seconds, or 0 when the
+// account has no registration time, which callers read as an established
+// account. It never changes, so each node reads it once per
+// accountAgeCacheTTL.
 func AccountCreatedAt(userId int) (int64, error) {
 	accountCaches()
 	if createdAt, ok, _ := accountCreatedAt.Get(userId); ok {
 		return createdAt, nil
 	}
 	var createdAt int64
-	if err := model.DB.Model(&model.User{}).Where("id = ?", userId).Select("created_at").Scan(&createdAt).Error; err != nil {
+	if err := model.DB.Model(&model.User{}).Where("id = ?", userId).Select("COALESCE(created_at, 0)").Scan(&createdAt).Error; err != nil {
 		return 0, err
 	}
 	accountCreatedAt.Set(userId, createdAt)
@@ -55,7 +57,7 @@ func FirstSighting(ctx context.Context, userId int, key string) bool {
 	if common.RedisEnabled && common.RDB != nil {
 		fresh, err := common.RDB.SetNX(ctx, fmt.Sprintf("content_safety:sighting:%d:%s", userId, key), 1, sightingTTL).Result()
 		if err != nil {
-			common.SysError(common.LogText("content safety sighting check failed: %s", err.Error()))
+			warnRedisFailure("sighting check", err)
 			return true
 		}
 		return fresh

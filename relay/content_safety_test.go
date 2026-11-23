@@ -3,6 +3,8 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -186,6 +188,11 @@ func TestContentSafetyGate(t *testing.T) {
 		{name: "text without any keyword is reviewed too", text: "how do I hurt my neighbour", reply: reviewerReply(unsafeReply), wantCode: types.ErrorCodeContentReviewRejected, wantStatus: http.StatusBadRequest, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewRejected},
 		{name: "a controversial verdict lets the request through", text: "how do lock picks work", reply: reviewerReply(controversialReply), wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewControversial},
 		{name: "a refusal by the review channel concludes as controversial", text: "a text the reviewer will not read", reply: refusal, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewControversial, wantFailure: model.ContentSafetyFailureRefused},
+		{name: "a client error that is no content refusal fails closed", text: "a question with a bad parameter", reply: func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"max_tokens is too large","type":"invalid_request_error","code":"invalid_value"}}`))
+		}, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUpstreamError},
 		{name: "an unreadable verdict fails closed", text: "a question", reply: reviewerReply("I think it is fine"), wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUnparseable},
 		{name: "an upstream error fails closed after one more channel attempt", text: "another question", reply: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUpstreamError},
 		{name: "no review channel fails closed", text: "a text without reviewer", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.ReviewModel = "missing-model" }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureNoChannel},
@@ -264,6 +271,12 @@ func TestPrepareRequestBillingScansContentBeforePreConsume(t *testing.T) {
 		{name: "a block word beside a Claude search result", format: types.RelayFormatClaude, request: &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{{Role: "user", Content: []any{map[string]any{"type": "text", "text": "make a bomb"}, map[string]any{"type": "search_result", "source": "https://example.com/notes", "title": "notes", "content": []any{map[string]any{"type": "text", "text": "hello"}}}}}}}, blocked: true},
 		{name: "a block word in a document inside a Claude tool result", format: types.RelayFormatClaude, request: &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{{Role: "user", Content: []any{map[string]any{"type": "tool_result", "tool_use_id": "toolu_1", "content": []any{map[string]any{"type": "document", "source": map[string]any{"type": "text", "media_type": "text/plain", "data": "make a bomb"}}}}}}}}, blocked: true},
 		{name: "a block word beside a search result inside a Claude tool result", format: types.RelayFormatClaude, request: &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{{Role: "user", Content: []any{map[string]any{"type": "tool_result", "tool_use_id": "toolu_1", "content": []any{map[string]any{"type": "text", "text": "make a bomb"}, map[string]any{"type": "search_result", "source": "https://example.com/notes", "title": "notes", "content": []any{map[string]any{"type": "text", "text": "hello"}}}}}}}}}, blocked: true},
+		{name: "a block word in a Claude MCP tool result", format: types.RelayFormatClaude, request: &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{{Role: "user", Content: []any{map[string]any{"type": "mcp_tool_result", "tool_use_id": "mcptoolu_1", "content": []any{map[string]any{"type": "text", "text": "make a bomb"}}}}}}}, blocked: true},
+		{name: "a block word in a Claude server tool call", format: types.RelayFormatClaude, request: &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{{Role: "assistant", Content: []any{map[string]any{"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": map[string]any{"query": "make a bomb"}}}}}}, blocked: true},
+		{name: "a block word in Gemini inline text data", format: types.RelayFormatGemini, request: &kitdto.GeminiChatRequest{Contents: []kitdto.GeminiChatContent{{Role: "user", Parts: []kitdto.GeminiPart{{Text: "summarize"}, {InlineData: &kitdto.GeminiInlineData{MimeType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte("make a bomb"))}}}}}}, blocked: true},
+		{name: "a block word in a Gemini response schema", format: types.RelayFormatGemini, request: &kitdto.GeminiChatRequest{Contents: []kitdto.GeminiChatContent{{Role: "user", Parts: []kitdto.GeminiPart{{Text: "hello"}}}}, GenerationConfig: kitdto.GeminiChatGenerationConfig{ResponseSchema: map[string]any{"type": "object", "properties": map[string]any{"bomb": map[string]any{"type": "string"}}}}}, blocked: true},
+		{name: "a block word in a Gemini response JSON schema", format: types.RelayFormatGemini, request: &kitdto.GeminiChatRequest{Contents: []kitdto.GeminiChatContent{{Role: "user", Parts: []kitdto.GeminiPart{{Text: "hello"}}}}, GenerationConfig: kitdto.GeminiChatGenerationConfig{ResponseJsonSchema: common.RawMessage(`{"type":"object","description":"` + escapedBomb + `"}`)}}, blocked: true},
+		{name: "a block word in an embedding input", format: types.RelayFormatEmbedding, request: &kitdto.EmbeddingRequest{Model: "gpt-test", Input: "make a bomb"}, blocked: true},
 		{name: "a block word in a Chat prediction", format: types.RelayFormatOpenAI, request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: userHello, Prediction: common.RawMessage(`{"type":"content","content":"make a bomb"}`)}, blocked: true},
 		{name: "an escaped block word in Chat prediction text parts", format: types.RelayFormatOpenAI, request: &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: userHello, Prediction: common.RawMessage(`{"type":"content","content":[{"type":"text","text":"` + escapedBomb + `"}]}`)}, blocked: true},
 	} {
@@ -355,6 +368,17 @@ func TestContentSafetyReviewReadsEachFormatByMessage(t *testing.T) {
 				{"type":"message","role":"user","content":"thanks"}]`)},
 			toolResults: true,
 			wantRoles:   []string{user, tool, assistant, user, system, meta},
+			wantText:    map[string]string{user: "thanks", tool: "the tool result", system: "be brief"},
+		},
+		{
+			name: "Responses compaction",
+			request: &kitdto.OpenAIResponsesCompactionRequest{Model: "gpt-test", Instructions: common.RawMessage(`"be brief"`), Input: common.RawMessage(`[
+				{"role":"user","content":[{"type":"input_text","text":"find it"}]},
+				{"type":"function_call","call_id":"c1","name":"lookup","arguments":"{}"},
+				{"type":"function_call_output","call_id":"c1","output":"the tool result"},
+				{"type":"message","role":"user","content":"thanks"}]`)},
+			toolResults: true,
+			wantRoles:   []string{user, tool, assistant, user, system},
 			wantText:    map[string]string{user: "thanks", tool: "the tool result", system: "be brief"},
 		},
 		{
@@ -477,12 +501,15 @@ func TestContentSafetySyncReviewIsForAccountsThatNeedIt(t *testing.T) {
 		configure func(*operation_setting.ContentSafetySetting)
 		info      func(*relaycommon.RelayInfo)
 		createdAt int64
-		wantMode  string
+		// noCreatedAt clears the account's registration time.
+		noCreatedAt bool
+		wantMode    string
 	}{
 		{name: "an account in a listed group", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncGroups = "vip\nrisky" }, info: func(info *relaycommon.RelayInfo) { info.UserGroup = "risky" }, wantMode: model.ContentSafetyModeSync},
 		{name: "a token choosing a listed group", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncGroups = "risky" }, info: func(info *relaycommon.RelayInfo) { info.UsingGroup = "risky" }, wantMode: model.ContentSafetyModeAsync},
 		{name: "a new account", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncNewUserDays = 3 }, createdAt: -3600, wantMode: model.ContentSafetyModeSync},
 		{name: "an established account", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncNewUserDays = 3 }, createdAt: -4 * 86400, wantMode: model.ContentSafetyModeAsync},
+		{name: "an account without a registration time", configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.SyncNewUserDays = 3 }, noCreatedAt: true, wantMode: model.ContentSafetyModeAsync},
 		{name: "an account whose background reviews were dropped", info: func(info *relaycommon.RelayInfo) { contentsafety.ForceSync(info.UserId) }, wantMode: model.ContentSafetyModeSync},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -495,6 +522,9 @@ func TestContentSafetySyncReviewIsForAccountsThatNeedIt(t *testing.T) {
 			c, info := newContentSafetyContext(nextContentSafetyUser())
 			require.NoError(t, model.DB.AutoMigrate(&model.User{}))
 			require.NoError(t, model.DB.Create(&model.User{Id: info.UserId, Username: "cs-" + strconv.Itoa(info.UserId), Status: common.UserStatusEnabled, Group: "default", CreatedAt: common.GetTimestamp() + tc.createdAt}).Error)
+			if tc.noCreatedAt {
+				require.NoError(t, model.DB.Exec("UPDATE users SET created_at = NULL WHERE id = ?", info.UserId).Error)
+			}
 			if tc.info != nil {
 				tc.info(info)
 			}
@@ -525,22 +555,34 @@ func TestContentSafetyReviewOfTooManyNewUnits(t *testing.T) {
 		assert.Equal(t, model.ContentSafetyFailureTooManyUnits, logs[0].FailureReason)
 		assert.True(t, logs[0].Truncated)
 	})
-	t.Run("background", func(t *testing.T) {
-		calls := setupContentSafetyReview(t, reviewerReply(controversialReply))
-		reviewInTheBackground(operation_setting.ContentReviewModeShadow)
-		operation_setting.GetContentSafetySetting().MaxUnits = 2
-		c, info := newContentSafetyContext(nextContentSafetyUser())
-		request := &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: messages()}
-		info.Request = request
-		require.Nil(t, checkContent(c, info, ""))
-		logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewControversial)
-		assert.True(t, logs[0].Truncated)
-		assert.Equal(t, 3, logs[0].UnitCount)
-		assert.Equal(t, int32(2), calls.Load(), "the two newest units are reviewed")
-		var snippets []string
-		require.NoError(t, common.UnmarshalJsonStr(logs[0].Snippets, &snippets))
-		assert.Contains(t, snippets, request.Messages[2].StringContent())
-	})
+	// An enforced background review that leaves units unread has the
+	// account's next requests reviewed first, so padding every request with
+	// new filler cannot keep an older message from ever being reviewed.
+	for _, tc := range []struct {
+		mode       string
+		wantForced bool
+	}{
+		{mode: operation_setting.ContentReviewModeShadow},
+		{mode: operation_setting.ContentReviewModeEnforce, wantForced: true},
+	} {
+		t.Run("background "+tc.mode, func(t *testing.T) {
+			calls := setupContentSafetyReview(t, reviewerReply(controversialReply))
+			reviewInTheBackground(tc.mode)
+			operation_setting.GetContentSafetySetting().MaxUnits = 2
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			request := &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: messages()}
+			info.Request = request
+			require.Nil(t, checkContent(c, info, ""))
+			logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewControversial)
+			assert.True(t, logs[0].Truncated)
+			assert.Equal(t, 3, logs[0].UnitCount)
+			assert.Equal(t, int32(2), calls.Load(), "the two newest units are reviewed")
+			var snippets []string
+			require.NoError(t, common.UnmarshalJsonStr(logs[0].Snippets, &snippets))
+			assert.Contains(t, snippets, request.Messages[2].StringContent())
+			assert.Equal(t, tc.wantForced, contentsafety.SyncForced(context.Background(), info.UserId))
+		})
+	}
 }
 
 // An account over its background quota cannot flood the queue to slip a
@@ -616,14 +658,18 @@ func TestContentSafetySyncRejectionIsRefunded(t *testing.T) {
 	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewRejected)
 }
 
+// The synchronous review limit counts new units, not requests.
 func TestContentSafetyReviewRateLimitFailsClosed(t *testing.T) {
 	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
-	operation_setting.GetContentSafetySetting().ReviewRateLimitPerMinute = 1
+	operation_setting.GetContentSafetySetting().ReviewRateLimitPerMinute = 2
 	userId := nextContentSafetyUser()
 	c, info := newContentSafetyContext(userId)
 	require.Nil(t, checkContent(c, info, saltedText("first knife text")))
 	c, info = newContentSafetyContext(userId)
-	apiErr := checkContent(c, info, saltedText("second knife text"))
+	info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{
+		{Role: "user", Content: saltedText("second knife text")}, {Role: "assistant", Content: saltedText("an answer")},
+	}}
+	apiErr := checkContent(c, info, "")
 	require.NotNil(t, apiErr)
 	assert.Equal(t, types.ErrorCodeContentReviewUnavailable, apiErr.GetErrorCode())
 	assert.Equal(t, int32(1), calls.Load())
@@ -820,4 +866,257 @@ func TestRelayMidjourneySubmitReviewsTheForwardedBody(t *testing.T) {
 			requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionKeywordBlocked)
 		})
 	}
+}
+
+// Text a model reads in Claude blocks other than the known ones, in Gemini
+// inline text data and in Gemini response schemas is reviewed too. Images and
+// thinking are not text, and tool results follow the tool-results switch.
+func TestContentSafetyReviewReadsTextOutsideKnownBlocks(t *testing.T) {
+	const image = "aW1hZ2UgYnl0ZXM="
+	claude := &kitdto.ClaudeRequest{Model: "gpt-test", Messages: []kitdto.ClaudeMessage{
+		{Role: "user", Content: "search for it"},
+		{Role: "assistant", Content: []any{
+			map[string]any{"type": "thinking", "thinking": "a hidden thought", "signature": "sig"},
+			map[string]any{"type": "server_tool_use", "id": "srvtoolu_1", "name": "web_search", "input": map[string]any{"query": "server tool query"}},
+			map[string]any{"type": "web_search_tool_result", "tool_use_id": "srvtoolu_1", "content": []any{map[string]any{"type": "web_search_result", "title": "search result title", "url": "https://example.com"}}},
+			map[string]any{"type": "mcp_tool_use", "id": "mcptoolu_1", "name": "lookup", "server_name": "notes", "input": map[string]any{"q": "mcp tool query"}},
+		}},
+		{Role: "user", Content: []any{
+			map[string]any{"type": "mcp_tool_result", "tool_use_id": "mcptoolu_1", "content": []any{map[string]any{"type": "text", "text": "mcp tool output"}}},
+			map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": "image/png", "data": image}},
+			map[string]any{"type": "text", "text": "thanks"},
+		}},
+	}}
+	attachment := base64.StdEncoding.EncodeToString([]byte("tool attachment"))
+	gemini := &kitdto.GeminiChatRequest{
+		Contents: []kitdto.GeminiChatContent{
+			{Role: "user", Parts: []kitdto.GeminiPart{
+				{Text: "summarize"},
+				{InlineData: &kitdto.GeminiInlineData{MimeType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte("attached note"))}},
+				{InlineData: &kitdto.GeminiInlineData{MimeType: "image/png", Data: image}},
+			}},
+			{Role: "user", Parts: []kitdto.GeminiPart{{FunctionResponse: &kitdto.GeminiFunctionResponse{Name: "lookup", Response: map[string]any{"ok": true},
+				Parts: common.RawMessage(`[{"inlineData":{"mimeType":"text/markdown","data":"` + attachment + `"}}]`)}}}},
+		},
+		GenerationConfig: kitdto.GeminiChatGenerationConfig{
+			ResponseSchema:     map[string]any{"type": "object", "properties": map[string]any{"verdict_field": map[string]any{"type": "string"}}},
+			ResponseJsonSchema: common.RawMessage(`{"description":"json schema text"}`),
+		},
+	}
+	for _, tc := range []struct {
+		name        string
+		request     kitdto.Request
+		toolResults bool
+		wantRead    []string
+		wantUnread  []string
+	}{
+		{name: "Claude with tool results", request: claude, toolResults: true,
+			wantRead:   []string{"server tool query", "web_search", "search result title", "mcp tool query", "mcp tool output", "thanks"},
+			wantUnread: []string{"a hidden thought", image}},
+		{name: "Claude without tool results", request: claude,
+			wantRead:   []string{"server tool query", "mcp tool query", "thanks"},
+			wantUnread: []string{"search result title", "mcp tool output", "a hidden thought"}},
+		{name: "Gemini", request: gemini, toolResults: true,
+			wantRead:   []string{"attached note", "tool attachment", "verdict_field", "json schema text"},
+			wantUnread: []string{image, attachment}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupContentSafetyReview(t, reviewerReply(safeReply))
+			operation_setting.GetContentSafetySetting().ReviewToolResults = tc.toolResults
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			info.Request = tc.request
+			require.Nil(t, scanRequestContent(c, info, ""))
+			plan := reviewPlan(c)
+			require.NotNil(t, plan)
+			var read strings.Builder
+			for _, unit := range plan.pending {
+				read.WriteString(unit.Text)
+				read.WriteByte('\n')
+			}
+			for _, text := range tc.wantRead {
+				assert.Contains(t, read.String(), text)
+			}
+			for _, text := range tc.wantUnread {
+				assert.NotContains(t, read.String(), text)
+			}
+		})
+	}
+}
+
+// Embeddings and rerank produce no content, and indexing a corpus would cost
+// a reviewer call per chunk, so the AI review skips them; the block list
+// still checks them (see TestPrepareRequestBillingScansContentBeforePreConsume).
+func TestContentSafetyReviewSkipsEmbeddingsAndRerank(t *testing.T) {
+	text := kitdto.GeminiChatContent{Parts: []kitdto.GeminiPart{{Text: "a sentence to index"}}}
+	for _, request := range []kitdto.Request{
+		&kitdto.EmbeddingRequest{Model: "gpt-test", Input: "a sentence to index"},
+		&kitdto.GeminiEmbeddingRequest{Content: text},
+		&kitdto.GeminiBatchEmbeddingRequest{Requests: []*kitdto.GeminiEmbeddingRequest{{Content: text}}},
+		&kitdto.RerankRequest{Model: "gpt-test", Query: "a query", Documents: []any{"a document"}},
+	} {
+		t.Run(fmt.Sprintf("%T", request), func(t *testing.T) {
+			calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			info.Request = request
+			require.Nil(t, checkContent(c, info, saltedText("a sentence to index")))
+			assert.Nil(t, reviewPlan(c))
+			assert.Zero(t, calls.Load())
+			requireContentSafetyDecisions(t, info.UserId)
+		})
+	}
+}
+
+// A refusal is remembered as the controversial verdict it concludes as, so a
+// refused message resent with its conversation is not asked about on every
+// turn, and a synchronous review of a history of refused messages goes on.
+func TestContentSafetyRefusalIsRememberedAsControversial(t *testing.T) {
+	calls := setupContentSafetyReview(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"Content Exists Risk","type":"invalid_request_error"}}`))
+	})
+	userId, refused := nextContentSafetyUser(), saltedText("a text the reviewer will not read")
+	for range 2 {
+		c, info := newContentSafetyContext(userId)
+		require.Nil(t, checkContent(c, info, refused))
+	}
+	assert.Equal(t, int32(2), calls.Load(), "only the first request asks, on both channel attempts")
+	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewControversial, model.ContentSafetyDecisionReviewControversial)
+	hits := slices.DeleteFunc(logs, func(entry *model.ContentSafetyLog) bool { return !entry.CacheHit })
+	require.Len(t, hits, 1)
+	assert.Equal(t, "other", hits[0].AiCategory)
+	assert.Equal(t, refusedReason, hits[0].AiReason)
+}
+
+// One request reviews at most maxParallelUnitReviews units at a time, so it
+// cannot take every synchronous slot of the node: while the first ones hang
+// until the review timeout, the others never reach the reviewer.
+func TestContentSafetySyncReviewBoundsTheUnitsReviewedAtOnce(t *testing.T) {
+	release := make(chan struct{})
+	calls := setupContentSafetyReview(t, func(w http.ResponseWriter, r *http.Request) {
+		// The server notices a closed client connection only after the body
+		// has been read, as a real upstream would. The reply's headers go out
+		// at once and its body never comes, so every held call ends with the
+		// review timeout while it reads the reply.
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	})
+	t.Cleanup(func() { close(release) })
+	operation_setting.GetContentSafetySetting().ReviewTimeoutSeconds = 1
+	messages := make([]kitdto.Message, maxParallelUnitReviews+2)
+	for i := range messages {
+		messages[i] = kitdto.Message{Role: []string{"user", "assistant"}[i%2], Content: saltedText("turn " + strconv.Itoa(i))}
+	}
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: messages}
+	apiErr := checkContent(c, info, "")
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeContentReviewUnavailable, apiErr.GetErrorCode())
+	assert.Equal(t, int32(maxParallelUnitReviews), calls.Load())
+	logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewFailed)
+	assert.Equal(t, model.ContentSafetyFailureTimeout, logs[0].FailureReason)
+}
+
+// One account cannot fill the background queue of a node: over its share,
+// the request is recorded as over its quota and the account's next requests
+// are reviewed first.
+func TestContentSafetyBackgroundQueueCapsOneAccount(t *testing.T) {
+	reply, release := gatedReviewer(t, safeReply)
+	setupContentSafetyReview(t, reply)
+	reviewInTheBackground(operation_setting.ContentReviewModeEnforce)
+	userId := nextContentSafetyUser()
+	for range contentsafety.MaxQueuedReviewsPerAccount {
+		c, info := newContentSafetyContext(userId)
+		require.Nil(t, checkContent(c, info, saltedText("a queued question")))
+	}
+	c, info := newContentSafetyContext(userId)
+	require.Nil(t, checkContent(c, info, saltedText("one question too many")), "the request still goes on")
+	c, info = newContentSafetyContext(userId)
+	require.Nil(t, scanRequestContent(c, info, saltedText("the next question")))
+	assert.Equal(t, model.ContentSafetyModeSync, reviewPlan(c).mode, "the account's next request is reviewed first")
+	release()
+	require.Eventually(t, func() bool {
+		var count int64
+		err := model.LOG_DB.Model(&model.ContentSafetyLog{}).Where("user_id = ?", userId).Count(&count).Error
+		return err == nil && count == contentsafety.MaxQueuedReviewsPerAccount+1
+	}, 5*time.Second, 20*time.Millisecond, "every queued review records its pass")
+	var failed model.ContentSafetyLog
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND decision = ?", userId, model.ContentSafetyDecisionReviewFailed).First(&failed).Error)
+	assert.Equal(t, model.ContentSafetyFailureRateLimited, failed.FailureReason)
+}
+
+// A pass kept at percent stands for 100/percent passes on average, so the
+// weights of the sampled passes sum to the true count however percent
+// divides 100.
+func TestSampledPassWeightIsUnbiased(t *testing.T) {
+	for _, tc := range []struct{ percent, floor int }{{100, 1}, {10, 10}, {30, 3}, {7, 14}, {67, 1}} {
+		total := 0
+		for roll := range tc.percent {
+			weight := sampledPassWeight(tc.percent, roll)
+			assert.Contains(t, []int{tc.floor, tc.floor + 1}, weight, "percent %d", tc.percent)
+			total += weight
+		}
+		assert.Equal(t, 100, total, "percent %d", tc.percent)
+	}
+}
+
+// A background review runs with the reviewer settings its request was
+// planned with: the cache keys were made for that model and prompt.
+func TestContentSafetyBackgroundReviewUsesThePlannedConfiguration(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(unsafeReply))
+	reviewInTheBackground(operation_setting.ContentReviewModeShadow)
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	require.Nil(t, scanRequestContent(c, info, saltedText("stab someone")))
+	cfg := operation_setting.GetContentSafetySetting()
+	cfg.ReviewModel, cfg.ReviewGroup, cfg.ReviewPrompt, cfg.CacheTTLSeconds = "missing-model", "missing-group", "another prompt", 0
+	require.Nil(t, EnforceContentSafety(c, info))
+	logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewFlagged)
+	assert.Equal(t, "judge-model", logs[0].ReviewModel)
+	assert.Equal(t, int32(1), calls.Load())
+}
+
+// The verdict cache is read for the newest contentsafety.MaxRequestUnits
+// units. Older text goes unread: a background review records it and, when
+// enforced, reviews the account's next requests first.
+func TestContentSafetyHistoryBeyondTheUnitCapGoesUnread(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	reviewInTheBackground(operation_setting.ContentReviewModeEnforce)
+	operation_setting.GetContentSafetySetting().MaxUnits = 100
+	messages := make([]kitdto.Message, contentsafety.MaxRequestUnits)
+	for i := range messages {
+		messages[i] = kitdto.Message{Role: []string{"user", "assistant"}[i%2], Content: saltedText("turn " + strconv.Itoa(i))}
+	}
+	userId := nextContentSafetyUser()
+	// Judge the whole history safe, max_units at a time.
+	for range contentsafety.MaxRequestUnits/100 + 1 {
+		c, info := newContentSafetyContext(userId)
+		info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: messages}
+		require.Nil(t, scanRequestContent(c, info, ""))
+		plan := reviewPlan(c)
+		if plan == nil {
+			break
+		}
+		reviews := make([]unitReview, len(plan.pending))
+		for i, unit := range plan.pending {
+			reviews[i] = unitReview{unit: unit, verdict: contentsafety.Verdict{Level: contentsafety.LevelSafe}}
+		}
+		storeVerdicts(reviews, 60)
+	}
+
+	c, info := newContentSafetyContext(userId)
+	info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: append([]kitdto.Message{{Role: "assistant", Content: saltedText("an older answer")}}, messages...)}
+	require.Nil(t, checkContent(c, info, ""))
+	assert.Zero(t, calls.Load())
+	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewFailed)
+	assert.Equal(t, model.ContentSafetyFailureTooManyUnits, logs[0].FailureReason)
+	assert.Equal(t, model.ContentSafetyModeAsync, logs[0].Mode)
+	assert.True(t, logs[0].Truncated)
+	assert.Equal(t, 1, logs[0].UnitCount)
+	assert.True(t, contentsafety.SyncForced(context.Background(), userId))
 }

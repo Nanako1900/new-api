@@ -77,3 +77,16 @@ export const MODE_LABEL_KEYS: Record<ContentSafetyMode, string> = {
 export const CONTENT_SAFETY_STATS_RANGES: readonly ContentSafetyStatsHours[] = [
   24, 168,
 ]
+
+// The reason the gateway stores when the review channel refused a text. It is
+// an i18n key, so the details dialog translates a reason equal to it; every
+// other reason is the reviewer's own text and is shown as stored.
+export const REVIEW_REFUSED_REASON =
+  'The review channel refused to review this text'
+
+// Failure reasons of reviews that never asked the reviewer.
+export const UNASKED_FAILURE_REASONS: readonly ContentSafetyFailureReason[] = [
+  'rate_limited',
+  'queue_full',
+  'too_many_units',
+]

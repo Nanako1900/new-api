@@ -22,10 +22,11 @@ import (
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	needContentCheck := contentsafety.Active()
-	// The AI review reads chat formats by message; only the block list and
-	// the review of other formats read the combined text.
+	// The AI review reads chat formats by message and skips embeddings and
+	// rerank; only the block list and the review of other formats read the
+	// combined text.
 	needCombineText := contentsafety.BlockListActive() ||
-		(operation_setting.GetContentSafetySetting().ReviewActive() && !reviewsByMessage(info.Request))
+		(operation_setting.GetContentSafetySetting().ReviewActive() && reviewReadsCombineText(info.Request))
 	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
 	if info.Request != nil && (needCombineText || constant.CountToken) {
 		meta = info.Request.GetTokenCountMeta()

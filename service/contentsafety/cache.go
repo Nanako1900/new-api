@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"sync"
 	"time"
 
@@ -61,14 +62,12 @@ func getVerdictCache() *cachex.HybridCache[CachedVerdict] {
 	return verdictCache
 }
 
-func redisVerdicts() bool {
-	return common.RedisEnabled && common.RDB != nil
-}
-
 // CacheKey identifies a verdict by everything that decides it: the review
-// engine and model, the prompt, the reply contract and the unit text.
-func CacheKey(engine, prompt, text string) string {
-	sum := sha256.Sum256([]byte(engine + "\x00" + prompt + "\x00" + outputContract + "\x00" + text))
+// engine and model, the prompt, the reply contract, the unit text and the
+// context the reviewer reads with it. The text length keeps text and context
+// apart, so moving characters from one to the other changes the key.
+func CacheKey(engine, prompt, text, context string) string {
+	sum := sha256.Sum256([]byte(engine + "\x00" + prompt + "\x00" + outputContract + "\x00" + strconv.Itoa(len(text)) + "\x00" + text + context))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -92,7 +91,7 @@ func LoadVerdicts(keys []string, ttlSeconds int) map[string]CachedVerdict {
 	if len(missing) == 0 {
 		return found
 	}
-	if !redisVerdicts() {
+	if !common.RedisEnabled || common.RDB == nil {
 		for _, key := range missing {
 			if verdict, ok, err := cache.Get(key); err == nil && ok {
 				found[key] = verdict
@@ -108,7 +107,7 @@ func LoadVerdicts(keys []string, ttlSeconds int) map[string]CachedVerdict {
 	defer cancel()
 	values, err := common.RDB.MGet(ctx, fullKeys...).Result()
 	if err != nil {
-		common.SysError(common.LogText("content safety verdict cache read failed: %s", err.Error()))
+		warnRedisFailure("verdict cache read", err)
 		return found
 	}
 	for i, value := range values {

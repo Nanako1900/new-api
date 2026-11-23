@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -33,6 +32,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/errgroup"
 )
 
 // maxLoggedSnippets caps the excerpts stored for one decision.
@@ -41,13 +41,16 @@ const maxLoggedSnippets = 20
 // contentReviewPlan is what the scan before pre-consume leaves for
 // EnforceContentSafety: the units the reviewer has not judged yet, newest
 // first and at most max_units of them, the non-safe units the verdict cache
-// already decided, and when the review runs.
+// already decided, how many units go unread, when the review runs, and the
+// review configuration the cache keys were made with, which a background
+// review keeps using however the settings change meanwhile.
 type contentReviewPlan struct {
 	pending   []contentsafety.Unit
 	flagged   []cachedUnit
 	truncated int
 	mode      string
 	prompt    string
+	cfg       operation_setting.ContentSafetySetting
 }
 
 type cachedUnit struct {
@@ -69,7 +72,13 @@ type unitReview struct {
 }
 
 // refusedReason is the verdict reason of a unit the review channel refused.
+// It is a key of the frontend locale files, which translate it when a log's
+// reason is exactly this text.
 const refusedReason = "The review channel refused to review this text"
+
+// maxParallelUnitReviews bounds the units of one request reviewed at the same
+// time, so one request cannot take every synchronous slot.
+const maxParallelUnitReviews = 4
 
 // scanRequestContent runs before pre-consume. A zero-tolerance word rejects
 // the request; so does, for a request reviewed synchronously, a cached unsafe
@@ -100,8 +109,8 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 	}
 	prompt := contentsafety.EffectivePrompt(cfg.ReviewPrompt)
 	engine := reviewEngineKey(cfg)
-	units := contentsafety.BuildUnits(requestReviewMessages(info.Request, combineText, cfg.ReviewToolResults), cfg.UnitChars,
-		func(text string) string { return contentsafety.CacheKey(engine, prompt, text) })
+	units, unread := contentsafety.BuildUnits(requestReviewMessages(info.Request, combineText, cfg.ReviewToolResults), cfg.UnitChars,
+		func(text, context string) string { return contentsafety.CacheKey(engine, prompt, text, context) })
 	if len(units) == 0 {
 		return nil
 	}
@@ -110,7 +119,7 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 		keys[i] = unit.Key
 	}
 	cached := contentsafety.LoadVerdicts(keys, cfg.CacheTTLSeconds)
-	plan := &contentReviewPlan{mode: model.ContentSafetyModeShadow, prompt: prompt}
+	plan := &contentReviewPlan{truncated: unread, mode: model.ContentSafetyModeShadow, prompt: prompt, cfg: cfg}
 	for _, unit := range units {
 		verdict, found := cached[unit.Key]
 		if !found {
@@ -119,11 +128,11 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 			plan.flagged = append(plan.flagged, cachedUnit{unit: unit, verdict: verdict})
 		}
 	}
-	if len(plan.pending) == 0 && len(plan.flagged) == 0 {
+	if len(plan.pending) == 0 && len(plan.flagged) == 0 && plan.truncated == 0 {
 		return nil
 	}
 	if len(plan.pending) > cfg.MaxUnits {
-		plan.truncated = len(plan.pending) - cfg.MaxUnits
+		plan.truncated += len(plan.pending) - cfg.MaxUnits
 		plan.pending = plan.pending[:cfg.MaxUnits]
 	}
 	if cfg.ReviewMode == operation_setting.ContentReviewModeEnforce {
@@ -133,7 +142,7 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 		}
 	}
 	if plan.mode == model.ContentSafetyModeSync {
-		if apiErr := rejectCachedOrOversized(c, info, cfg, plan); apiErr != nil {
+		if apiErr := rejectCachedOrOversized(c, info, plan); apiErr != nil {
 			return apiErr
 		}
 	}
@@ -162,7 +171,7 @@ func needsSyncReview(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_
 			logger.LogError(c, common.LogText("content safety account age read failed: %s", err.Error()))
 			return true
 		}
-		if common.GetTimestamp()-createdAt < int64(cfg.SyncNewUserDays)*86400 {
+		if createdAt > 0 && common.GetTimestamp()-createdAt < int64(cfg.SyncNewUserDays)*86400 {
 			return true
 		}
 	}
@@ -172,7 +181,8 @@ func needsSyncReview(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_
 // rejectCachedOrOversized stops a synchronously reviewed request that the
 // cache already judged unsafe, or that carries more new text than one review
 // covers, before anything is reserved.
-func rejectCachedOrOversized(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting, plan *contentReviewPlan) *types.NewAPIError {
+func rejectCachedOrOversized(c *gin.Context, info *relaycommon.RelayInfo, plan *contentReviewPlan) *types.NewAPIError {
+	cfg := plan.cfg
 	for _, hit := range plan.flagged {
 		if hit.verdict.Level != contentsafety.LevelUnsafe {
 			continue
@@ -247,8 +257,14 @@ func requestScanText(request dto.Request, combineText string) string {
 		parts = []string{contentsafety.CollectJSONText(r.Instructions), contentsafety.CollectJSONText(r.Input),
 			contentsafety.CollectJSONText(r.Tools), contentsafety.CollectJSONText(r.Text)}
 	case *dto.GeminiChatRequest:
-		// Token counting appends tools raw at the end, as in Responses.
-		parts = []string{strings.TrimSuffix(combineText, string(r.Tools)), contentsafety.CollectJSONText(r.Tools)}
+		// Token counting reads tools and call arguments raw and skips code,
+		// text sent as inline data, function response parts and response
+		// schemas. The review reads all of them decoded, so the scan reads
+		// the request the same way.
+		parts = nil
+		for _, message := range geminiReviewMessages(r, true) {
+			parts = append(parts, message.Text)
+		}
 	case *dto.ClaudeRequest:
 		// Token counting skips the legacy prompt, which a Claude channel still
 		// forwards, documents and search results, and drops every block of a
@@ -274,8 +290,10 @@ func requestScanText(request dto.Request, combineText string) string {
 
 // claudeContentText is the plain text a model reads from Claude content as
 // decoded from request JSON: a string, or the text, tool use, tool result,
-// document and search result blocks of a list. Images and thinking are not
-// read as text. Tool results are left out unless includeToolResults is set.
+// document and search result blocks of a list, and the decoded strings of
+// any other block, such as server and MCP tool calls and their results.
+// Images and thinking are not read as text. Tool results, and blocks whose
+// type ends in "_tool_result", are left out unless includeToolResults is set.
 func claudeContentText(content any, includeToolResults bool) []string {
 	if text, ok := content.(string); ok {
 		return []string{text}
@@ -302,6 +320,12 @@ func claudeContentText(content any, includeToolResults bool) []string {
 			source, _ := item["source"].(string)
 			texts = append(texts, title, source)
 			texts = append(texts, claudeContentText(item["content"], includeToolResults)...)
+		case "image", "thinking", "redacted_thinking":
+		default:
+			blockType, _ := item["type"].(string)
+			if includeToolResults || !strings.HasSuffix(blockType, "_tool_result") {
+				texts = append(texts, contentsafety.CollectValueText(block))
+			}
 		}
 	}
 	return texts
@@ -338,14 +362,13 @@ func EnforceContentSafety(c *gin.Context, info *relaycommon.RelayInfo) *types.Ne
 		return nil
 	}
 	if plan, ok := common.GetContextKeyType[*contentReviewPlan](c, constant.ContextKeyContentSafetyPlan); ok && plan != nil {
-		cfg := operation_setting.GetContentSafetySetting().Bounded()
-		recordFlaggedSightings(c, info, cfg, plan)
-		if len(plan.pending) > 0 && plan.mode == model.ContentSafetyModeSync {
-			if apiErr := reviewSynchronously(c, info, cfg, plan); apiErr != nil {
+		recordFlaggedSightings(c, info, plan)
+		if plan.mode == model.ContentSafetyModeSync && len(plan.pending) > 0 {
+			if apiErr := reviewSynchronously(c, info, plan); apiErr != nil {
 				return apiErr
 			}
-		} else if len(plan.pending) > 0 {
-			queueContentReview(c, info, cfg, plan)
+		} else if plan.mode != model.ContentSafetyModeSync && (len(plan.pending) > 0 || plan.truncated > 0) {
+			queueContentReview(c, info, plan)
 		}
 	}
 	common.SetContextKey(c, constant.ContextKeyContentSafetyChecked, true)
@@ -369,7 +392,7 @@ func EnforceContentSafetyText(c *gin.Context, info *relaycommon.RelayInfo, text 
 
 // recordFlaggedSightings records the non-safe units the cache decided, once
 // per account and unit: a conversation resends its history on every turn.
-func recordFlaggedSightings(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting, plan *contentReviewPlan) {
+func recordFlaggedSightings(c *gin.Context, info *relaycommon.RelayInfo, plan *contentReviewPlan) {
 	var reviews []unitReview
 	for _, hit := range plan.flagged {
 		if contentsafety.FirstSighting(c.Request.Context(), info.UserId, hit.unit.Key) {
@@ -380,18 +403,20 @@ func recordFlaggedSightings(c *gin.Context, info *relaycommon.RelayInfo, cfg ope
 		return
 	}
 	entry := contentSafetyLogEntry(c, info)
-	entry.Mode, entry.ReviewModel, entry.CacheHit = plan.mode, cfg.ReviewModel, true
+	entry.Mode, entry.ReviewModel, entry.CacheHit = plan.mode, plan.cfg.ReviewModel, true
 	entry, categories, snippets := summarizeReviews(entry, reviews)
 	recordContentSafetyLog(entry, categories, snippets)
 }
 
-// reviewSynchronously asks the reviewer about every pending unit at once,
-// within the review timeout and the synchronous slots. An unsafe verdict
-// rejects the request, and so does any unit the reviewer could not judge.
-func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting, plan *contentReviewPlan) *types.NewAPIError {
+// reviewSynchronously asks the reviewer about the pending units, at most
+// maxParallelUnitReviews at a time, within the review timeout and the
+// synchronous slots. An unsafe verdict rejects the request, and so does any
+// unit the reviewer could not judge.
+func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, plan *contentReviewPlan) *types.NewAPIError {
+	cfg := plan.cfg
 	entry := contentSafetyLogEntry(c, info)
 	entry.Mode, entry.ReviewModel, entry.UnitCount = model.ContentSafetyModeSync, cfg.ReviewModel, len(plan.pending)
-	if !contentsafety.AllowReview(c.Request.Context(), info.UserId, cfg.ReviewRateLimitPerMinute) {
+	if !contentsafety.AllowReview(c.Request.Context(), info.UserId, cfg.ReviewRateLimitPerMinute, len(plan.pending)) {
 		entry.Decision, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, model.ContentSafetyFailureRateLimited
 		recordContentSafetyLog(entry, nil, nil)
 		return rejectContent(c, types.ErrorCodeContentReviewUnavailable, http.StatusServiceUnavailable, i18n.MsgContentSafetyUnavailable)
@@ -401,11 +426,15 @@ func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, cfg operat
 	defer cancel()
 	requestId := c.GetString(common.RequestIdKey)
 	reviews := make([]unitReview, len(plan.pending))
-	var wg sync.WaitGroup
+	var group errgroup.Group
+	group.SetLimit(maxParallelUnitReviews)
 	for i, unit := range plan.pending {
-		wg.Go(func() { reviews[i] = reviewWithSlot(ctx, parent, requestId, cfg, plan.prompt, unit) })
+		group.Go(func() error {
+			reviews[i] = reviewWithSlot(ctx, parent, requestId, info.UserId, plan, unit)
+			return nil
+		})
 	}
-	wg.Wait()
+	_ = group.Wait()
 	storeVerdicts(reviews, cfg.CacheTTLSeconds)
 	entry, categories, snippets := summarizeReviews(entry, reviews)
 	recordReview(entry, categories, snippets, cfg.PassLogPercent, recordContentSafetyLog)
@@ -418,18 +447,19 @@ func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, cfg operat
 	return nil
 }
 
-// reviewWithSlot runs one synchronous review within ctx. The upstream call is
-// bound to ctx, so it ends with the timeout or with the client request; the
-// slot is held until the call truly returns.
-func reviewWithSlot(ctx, parent context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
-	release, err := contentsafety.AcquireSlot(ctx, cfg.ReviewMaxConcurrency)
+// reviewWithSlot runs one synchronous review within ctx, holding a slot of
+// the account and of the node. The upstream call is bound to ctx, so it ends
+// with the timeout or with the client request; the slot is held until the
+// call truly returns.
+func reviewWithSlot(ctx, parent context.Context, requestId string, userId int, plan *contentReviewPlan, unit contentsafety.Unit) unitReview {
+	release, err := contentsafety.AcquireSlot(ctx, userId, plan.cfg.ReviewMaxConcurrency)
 	if err != nil {
 		return unitReview{unit: unit, failure: interruptedReviewFailure(parent)}
 	}
 	done := make(chan unitReview, 1)
 	gopool.Go(func() {
 		defer release()
-		done <- reviewUnit(ctx, requestId, cfg, prompt, unit)
+		done <- reviewUnit(ctx, requestId, plan.cfg, plan.prompt, unit)
 	})
 	select {
 	case review := <-done:
@@ -453,42 +483,53 @@ func interruptedReviewFailure(parent context.Context) string {
 }
 
 // queueContentReview hands the pending units to the background reviewers.
-// An account over its queue quota, or a full queue, is recorded and, when
-// reviews are enforced, has its next requests reviewed synchronously, so
-// flooding the queue never lets a request skip its review.
-func queueContentReview(c *gin.Context, info *relaycommon.RelayInfo, cfg operation_setting.ContentSafetySetting, plan *contentReviewPlan) {
+// An account over its queue quota or its share of the queue, or a full
+// queue, is recorded. So is a request with unread units and nothing new to
+// queue among the units read. When reviews are enforced, any of these, or
+// unread units, has the account's next requests reviewed synchronously, so
+// neither flooding the queue nor padding every request with new filler
+// keeps a message from being reviewed.
+func queueContentReview(c *gin.Context, info *relaycommon.RelayInfo, plan *contentReviewPlan) {
+	cfg := plan.cfg
 	entry := contentSafetyLogEntry(c, info)
 	entry.Mode, entry.ReviewModel = plan.mode, cfg.ReviewModel
 	entry.UnitCount, entry.Truncated = len(plan.pending)+plan.truncated, plan.truncated > 0
 	failure := ""
-	size := int64(0)
-	for _, unit := range plan.pending {
-		size += int64(len(unit.Text) + len(unit.Context))
-	}
-	requestId := entry.RequestId
-	if !contentsafety.AllowEnqueue(c.Request.Context(), info.UserId, cfg.AsyncRatePerMinute) {
+	switch {
+	case len(plan.pending) == 0:
+		failure = model.ContentSafetyFailureTooManyUnits
+	case !contentsafety.AllowEnqueue(c.Request.Context(), info.UserId, cfg.AsyncRatePerMinute, len(plan.pending)):
 		failure = model.ContentSafetyFailureRateLimited
-	} else if !contentsafety.EnqueueReview(size, func() { reviewInBackground(entry, requestId, plan) }) {
-		failure = model.ContentSafetyFailureQueueFull
+	default:
+		size := int64(0)
+		for _, unit := range plan.pending {
+			size += int64(len(unit.Text) + len(unit.Context))
+		}
+		err := contentsafety.EnqueueReview(info.UserId, size, func() { reviewInBackground(entry, plan) })
+		if errors.Is(err, contentsafety.ErrAccountQueueFull) {
+			failure = model.ContentSafetyFailureRateLimited
+		} else if err != nil {
+			failure = model.ContentSafetyFailureQueueFull
+		}
+	}
+	if plan.mode == model.ContentSafetyModeAsync && (failure != "" || plan.truncated > 0) {
+		contentsafety.ForceSync(info.UserId)
 	}
 	if failure == "" {
 		return
-	}
-	if plan.mode == model.ContentSafetyModeAsync {
-		contentsafety.ForceSync(info.UserId)
 	}
 	entry.Decision, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, failure
 	recordContentSafetyLog(entry, nil, nil)
 }
 
 // reviewInBackground reviews queued units one after another, each within the
-// review timeout, and records the outcome.
-func reviewInBackground(entry model.ContentSafetyLog, requestId string, plan *contentReviewPlan) {
-	cfg := operation_setting.GetContentSafetySetting().Bounded()
+// review timeout of the plan, and records the outcome.
+func reviewInBackground(entry model.ContentSafetyLog, plan *contentReviewPlan) {
+	cfg := plan.cfg
 	reviews := make([]unitReview, 0, len(plan.pending))
 	for _, unit := range plan.pending {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.ReviewTimeoutSeconds)*time.Second)
-		review := reviewUnit(ctx, requestId, cfg, plan.prompt, unit)
+		review := reviewUnit(ctx, entry.RequestId, cfg, plan.prompt, unit)
 		if review.failure != "" && ctx.Err() != nil {
 			review.failure = model.ContentSafetyFailureTimeout
 		}
@@ -505,17 +546,13 @@ func reviewInBackground(entry model.ContentSafetyLog, requestId string, plan *co
 }
 
 // reviewUnit tries up to two channels that serve the review model, and stops
-// as soon as ctx ends because nobody waits for the answer any more. An HTTP
-// 400 from a channel is the provider refusing the text itself; it concludes
-// as controversial unless another channel judges the text.
-func reviewUnit(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
+// as soon as ctx ends because nobody waits for the answer any more. A channel
+// refusing the text on content grounds (see contentsafety.IsReviewRefusal)
+// concludes as controversial unless another channel judges the text; any
+// other channel error is a failure. The latency covers every attempt.
+func reviewUnit(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) (review unitReview) {
 	started := time.Now()
-	review := reviewUnitOnChannels(ctx, requestId, cfg, prompt, unit)
-	review.latencyMs = int(time.Since(started).Milliseconds())
-	return review
-}
-
-func reviewUnitOnChannels(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
+	defer func() { review.latencyMs = int(time.Since(started).Milliseconds()) }()
 	system, user, err := contentsafety.ReviewMessages(prompt, []contentsafety.Unit{unit}, rand.Text())
 	if err != nil {
 		return unitReview{unit: unit, failure: model.ContentSafetyFailureUpstreamError}
@@ -523,7 +560,7 @@ func reviewUnitOnChannels(ctx context.Context, requestId string, cfg operation_s
 	// Reasoning models spend part of max_tokens on hidden reasoning before the
 	// JSON reply, so the budget leaves room well beyond the reply itself.
 	const maxTokens = uint(1024)
-	review := unitReview{unit: unit, failure: model.ContentSafetyFailureNoChannel}
+	review = unitReview{unit: unit, failure: model.ContentSafetyFailureNoChannel}
 	for retry := range 2 {
 		if ctx.Err() != nil {
 			return review
@@ -536,7 +573,7 @@ func reviewUnitOnChannels(ctx context.Context, requestId string, cfg operation_s
 		if err != nil {
 			common.SysError(common.LogText("content safety review via channel %d failed (request_id=%s): %s", channel.Id, requestId, err.Error()))
 			var apiErr *types.NewAPIError
-			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusBadRequest {
+			if errors.As(err, &apiErr) && contentsafety.IsReviewRefusal(apiErr) {
 				review = unitReview{unit: unit, channelId: channel.Id, refused: true,
 					verdict: contentsafety.Verdict{Level: contentsafety.LevelControversial, Category: "other", Reason: refusedReason}}
 				continue
@@ -555,11 +592,13 @@ func reviewUnitOnChannels(ctx context.Context, requestId string, cfg operation_s
 	return review
 }
 
-// storeVerdicts caches every verdict the reviewer gave. Refusals and failed
-// reviews are asked again next time.
+// storeVerdicts caches every verdict the reviewer gave, and a refusal as the
+// controversial verdict it concludes as: a refused text resent in a
+// conversation's history is not asked about on every turn. Failed reviews
+// are asked again next time.
 func storeVerdicts(reviews []unitReview, ttlSeconds int) {
 	for _, review := range reviews {
-		if review.failure != "" || review.refused {
+		if review.failure != "" {
 			continue
 		}
 		contentsafety.StoreVerdict(review.unit.Key, contentsafety.CachedVerdict{Level: review.verdict.Level, Category: review.verdict.Category, Reason: review.verdict.Reason}, ttlSeconds)
@@ -632,9 +671,19 @@ func recordReview(entry model.ContentSafetyLog, categories, snippets []string, p
 		if percent <= 0 || mathrand.IntN(100) >= percent {
 			return
 		}
-		entry.Weight = (100 + percent/2) / percent
+		entry.Weight = sampledPassWeight(percent, mathrand.IntN(percent))
 	}
 	record(entry, categories, snippets)
+}
+
+// sampledPassWeight is how many passed reviews one kept at percent stands
+// for: 100/percent, rounded down or up at random in proportion to the
+// fraction, so summed weights are unbiased. roll is uniform in [0, percent).
+func sampledPassWeight(percent, roll int) int {
+	if roll < 100%percent {
+		return 100/percent + 1
+	}
+	return 100 / percent
 }
 
 // askContentReviewer sends one non-stream chat completion to channel through

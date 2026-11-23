@@ -110,11 +110,16 @@ export type ContentSafetyLogFieldErrors = {
 
 export type ContentSafetyStatsHours = 24 | 168
 
-/** One row of the stats `counts`; `total` already includes sampling weights. */
+/**
+ * One row of the stats `counts`; `total` already includes sampling weights.
+ * `cache_hit` rows were decided by the verdict cache without asking the
+ * reviewer.
+ */
 export type ContentSafetyStatsCount = {
   decision: string
   mode: string
   failure_reason: string
+  cache_hit: boolean
   total: number
 }
 

@@ -121,13 +121,14 @@ describe('review mode and reviewed decisions', () => {
 })
 
 describe('summarizeStatsCounts', () => {
+  const row = (
+    decision: string,
+    total: number,
+    failure_reason = '',
+    cache_hit = false
+  ) => ({ decision, mode: 'sync', failure_reason, cache_hit, total })
+
   it('adds weighted totals of review decisions and ignores keyword rows', () => {
-    const row = (decision: string, total: number, failure_reason = '') => ({
-      decision,
-      mode: 'sync',
-      failure_reason,
-      total,
-    })
     expect(
       summarizeStatsCounts([
         row('keyword_blocked', 99),
@@ -144,6 +145,26 @@ describe('summarizeStatsCounts', () => {
       controversial: 10,
       failed: 5,
       refused: 6,
+    })
+  })
+
+  it('counts as reviews neither cache hits nor reviews stopped before asking the reviewer', () => {
+    expect(
+      summarizeStatsCounts([
+        row('review_passed', 10),
+        row('review_flagged', 2, '', true),
+        row('review_controversial', 3, '', true),
+        row('review_failed', 4, 'rate_limited'),
+        row('review_failed', 5, 'queue_full'),
+        row('review_failed', 6, 'too_many_units'),
+        row('review_failed', 7, 'timeout'),
+      ])
+    ).toEqual({
+      reviews: 17,
+      flaggedOrRejected: 2,
+      controversial: 3,
+      failed: 22,
+      refused: 0,
     })
   })
 

@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it } from 'vitest'
+import i18next from 'i18next'
+import { afterEach, expect, it } from 'vitest'
 
 import { ContentSafetyLogDetailsDialog } from '../components/content-safety-log-details-dialog'
 import type { ContentSafetyLog } from '../types'
@@ -174,6 +175,38 @@ it('an AI review shows its mode, pieces reviewed and truncation', async () => {
   expect(within(dialog).getByText('Background')).toBeVisible()
   expect(within(dialog).getByText('12')).toBeVisible()
   expect(within(dialog).getByText('Truncated')).toBeVisible()
+})
+
+const REFUSED = 'The review channel refused to review this text'
+
+async function openDetailsInChinese(entry: ContentSafetyLog) {
+  i18next.addResourceBundle('zh', 'translation', {
+    [REFUSED]: '审核渠道拒绝审核此文本',
+    'Describes hurting a person': '不应出现的译文',
+  })
+  await i18next.changeLanguage('zh')
+  return openDetails(entry)
+}
+
+afterEach(async () => {
+  await i18next.changeLanguage('en')
+  i18next.removeResourceBundle('zh', 'translation')
+})
+
+it('translates the reason the gateway stores for a refused text', async () => {
+  const dialog = await openDetailsInChinese({
+    ...rejected,
+    decision: 'review_controversial',
+    failure_reason: 'refused',
+    ai_category: 'other',
+    ai_reason: REFUSED,
+  })
+  expect(within(dialog).getByText('审核渠道拒绝审核此文本')).toBeVisible()
+})
+
+it('shows a reason the reviewer wrote as stored, even when it matches a translation key', async () => {
+  const dialog = await openDetailsInChinese(rejected)
+  expect(within(dialog).getByText('Describes hurting a person')).toBeVisible()
 })
 
 it('a keyword block labels its matches as hit words, not categories', async () => {

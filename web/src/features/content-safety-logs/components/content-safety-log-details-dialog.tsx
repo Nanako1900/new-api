@@ -32,6 +32,7 @@ import dayjs from '@/lib/dayjs'
 import { formatNumber } from '@/lib/format'
 import { translateServerText } from '@/lib/server-error-message'
 
+import { REVIEW_REFUSED_REASON } from '../constants'
 import {
   decisionPresentation,
   failureReasonLabelKey,
@@ -196,7 +197,11 @@ export function ContentSafetyLogDetailsDialog(props: {
               props.entry.ai_reason ? (
                 <AuditDetailValue
                   label={t('Reason')}
-                  value={props.entry.ai_reason}
+                  value={
+                    props.entry.ai_reason === REVIEW_REFUSED_REASON
+                      ? t(REVIEW_REFUSED_REASON)
+                      : props.entry.ai_reason
+                  }
                 />
               ) : (
                 '—'

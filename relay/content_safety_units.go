@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -8,14 +10,17 @@ import (
 	"github.com/QuantumNous/new-api/service/contentsafety"
 )
 
-// reviewsByMessage reports whether requestReviewMessages reads request by
-// message. Other formats are reviewed as one text built from CombineText.
-func reviewsByMessage(request dto.Request) bool {
+// reviewReadsCombineText reports whether the AI review of request reads its
+// CombineText: formats without messages are reviewed as one text built from
+// it. Chat formats are read by message, and embeddings and rerank requests
+// are not reviewed (see requestReviewMessages).
+func reviewReadsCombineText(request dto.Request) bool {
 	switch request.(type) {
-	case *dto.GeneralOpenAIRequest, *dto.ClaudeRequest, *dto.OpenAIResponsesRequest, *dto.GeminiChatRequest:
-		return true
+	case *dto.GeneralOpenAIRequest, *dto.ClaudeRequest, *dto.OpenAIResponsesRequest, *dto.OpenAIResponsesCompactionRequest, *dto.GeminiChatRequest,
+		*dto.EmbeddingRequest, *dto.GeminiEmbeddingRequest, *dto.GeminiBatchEmbeddingRequest, *dto.RerankRequest:
+		return false
 	}
-	return false
+	return true
 }
 
 // requestReviewMessages lists the text a model reads from request, one entry
@@ -31,9 +36,19 @@ func requestReviewMessages(request dto.Request, combineText string, includeToolR
 	case *dto.ClaudeRequest:
 		return claudeReviewMessages(r, includeToolResults)
 	case *dto.OpenAIResponsesRequest:
-		return responsesReviewMessages(r, includeToolResults)
+		meta := joinText(contentsafety.CollectJSONText(r.Tools), contentsafety.CollectJSONText(r.Text),
+			contentsafety.CollectJSONText(r.Prompt), contentsafety.CollectJSONText(r.Metadata))
+		return responsesReviewMessages(meta, r.Instructions, r.Input, includeToolResults)
+	case *dto.OpenAIResponsesCompactionRequest:
+		meta := joinText(contentsafety.CollectJSONText(r.Tools), contentsafety.CollectJSONText(r.Text))
+		return responsesReviewMessages(meta, r.Instructions, r.Input, includeToolResults)
 	case *dto.GeminiChatRequest:
 		return geminiReviewMessages(r, includeToolResults)
+	case *dto.EmbeddingRequest, *dto.GeminiEmbeddingRequest, *dto.GeminiBatchEmbeddingRequest, *dto.RerankRequest:
+		// Embeddings and rerank produce no content for anyone to read, and
+		// indexing a corpus in batches would cost a reviewer call per chunk;
+		// only the block list checks them.
+		return nil
 	}
 	return []contentsafety.Message{{Role: contentsafety.RoleMeta, Text: requestScanText(request, combineText)}}
 }
@@ -121,18 +136,20 @@ func claudeReviewMessages(r *dto.ClaudeRequest, includeToolResults bool) []conte
 	return messages
 }
 
-func responsesReviewMessages(r *dto.OpenAIResponsesRequest, includeToolResults bool) []contentsafety.Message {
-	instructions := contentsafety.CollectJSONText(r.Instructions)
-	if common.GetJsonType(r.Instructions) == "string" {
-		_ = common.Unmarshal(r.Instructions, &instructions)
+// responsesReviewMessages reads a Responses or compaction request: meta, the
+// text of its definitions, then its instructions and its input, a string or
+// a list of items.
+func responsesReviewMessages(meta string, rawInstructions, rawInput json.RawMessage, includeToolResults bool) []contentsafety.Message {
+	instructions := contentsafety.CollectJSONText(rawInstructions)
+	if common.GetJsonType(rawInstructions) == "string" {
+		_ = common.Unmarshal(rawInstructions, &instructions)
 	}
 	messages := []contentsafety.Message{
-		{Role: contentsafety.RoleMeta, Text: joinText(contentsafety.CollectJSONText(r.Tools), contentsafety.CollectJSONText(r.Text),
-			contentsafety.CollectJSONText(r.Prompt), contentsafety.CollectJSONText(r.Metadata))},
+		{Role: contentsafety.RoleMeta, Text: meta},
 		{Role: contentsafety.RoleSystem, Text: instructions},
 	}
 	var input any
-	if len(r.Input) == 0 || common.Unmarshal(r.Input, &input) != nil {
+	if len(rawInput) == 0 || common.Unmarshal(rawInput, &input) != nil {
 		return messages
 	}
 	items, isList := input.([]any)
@@ -181,7 +198,8 @@ func responsesItemText(item map[string]any) (string, string) {
 }
 
 func geminiReviewMessages(r *dto.GeminiChatRequest, includeToolResults bool) []contentsafety.Message {
-	messages := []contentsafety.Message{{Role: contentsafety.RoleMeta, Text: contentsafety.CollectJSONText(r.Tools)}}
+	messages := []contentsafety.Message{{Role: contentsafety.RoleMeta, Text: joinText(contentsafety.CollectJSONText(r.Tools),
+		marshalledText(r.GenerationConfig.ResponseSchema), contentsafety.CollectJSONText(r.GenerationConfig.ResponseJsonSchema))}}
 	if r.SystemInstructions != nil {
 		system, _ := geminiPartsText(r.SystemInstructions.Parts)
 		messages = append(messages, contentsafety.Message{Role: contentsafety.RoleSystem, Text: system})
@@ -200,11 +218,12 @@ func geminiReviewMessages(r *dto.GeminiChatRequest, includeToolResults bool) []c
 }
 
 // geminiPartsText is the text of Gemini parts a model reads, and apart from
-// it the text of their function responses. Inline and file data are media.
+// it the text of their function responses. Inline data is media unless its
+// MIME type is text, and file data is media.
 func geminiPartsText(parts []dto.GeminiPart) (string, string) {
 	var texts, results []string
 	for _, part := range parts {
-		texts = append(texts, part.Text)
+		texts = append(texts, part.Text, geminiInlineText(part.InlineData))
 		if part.FunctionCall != nil {
 			texts = append(texts, part.FunctionCall.FunctionName, contentsafety.CollectValueText(part.FunctionCall.Arguments))
 		}
@@ -215,9 +234,29 @@ func geminiPartsText(parts []dto.GeminiPart) (string, string) {
 			results = append(results, marshalledText(part.CodeExecutionResult))
 		}
 		if part.FunctionResponse != nil {
-			results = append(results, part.FunctionResponse.Name, contentsafety.CollectValueText(part.FunctionResponse.Response),
-				contentsafety.CollectJSONText(part.FunctionResponse.Parts))
+			results = append(results, part.FunctionResponse.Name, contentsafety.CollectValueText(part.FunctionResponse.Response))
+			var responseParts []dto.GeminiPart
+			if common.Unmarshal(part.FunctionResponse.Parts, &responseParts) == nil {
+				text, nested := geminiPartsText(responseParts)
+				results = append(results, text, nested)
+			} else {
+				results = append(results, contentsafety.CollectJSONText(part.FunctionResponse.Parts))
+			}
 		}
 	}
 	return joinText(texts...), joinText(results...)
+}
+
+// geminiInlineText is the text of Gemini inline data with a text MIME type,
+// such as an attached text file, decoded from base64. Data that does not
+// decode is read as it is.
+func geminiInlineText(data *dto.GeminiInlineData) string {
+	if data == nil || !strings.HasPrefix(strings.ToLower(data.MimeType), "text/") {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(data.Data)
+	if err != nil {
+		return data.Data
+	}
+	return string(decoded)
 }

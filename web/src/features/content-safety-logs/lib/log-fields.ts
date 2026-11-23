@@ -20,6 +20,7 @@ import {
   DECISION_PRESENTATION,
   FAILURE_REASON_LABEL_KEYS,
   MODE_LABEL_KEYS,
+  UNASKED_FAILURE_REASONS,
 } from '../constants'
 import type {
   ContentSafetyDecision,
@@ -109,7 +110,22 @@ export type ContentSafetyStatsSummary = {
   refused: number
 }
 
-/** Adds the weighted totals of the stats rows into the figures of the strip. */
+/**
+ * Whether a stats row counts reviews that asked the reviewer: not a cache
+ * hit, and not a failure that stopped the review before it asked.
+ */
+function askedReviewer(row: ContentSafetyStatsCount): boolean {
+  if (!row.decision.startsWith('review_') || row.cache_hit) return false
+  return !UNASKED_FAILURE_REASONS.some(
+    (reason) => reason === row.failure_reason
+  )
+}
+
+/**
+ * Adds the weighted totals of the stats rows into the figures of the strip.
+ * Reviews counts only the reviews that asked the reviewer; the other figures
+ * count every review decision.
+ */
 export function summarizeStatsCounts(
   counts: readonly ContentSafetyStatsCount[]
 ): ContentSafetyStatsSummary {
@@ -123,13 +139,16 @@ export function summarizeStatsCounts(
   for (const row of counts) {
     if (row.failure_reason === 'refused') summary.refused += row.total
     if (!row.decision.startsWith('review_')) continue
-    summary.reviews += row.total
-    if (row.decision === 'review_flagged')
+    if (askedReviewer(row)) summary.reviews += row.total
+    if (
+      row.decision === 'review_flagged' ||
+      row.decision === 'review_rejected'
+    ) {
       summary.flaggedOrRejected += row.total
-    if (row.decision === 'review_rejected')
-      summary.flaggedOrRejected += row.total
-    if (row.decision === 'review_controversial')
+    }
+    if (row.decision === 'review_controversial') {
       summary.controversial += row.total
+    }
     if (row.decision === 'review_failed') summary.failed += row.total
   }
   return summary

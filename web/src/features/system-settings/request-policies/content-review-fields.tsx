@@ -313,7 +313,9 @@ function ReviewOptionFields(props: {
         <ReviewNumberField
           name='review_rate_limit_per_minute'
           label={t('Synchronous reviews per account per minute')}
-          description={t('Cached verdicts do not count.')}
+          description={t(
+            'Each new piece reviewed counts; cached verdicts do not.'
+          )}
         />
         <ReviewNumberField
           name='unit_chars'
@@ -324,7 +326,7 @@ function ReviewOptionFields(props: {
           name='max_units'
           label={t('Maximum pieces per request')}
           description={t(
-            'Most new pieces reviewed per request. A synchronous review with more is rejected; a background review reviews the newest and marks the rest truncated.'
+            "Most new pieces reviewed per request. A synchronous review with more is rejected; a background review reviews the newest and marks the rest truncated, and when enforced the account's next requests are reviewed before going upstream for 10 minutes."
           )}
         />
         <ReviewNumberField
@@ -341,7 +343,7 @@ function ReviewOptionFields(props: {
           name='async_rate_per_minute'
           label={t('Background reviews per account per minute')}
           description={t(
-            "Over this, the account's next requests are reviewed before going upstream for 10 minutes."
+            "Each new piece queued counts. Over this, the account's next requests are reviewed before going upstream for 10 minutes."
           )}
         />
         <ReviewNumberField

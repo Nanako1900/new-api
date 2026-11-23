@@ -189,17 +189,20 @@ func contentSafetyLogsVisibleTo(viewerRole int) (*gorm.DB, error) {
 }
 
 // ContentSafetyStatsCount is the number of checks with one outcome. Sampled
-// passed reviews count with their weight.
+// passed reviews count with their weight. CacheHit tells verdicts the cache
+// decided from reviews that asked the reviewer.
 type ContentSafetyStatsCount struct {
 	Decision      string `json:"decision"`
 	Mode          string `json:"mode"`
 	FailureReason string `json:"failure_reason"`
+	CacheHit      bool   `json:"cache_hit"`
 	Total         int64  `json:"total"`
 }
 
 // ContentSafetyStats sums the checks since a time, so an administrator can
 // judge a reviewer before enforcing it. Latency covers the reviews that asked
-// the reviewer, the most recent contentSafetyStatsLatencyRows of them.
+// the reviewer, the most recent contentSafetyStatsLatencyRows of them, each
+// counted with its sampling weight.
 type ContentSafetyStats struct {
 	Counts         []ContentSafetyStatsCount `json:"counts"`
 	LatencyP50Ms   int                       `json:"latency_p50_ms"`
@@ -214,8 +217,8 @@ func GetContentSafetyStats(since int64, viewerRole int) (*ContentSafetyStats, er
 		return nil, err
 	}
 	err = counts.Where("created_at >= ?", since).
-		Select("decision, mode, failure_reason, SUM(CASE WHEN weight > 0 THEN weight ELSE 1 END) AS total").
-		Group("decision, mode, failure_reason").
+		Select("decision, mode, failure_reason, cache_hit, SUM(CASE WHEN weight > 0 THEN weight ELSE 1 END) AS total").
+		Group("decision, mode, failure_reason, cache_hit").
 		Scan(&stats.Counts).Error
 	if err != nil {
 		return nil, err
@@ -224,20 +227,40 @@ func GetContentSafetyStats(since int64, viewerRole int) (*ContentSafetyStats, er
 	if err != nil {
 		return nil, err
 	}
-	var samples []int
+	type latencySample struct {
+		LatencyMs int
+		Weight    int
+	}
+	var samples []latencySample
 	err = latencies.Where("created_at >= ? AND latency_ms > 0", since).
 		Order("created_at DESC").Limit(contentSafetyStatsLatencyRows).
-		Pluck("latency_ms", &samples).Error
+		Select("latency_ms, weight").Scan(&samples).Error
 	if err != nil {
 		return nil, err
 	}
 	if len(samples) == 0 {
 		return stats, nil
 	}
-	slices.Sort(samples)
+	slices.SortFunc(samples, func(a, b latencySample) int { return a.LatencyMs - b.LatencyMs })
+	total := 0
+	for i := range samples {
+		samples[i].Weight = max(samples[i].Weight, 1)
+		total += samples[i].Weight
+	}
+	// A percentile is the first latency at which the summed weights reach
+	// that share of all weights.
 	stats.LatencySamples = len(samples)
-	stats.LatencyP50Ms = samples[(len(samples)-1)*50/100]
-	stats.LatencyP95Ms = samples[(len(samples)-1)*95/100]
+	seen := 0
+	for _, sample := range samples {
+		seen += sample.Weight
+		if stats.LatencyP50Ms == 0 && seen*100 >= total*50 {
+			stats.LatencyP50Ms = sample.LatencyMs
+		}
+		if seen*100 >= total*95 {
+			stats.LatencyP95Ms = sample.LatencyMs
+			break
+		}
+	}
 	return stats, nil
 }
 

@@ -3,14 +3,18 @@ package contentsafety_test
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"math/rand/v2"
+	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service/contentsafety"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
@@ -84,8 +88,8 @@ func TestNormalizeReviewTextFoldsWidthAndDropsInvisibleCharacters(t *testing.T) 
 	assert.Equal(t, "我想买一把刀", contentsafety.NormalizeReviewText("我想买一把刀"))
 }
 
-func keyOf(text string) string {
-	return contentsafety.CacheKey("judge", "prompt", text)
+func keyOf(text, context string) string {
+	return contentsafety.CacheKey("judge", "prompt", text, context)
 }
 
 func unitTexts(units []contentsafety.Unit) []string {
@@ -97,7 +101,7 @@ func unitTexts(units []contentsafety.Unit) []string {
 }
 
 func TestBuildUnitsListsMessagesNewestFirst(t *testing.T) {
-	units := contentsafety.BuildUnits([]contentsafety.Message{
+	units, truncated := contentsafety.BuildUnits([]contentsafety.Message{
 		{Role: contentsafety.RoleSystem, Text: "be brief"},
 		{Role: contentsafety.RoleUser, Text: "hello"},
 		{Role: contentsafety.RoleUser, Text: "and more"},
@@ -110,24 +114,50 @@ func TestBuildUnitsListsMessagesNewestFirst(t *testing.T) {
 	assert.Equal(t, "hello\nand more", units[0].Context, "a unit carries the user's previous message as context")
 	assert.Equal(t, "hello\nand more", units[1].Context)
 	assert.Empty(t, units[2].Context)
-	assert.Equal(t, keyOf("bye"), units[0].Key, "the key is of the text the reviewer reads")
+	assert.Equal(t, keyOf("bye", "hello\nand more"), units[0].Key, "the key is of the text and the context the reviewer reads")
+	assert.Zero(t, truncated)
 }
 
 func TestBuildUnitsCutsLongMessagesIntoOverlappingChunks(t *testing.T) {
 	text := strings.Repeat("a", 900) + strings.Repeat("b", 900)
-	units := contentsafety.BuildUnits([]contentsafety.Message{{Role: contentsafety.RoleUser, Text: text}}, 1000, keyOf)
+	units, _ := contentsafety.BuildUnits([]contentsafety.Message{{Role: contentsafety.RoleUser, Text: text}}, 1000, keyOf)
 	require.Len(t, units, 2)
 	assert.Equal(t, []rune(text)[800:], []rune(units[0].Text), "the newest chunk comes first")
 	assert.Equal(t, []rune(text)[:1000], []rune(units[1].Text))
 }
 
-func TestBuildUnitsKeepsEachTextOnce(t *testing.T) {
-	units := contentsafety.BuildUnits([]contentsafety.Message{
+// The context is part of what the reviewer reads, so a text after another
+// user message is a different unit from the same text without one.
+func TestBuildUnitsKeepsEachTextAndContextOnce(t *testing.T) {
+	units, _ := contentsafety.BuildUnits([]contentsafety.Message{
 		{Role: contentsafety.RoleUser, Text: "same"},
 		{Role: contentsafety.RoleAssistant, Text: "reply"},
 		{Role: contentsafety.RoleUser, Text: "same"},
+		{Role: contentsafety.RoleAssistant, Text: "reply"},
+		{Role: contentsafety.RoleUser, Text: "other"},
 	}, 100, keyOf)
-	assert.Equal(t, []string{"user:same", "assistant:reply"}, unitTexts(units))
+	assert.Equal(t, []string{"user:other", "assistant:reply", "user:same", "user:same"}, unitTexts(units))
+	assert.Equal(t, []string{"same", "same", "same", ""}, []string{units[0].Context, units[1].Context, units[2].Context, units[3].Context})
+}
+
+// A history longer than MaxRequestUnits units is read from its newest end;
+// the older chunks are counted as left out, also within a long message.
+func TestBuildUnitsReadsAtMostMaxRequestUnits(t *testing.T) {
+	long := strings.Repeat("a", 1000) + strings.Repeat("b", 1000) + strings.Repeat("c", 400)
+	messages := []contentsafety.Message{{Role: contentsafety.RoleUser, Text: long}}
+	roles := []string{contentsafety.RoleAssistant, contentsafety.RoleUser}
+	for i := range contentsafety.MaxRequestUnits - 1 {
+		messages = append(messages, contentsafety.Message{Role: roles[i%2], Text: "message " + strconv.Itoa(i)})
+	}
+	units, truncated := contentsafety.BuildUnits(messages, 1000, keyOf)
+	require.Len(t, units, contentsafety.MaxRequestUnits)
+	assert.Equal(t, 2, truncated, "the long message is cut into three chunks and only its newest is read")
+	assert.Equal(t, "message "+strconv.Itoa(contentsafety.MaxRequestUnits-2), units[0].Text)
+	assert.Equal(t, string([]rune(long)[1600:]), units[len(units)-1].Text)
+
+	units, truncated = contentsafety.BuildUnits(append([]contentsafety.Message{{Role: contentsafety.RoleSystem, Text: "older"}}, messages...), 1000, keyOf)
+	assert.Len(t, units, contentsafety.MaxRequestUnits)
+	assert.Equal(t, 3, truncated, "a whole older message counts with all its chunks")
 }
 
 func TestReviewMessagesFenceUntrustedItems(t *testing.T) {
@@ -208,9 +238,12 @@ func TestParseVerdictsNormalizesCategoriesAndTruncatesReasons(t *testing.T) {
 }
 
 func TestVerdictCacheKeyAndTTLSetting(t *testing.T) {
-	key := contentsafety.CacheKey("judge", "prompt", saltedUnit("a knife on the table"))
-	assert.NotEqual(t, key, contentsafety.CacheKey("other-judge", "prompt", "a knife on the table"), "changing the model invalidates conclusions")
-	assert.NotEqual(t, key, contentsafety.CacheKey("judge", "other prompt", "a knife on the table"), "changing the prompt invalidates conclusions")
+	text := saltedUnit("a knife on the table")
+	key := contentsafety.CacheKey("judge", "prompt", text, "")
+	assert.NotEqual(t, key, contentsafety.CacheKey("other-judge", "prompt", text, ""), "changing the model invalidates conclusions")
+	assert.NotEqual(t, key, contentsafety.CacheKey("judge", "other prompt", text, ""), "changing the prompt invalidates conclusions")
+	assert.NotEqual(t, key, contentsafety.CacheKey("judge", "prompt", text, "an earlier question"), "the context is judged with the text")
+	assert.NotEqual(t, contentsafety.CacheKey("judge", "prompt", "ab", "c"), contentsafety.CacheKey("judge", "prompt", "a", "bc"), "text and context stay apart")
 
 	contentsafety.StoreVerdict(key, contentsafety.CachedVerdict{Level: contentsafety.LevelUnsafe, Category: "weapons"}, 60)
 	found := contentsafety.LoadVerdicts([]string{key}, 60)
@@ -218,7 +251,7 @@ func TestVerdictCacheKeyAndTTLSetting(t *testing.T) {
 	assert.Equal(t, contentsafety.CachedVerdict{Level: contentsafety.LevelUnsafe, Category: "weapons"}, found[key])
 	assert.Empty(t, contentsafety.LoadVerdicts([]string{key}, 0), "a zero TTL disables cache reads")
 
-	disabledKey := contentsafety.CacheKey("judge", "prompt", saltedUnit("never stored"))
+	disabledKey := contentsafety.CacheKey("judge", "prompt", saltedUnit("never stored"), "")
 	contentsafety.StoreVerdict(disabledKey, contentsafety.CachedVerdict{Level: contentsafety.LevelSafe}, 0)
 	assert.Empty(t, contentsafety.LoadVerdicts([]string{disabledKey}, 60), "a zero TTL disables cache writes")
 }
@@ -226,7 +259,7 @@ func TestVerdictCacheKeyAndTTLSetting(t *testing.T) {
 func TestLoadVerdictsReadsVerdictsOtherNodesStored(t *testing.T) {
 	server := useMiniRedis(t)
 	namespace := cachex.Namespace("new-api:content_safety:verdict:v2")
-	stored, other, missing := keyOf(saltedUnit("stored")), keyOf(saltedUnit("other")), keyOf(saltedUnit("missing"))
+	stored, other, missing := keyOf(saltedUnit("stored"), ""), keyOf(saltedUnit("other"), ""), keyOf(saltedUnit("missing"), "")
 	require.NoError(t, server.Set(namespace.FullKey(stored), `{"level":"safe"}`))
 	require.NoError(t, server.Set(namespace.FullKey(other), `{"level":"controversial","category":"fraud"}`))
 	found := contentsafety.LoadVerdicts([]string{stored, other, missing}, 60)
@@ -242,7 +275,7 @@ func TestLoadVerdictsReadsVerdictsOtherNodesStored(t *testing.T) {
 
 func TestFirstSightingRemembersEachUserAndUnit(t *testing.T) {
 	check := func(t *testing.T) {
-		ctx, key := context.Background(), keyOf(saltedUnit("flagged"))
+		ctx, key := context.Background(), keyOf(saltedUnit("flagged"), "")
 		user := int(time.Now().UnixNano() % 1_000_000_000)
 		assert.True(t, contentsafety.FirstSighting(ctx, user, key))
 		assert.False(t, contentsafety.FirstSighting(ctx, user, key), "the same user resending it is not new")
@@ -271,20 +304,52 @@ func TestForceSyncLastsForTheAccount(t *testing.T) {
 		assert.True(t, server.Exists("content_safety:force_sync:"+strconv.Itoa(redisUser)), "other nodes see it")
 		assert.True(t, contentsafety.SyncForced(ctx, redisUser))
 		server.Close()
-		assert.True(t, contentsafety.SyncForced(ctx, redisUser+1), "a Redis failure makes the review wait")
+		assert.False(t, contentsafety.SyncForced(ctx, redisUser+1), "a Redis failure does not hold every account's requests")
+		contentsafety.ForceSync(redisUser + 3)
+		assert.True(t, contentsafety.SyncForced(ctx, redisUser+3), "during a Redis failure the node keeps the flag itself")
 	})
 }
 
 func TestEnqueueReviewRunsJobsAndRefusesOversizedOnes(t *testing.T) {
+	user := int(time.Now().UnixNano() % 1_000_000_000)
 	done := make(chan struct{})
-	require.True(t, contentsafety.EnqueueReview(10, func() { close(done) }))
+	require.NoError(t, contentsafety.EnqueueReview(user, 10, func() { close(done) }))
 	<-done
-	assert.False(t, contentsafety.EnqueueReview(65<<20, func() { t.Error("an oversized review must not run") }))
+	assert.ErrorIs(t, contentsafety.EnqueueReview(user, 65<<20, func() { t.Error("an oversized review must not run") }), contentsafety.ErrQueueFull)
 
 	recovered := make(chan struct{})
-	require.True(t, contentsafety.EnqueueReview(10, func() { panic("boom") }))
-	require.True(t, contentsafety.EnqueueReview(10, func() { close(recovered) }))
+	require.NoError(t, contentsafety.EnqueueReview(user, 10, func() { panic("boom") }))
+	require.NoError(t, contentsafety.EnqueueReview(user, 10, func() { close(recovered) }))
 	<-recovered
+}
+
+// One account cannot fill the shared queue: its reviews waiting or running on
+// the node are capped, while other accounts still queue theirs.
+func TestEnqueueReviewCapsTheReviewsOfOneAccount(t *testing.T) {
+	user := int(time.Now().UnixNano()%1_000_000_000) + 11
+	release := make(chan struct{})
+	var finished sync.WaitGroup
+	t.Cleanup(func() {
+		close(release)
+		finished.Wait()
+	})
+	hold := func() {
+		defer finished.Done()
+		<-release
+	}
+	for range contentsafety.MaxQueuedReviewsPerAccount {
+		finished.Add(1)
+		if err := contentsafety.EnqueueReview(user, 10, hold); err != nil {
+			finished.Done()
+			require.NoError(t, err)
+		}
+	}
+	assert.ErrorIs(t, contentsafety.EnqueueReview(user, 10, func() { t.Error("a review over the account cap must not run") }), contentsafety.ErrAccountQueueFull)
+	finished.Add(1)
+	if err := contentsafety.EnqueueReview(user+1, 10, hold); err != nil {
+		finished.Done()
+		assert.NoError(t, err, "another account still queues its reviews")
+	}
 }
 
 // saltedUnit makes a unit text unique to one test run, because the verdict
@@ -294,16 +359,42 @@ func saltedUnit(text string) string {
 }
 
 func TestAcquireSlotWaitsForCapacity(t *testing.T) {
-	release, err := contentsafety.AcquireSlot(context.Background(), 1)
+	release, err := contentsafety.AcquireSlot(context.Background(), 1, 1)
 	require.NoError(t, err)
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = contentsafety.AcquireSlot(cancelled, 1)
+	_, err = contentsafety.AcquireSlot(cancelled, 2, 1)
 	assert.ErrorIs(t, err, context.Canceled, "a full pool waits until the caller gives up")
 	release()
-	again, err := contentsafety.AcquireSlot(context.Background(), 1)
+	again, err := contentsafety.AcquireSlot(context.Background(), 2, 1)
 	require.NoError(t, err, "a released slot is reusable")
 	again()
+}
+
+// One account's synchronous reviews take at most MaxAccountSyncReviews of the
+// node's slots, however many the node has.
+func TestAcquireSlotCapsTheSlotsOfOneAccount(t *testing.T) {
+	const user, capacity = 41, 100
+	releases := make([]func(), 0, contentsafety.MaxAccountSyncReviews)
+	for range contentsafety.MaxAccountSyncReviews {
+		release, err := contentsafety.AcquireSlot(context.Background(), user, capacity)
+		require.NoError(t, err)
+		releases = append(releases, release)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := contentsafety.AcquireSlot(cancelled, user, capacity)
+	assert.ErrorIs(t, err, context.Canceled, "the account waits for one of its own slots")
+	other, err := contentsafety.AcquireSlot(context.Background(), user+1, capacity)
+	require.NoError(t, err, "another account still gets a slot")
+	other()
+	releases[0]()
+	again, err := contentsafety.AcquireSlot(context.Background(), user, capacity)
+	require.NoError(t, err, "a released slot of the account is reusable")
+	again()
+	for _, release := range releases[1:] {
+		release()
+	}
 }
 
 func TestAcquireSlotReleaseIsIdempotentAndCapacityFloorsAtOne(t *testing.T) {
@@ -312,30 +403,32 @@ func TestAcquireSlotReleaseIsIdempotentAndCapacityFloorsAtOne(t *testing.T) {
 		t.Cleanup(cancel)
 		return ctx
 	}
-	floored, err := contentsafety.AcquireSlot(short(), 0)
+	floored, err := contentsafety.AcquireSlot(short(), 3, 0)
 	require.NoError(t, err, "a capacity below one still admits a review")
 	floored()
 
-	releaseA, err := contentsafety.AcquireSlot(short(), 1)
+	releaseA, err := contentsafety.AcquireSlot(short(), 3, 1)
 	require.NoError(t, err)
 	releaseA()
-	releaseB, err := contentsafety.AcquireSlot(short(), 1)
+	releaseB, err := contentsafety.AcquireSlot(short(), 3, 1)
 	require.NoError(t, err)
 	releaseA()
-	_, err = contentsafety.AcquireSlot(short(), 1)
+	_, err = contentsafety.AcquireSlot(short(), 4, 1)
 	assert.ErrorIs(t, err, context.DeadlineExceeded, "a repeated release must not free a second slot")
 	releaseB()
 }
 
-func TestAllowReviewCountsPerUserInMemory(t *testing.T) {
+// Reviews are counted by unit: a request of three new units uses three.
+func TestAllowReviewCountsUnitsPerUserInMemory(t *testing.T) {
 	// The package-global limiter keeps state across -count runs, so each run
 	// uses its own user ids.
 	base := int(time.Now().UnixNano() % 1_000_000_000)
 	ctx := context.Background()
-	assert.True(t, contentsafety.AllowReview(ctx, base, 2))
-	assert.True(t, contentsafety.AllowReview(ctx, base, 2))
-	assert.False(t, contentsafety.AllowReview(ctx, base, 2))
-	assert.True(t, contentsafety.AllowReview(ctx, base+1, 2), "another user has its own budget")
+	assert.True(t, contentsafety.AllowReview(ctx, base, 3, 2))
+	assert.True(t, contentsafety.AllowReview(ctx, base, 3, 1))
+	assert.False(t, contentsafety.AllowReview(ctx, base, 3, 1))
+	assert.True(t, contentsafety.AllowReview(ctx, base+1, 3, 3), "another user has its own budget")
+	assert.False(t, contentsafety.AllowReview(ctx, base+2, 3, 4), "more units than the budget never pass")
 }
 
 func useMiniRedis(t *testing.T) *miniredis.Miniredis {
@@ -353,27 +446,70 @@ func useMiniRedis(t *testing.T) *miniredis.Miniredis {
 	return server
 }
 
-func TestAllowReviewCountsPerUserInRedis(t *testing.T) {
+func TestAllowReviewCountsUnitsPerUserInRedis(t *testing.T) {
 	useMiniRedis(t)
 	ctx := context.Background()
-	assert.True(t, contentsafety.AllowReview(ctx, 7, 2))
-	assert.True(t, contentsafety.AllowReview(ctx, 7, 2))
-	assert.False(t, contentsafety.AllowReview(ctx, 7, 2))
-	assert.True(t, contentsafety.AllowReview(ctx, 8, 2), "another user has its own budget")
+	assert.True(t, contentsafety.AllowReview(ctx, 7, 3, 2))
+	assert.True(t, contentsafety.AllowReview(ctx, 7, 3, 1))
+	assert.False(t, contentsafety.AllowReview(ctx, 7, 3, 1))
+	assert.True(t, contentsafety.AllowReview(ctx, 8, 3, 3), "another user has its own budget")
+	assert.False(t, contentsafety.AllowReview(ctx, 9, 3, 4), "more units than the budget never pass")
 }
 
-func TestAllowReviewDeniesWhenRedisFails(t *testing.T) {
+// A Redis outage must not stop every review: the node counts on its own.
+func TestAllowReviewCountsOnTheNodeWhenRedisFails(t *testing.T) {
 	server := useMiniRedis(t)
 	server.Close()
-	assert.False(t, contentsafety.AllowReview(context.Background(), 7, 2))
+	user := int(time.Now().UnixNano()%1_000_000_000) + 3
+	ctx := context.Background()
+	assert.True(t, contentsafety.AllowReview(ctx, user, 2, 1))
+	assert.True(t, contentsafety.AllowEnqueue(ctx, user, 2, 2))
+	assert.True(t, contentsafety.AllowReview(ctx, user, 2, 1))
+	assert.False(t, contentsafety.AllowReview(ctx, user, 2, 1), "the node still limits the account")
 }
 
 func TestAllowEnqueueHasItsOwnBudget(t *testing.T) {
 	base := int(time.Now().UnixNano()%1_000_000_000) + 7
 	ctx := context.Background()
-	assert.True(t, contentsafety.AllowEnqueue(ctx, base, 1))
-	assert.False(t, contentsafety.AllowEnqueue(ctx, base, 1))
-	assert.True(t, contentsafety.AllowReview(ctx, base, 1), "background reviews do not use up synchronous ones")
+	assert.True(t, contentsafety.AllowEnqueue(ctx, base, 1, 1))
+	assert.False(t, contentsafety.AllowEnqueue(ctx, base, 1, 1))
+	assert.True(t, contentsafety.AllowReview(ctx, base, 1, 1), "background reviews do not use up synchronous ones")
+}
+
+// Only a provider refusing the text on content grounds is a refusal; any
+// other client error of a review channel is a failure, which a synchronous
+// review does not let through.
+func TestIsReviewRefusal(t *testing.T) {
+	openAI := func(status int, code any, errorType, message string) *types.NewAPIError {
+		return types.WithOpenAIError(types.OpenAIError{Message: message, Type: errorType, Code: code}, status)
+	}
+	plain := func(status int, message string) *types.NewAPIError {
+		return types.NewOpenAIError(errors.New(message), types.ErrorCodeBadResponseStatusCode, status)
+	}
+	for _, tc := range []struct {
+		name string
+		err  *types.NewAPIError
+		want bool
+	}{
+		{name: "DeepSeek content risk", err: openAI(http.StatusBadRequest, nil, "invalid_request_error", "Content Exists Risk"), want: true},
+		{name: "OpenAI content policy violation", err: openAI(http.StatusBadRequest, "content_policy_violation", "invalid_request_error", "Your request was rejected"), want: true},
+		{name: "Azure content filter", err: openAI(http.StatusBadRequest, "content_filter", "", "The response was filtered due to the prompt triggering Azure OpenAI's content management policy."), want: true},
+		{name: "Alibaba data inspection", err: openAI(http.StatusBadRequest, "data_inspection_failed", "data_inspection_failed", "Input data may contain inappropriate content."), want: true},
+		{name: "a message about inappropriate content without a code", err: plain(http.StatusBadRequest, "Input data may contain inappropriate content."), want: true},
+		{name: "a message about sensitive content", err: plain(http.StatusUnprocessableEntity, "the input contains sensitive words"), want: true},
+		{name: "a moderation block", err: plain(http.StatusForbidden, "blocked by moderation"), want: true},
+		{name: "a safety block", err: openAI(http.StatusBadRequest, nil, "invalid_request_error", "Request blocked for safety reasons"), want: true},
+		{name: "an invalid parameter", err: openAI(http.StatusBadRequest, "invalid_value", "invalid_request_error", "max_tokens is too large"), want: false},
+		{name: "a bad key", err: openAI(http.StatusUnauthorized, "invalid_api_key", "invalid_request_error", "Incorrect API key provided"), want: false},
+		{name: "a rate limit", err: openAI(http.StatusTooManyRequests, "rate_limit_exceeded", "requests", "Rate limit reached"), want: false},
+		{name: "a 400 without a body", err: plain(http.StatusBadRequest, "bad response status code 400"), want: false},
+		{name: "a server error naming content risk", err: plain(http.StatusInternalServerError, "Content Exists Risk"), want: false},
+		{name: "no error", err: nil, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, contentsafety.IsReviewRefusal(tc.err))
+		})
+	}
 }
 
 // Object keys are text a model reads too (a JSON Schema's property names, for

@@ -1348,8 +1348,9 @@ func TestGetContentSafetyLogsHidesRootUsersFromNonRootAuditors(t *testing.T) {
 }
 
 // The stats a shadow-mode evaluation reads: sampled passes count with their
-// weight, failures by reason, latency over reviews that asked the reviewer,
-// and never the records of root users for a non-root viewer.
+// weight, failures by reason, verdicts the cache decided apart from reviews
+// that asked the reviewer, latency percentiles over those reviews weighted
+// like the counts, and never the records of root users for a non-root viewer.
 func TestGetContentSafetyStatsSumsDecisionsForAuditors(t *testing.T) {
 	admin, pat := setupAccessTokenAudit(t)
 	rootToken := "root-stats-token"
@@ -1359,9 +1360,10 @@ func TestGetContentSafetyStatsSumsDecisionsForAuditors(t *testing.T) {
 	now := time.Now().Unix()
 	for _, entry := range []model.ContentSafetyLog{
 		{CreatedAt: now, UserId: 7, Decision: model.ContentSafetyDecisionReviewPassed, Mode: model.ContentSafetyModeShadow, Weight: 10, LatencyMs: 100},
-		{CreatedAt: now, UserId: 7, Decision: model.ContentSafetyDecisionReviewPassed, Mode: model.ContentSafetyModeShadow, Weight: 10, LatencyMs: 300},
+		{CreatedAt: now, UserId: 7, Decision: model.ContentSafetyDecisionReviewPassed, Mode: model.ContentSafetyModeShadow, Weight: 10, LatencyMs: 100},
 		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewFlagged, Mode: model.ContentSafetyModeShadow, LatencyMs: 900},
-		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewFailed, Mode: model.ContentSafetyModeShadow, FailureReason: model.ContentSafetyFailureTimeout},
+		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewControversial, Mode: model.ContentSafetyModeShadow, LatencyMs: 1000},
+		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewFailed, Mode: model.ContentSafetyModeShadow, FailureReason: model.ContentSafetyFailureTimeout, LatencyMs: 1100},
 		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewFlagged, Mode: model.ContentSafetyModeShadow, CacheHit: true},
 		{CreatedAt: now - 3*3600, UserId: 8, Decision: model.ContentSafetyDecisionReviewFlagged, Mode: model.ContentSafetyModeShadow},
 		{CreatedAt: now, UserId: root.Id, Decision: model.ContentSafetyDecisionReviewFlagged, Mode: model.ContentSafetyModeShadow},
@@ -1381,13 +1383,14 @@ func TestGetContentSafetyStatsSumsDecisionsForAuditors(t *testing.T) {
 	require.True(t, result.Success)
 	totals := map[string]int64{}
 	for _, count := range result.Data.Counts {
-		totals[count.Decision+"/"+count.FailureReason] += count.Total
+		totals[fmt.Sprintf("%s/%s/%t", count.Decision, count.FailureReason, count.CacheHit)] += count.Total
 	}
-	assert.Equal(t, map[string]int64{"review_passed/": 20, "review_flagged/": 2, "review_failed/timeout": 1}, totals,
-		"passes count with their weight, older rows and the root user's are left out")
-	assert.Equal(t, 3, result.Data.LatencySamples)
-	assert.Equal(t, 300, result.Data.LatencyP50Ms)
-	assert.Equal(t, 300, result.Data.LatencyP95Ms)
+	assert.Equal(t, map[string]int64{"review_passed//false": 20, "review_flagged//false": 1, "review_flagged//true": 1,
+		"review_controversial//false": 1, "review_failed/timeout/false": 1}, totals,
+		"passes count with their weight, cache hits apart, older rows and the root user's are left out")
+	assert.Equal(t, 5, result.Data.LatencySamples)
+	assert.Equal(t, 100, result.Data.LatencyP50Ms, "the weighted passes make up most reviews")
+	assert.Equal(t, 1000, result.Data.LatencyP95Ms)
 
 	rootResult := result
 	require.NoError(t, common.Unmarshal(auditRequest(router, "GET", "/api/content_safety/stats?hours=1", rootToken).Body.Bytes(), &rootResult))

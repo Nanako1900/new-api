@@ -1,6 +1,7 @@
 package contentsafety
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,12 +14,24 @@ const (
 	// maxQueuedReviewBytes bounds the unit text waiting for background review.
 	maxQueuedReviewBytes = 64 << 20
 	queueDropWarning     = time.Minute
+	// MaxQueuedReviewsPerAccount bounds the background reviews of one account
+	// waiting or running on a node, so one account cannot fill the queue.
+	MaxQueuedReviewsPerAccount = 20
+)
+
+var (
+	// ErrQueueFull means the background review queue has no room.
+	ErrQueueFull = errors.New("content review queue is full")
+	// ErrAccountQueueFull means the account already has
+	// MaxQueuedReviewsPerAccount background reviews on this node.
+	ErrAccountQueueFull = errors.New("content review queue holds too many reviews of the account")
 )
 
 // reviewQueue holds background reviews for a fixed set of workers, bounded by
-// a job count and the bytes of the queued text. Its size and worker count are
-// read when the first review is queued, so changing them takes a restart.
-// Pending reviews are lost when the process stops.
+// a job count, the bytes of the queued text and the jobs of each account. Its
+// size and worker count are read when the first review is queued, so
+// changing them takes a restart. Pending reviews are lost when the process
+// stops.
 type reviewQueue struct {
 	start   sync.Once
 	jobs    chan reviewJob
@@ -26,19 +39,26 @@ type reviewQueue struct {
 	dropped atomic.Int64
 	// warned is when the last drop warning was written, in Unix nanoseconds.
 	warned atomic.Int64
+
+	accountMu sync.Mutex
+	// accounts counts the jobs of each account waiting or running.
+	accounts map[int]int
 }
 
 type reviewJob struct {
-	run  func()
-	size int64
+	run    func()
+	size   int64
+	userId int
 }
 
-var reviews reviewQueue
+var reviews = reviewQueue{accounts: map[int]int{}}
 
-// EnqueueReview queues run, which reviews size bytes of text, without
-// waiting. It reports false when the queue is full; the caller records the
-// drop and forces the account's next requests to a synchronous review.
-func EnqueueReview(size int64, run func()) bool {
+// EnqueueReview queues run, which reviews size bytes of text for userId,
+// without waiting. It returns ErrAccountQueueFull when the account has too
+// many reviews queued and ErrQueueFull when the queue has no room; the
+// caller records either and forces the account's next requests to a
+// synchronous review.
+func EnqueueReview(userId int, size int64, run func()) error {
 	reviews.start.Do(func() {
 		cfg := operation_setting.GetContentSafetySetting().Bounded()
 		reviews.jobs = make(chan reviewJob, cfg.AsyncQueueSize)
@@ -46,18 +66,37 @@ func EnqueueReview(size int64, run func()) bool {
 			go reviews.work()
 		}
 	})
+	reviews.accountMu.Lock()
+	if reviews.accounts[userId] >= MaxQueuedReviewsPerAccount {
+		reviews.accountMu.Unlock()
+		return ErrAccountQueueFull
+	}
+	reviews.accounts[userId]++
+	reviews.accountMu.Unlock()
 	if reviews.bytes.Add(size) > maxQueuedReviewBytes {
 		reviews.bytes.Add(-size)
+		reviews.finish(userId)
 		reviews.drop()
-		return false
+		return ErrQueueFull
 	}
 	select {
-	case reviews.jobs <- reviewJob{run: run, size: size}:
-		return true
+	case reviews.jobs <- reviewJob{run: run, size: size, userId: userId}:
+		return nil
 	default:
 		reviews.bytes.Add(-size)
+		reviews.finish(userId)
 		reviews.drop()
-		return false
+		return ErrQueueFull
+	}
+}
+
+// finish takes one job of userId off the account's count.
+func (q *reviewQueue) finish(userId int) {
+	q.accountMu.Lock()
+	defer q.accountMu.Unlock()
+	q.accounts[userId]--
+	if q.accounts[userId] <= 0 {
+		delete(q.accounts, userId)
 	}
 }
 
@@ -69,6 +108,7 @@ func (q *reviewQueue) work() {
 
 // runJob runs one review; a panic is logged so the worker keeps serving.
 func (q *reviewQueue) runJob(job reviewJob) {
+	defer q.finish(job.userId)
 	defer q.bytes.Add(-job.size)
 	defer func() {
 		if recovered := recover(); recovered != nil {

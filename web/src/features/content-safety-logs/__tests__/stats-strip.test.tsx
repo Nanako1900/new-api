@@ -34,29 +34,32 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import { ContentSafetyStatsStrip } from '../components/content-safety-stats-strip'
 
+function row(
+  decision: string,
+  total: number,
+  options?: { mode?: string; failure_reason?: string; cache_hit?: boolean }
+) {
+  return {
+    decision,
+    mode: options?.mode ?? 'sync',
+    failure_reason: options?.failure_reason ?? '',
+    cache_hit: options?.cache_hit ?? false,
+    total,
+  }
+}
+
 const stats = {
   counts: [
-    { decision: 'keyword_blocked', mode: '', failure_reason: '', total: 50 },
-    {
-      decision: 'review_passed',
-      mode: 'sync',
-      failure_reason: '',
-      total: 1200,
-    },
-    { decision: 'review_flagged', mode: 'async', failure_reason: '', total: 7 },
-    { decision: 'review_rejected', mode: 'sync', failure_reason: '', total: 3 },
-    {
-      decision: 'review_controversial',
-      mode: 'sync',
-      failure_reason: 'refused',
-      total: 4,
-    },
-    {
-      decision: 'review_failed',
-      mode: 'sync',
-      failure_reason: 'timeout',
-      total: 2,
-    },
+    row('keyword_blocked', 50, { mode: '' }),
+    row('review_passed', 1200),
+    row('review_flagged', 7, { mode: 'async' }),
+    row('review_flagged', 5, { mode: 'async', cache_hit: true }),
+    row('review_rejected', 3),
+    row('review_controversial', 4, { failure_reason: 'refused' }),
+    row('review_failed', 2, { failure_reason: 'timeout' }),
+    row('review_failed', 6, { mode: 'async', failure_reason: 'rate_limited' }),
+    row('review_failed', 8, { mode: 'async', failure_reason: 'queue_full' }),
+    row('review_failed', 9, { failure_reason: 'too_many_units' }),
   ],
   latency_p50_ms: 850,
   latency_p95_ms: 2400,
@@ -110,12 +113,32 @@ it('shows the review figures of the last 24 hours from the stats API', async () 
   expect(get).toHaveBeenCalledWith('/api/content_safety/stats', {
     params: { hours: 24 },
   })
-  expect(figure('Flagged or rejected')).toHaveTextContent('10')
+  expect(figure('Flagged or rejected')).toHaveTextContent('15')
   expect(figure('Controversial')).toHaveTextContent('4')
-  expect(figure('Failed')).toHaveTextContent('2')
+  expect(figure('Failed')).toHaveTextContent('25')
   expect(figure('Refused by the reviewer')).toHaveTextContent('4')
   expect(figure('Latency p50')).toHaveTextContent('850 ms')
   expect(figure('Latency p95')).toHaveTextContent('2,400 ms')
+})
+
+it('counts as reviews only those that asked the reviewer, not cache hits or reviews stopped before asking', async () => {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        ...stats,
+        counts: [
+          row('review_passed', 3),
+          row('review_flagged', 5, { cache_hit: true }),
+          row('review_failed', 6, { failure_reason: 'rate_limited' }),
+        ],
+      },
+    },
+  })
+  renderStrip()
+  await waitFor(() => expect(figure('Reviews')).toHaveTextContent('3'))
+  expect(figure('Flagged or rejected')).toHaveTextContent('5')
+  expect(figure('Failed')).toHaveTextContent('6')
 })
 
 it('choosing 7 days requests 168 hours', async () => {
