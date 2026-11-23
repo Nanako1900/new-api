@@ -52,12 +52,15 @@ func IsDecisionErrorCode(code string) bool {
 // refusalMarkers are the error codes and message phrases, lowercased, with
 // which providers refuse a text on content grounds: DeepSeek's "Content
 // Exists Risk", OpenAI's and Azure's content filter and policy errors,
-// Alibaba's data inspection, and messages about risky, unsafe, sensitive or
-// inappropriate content.
+// Alibaba's data inspection, Moonshot's high-risk rejection, Zhipu's and
+// other Chinese providers' unsafe or sensitive content, and messages about
+// risky, unsafe, sensitive or inappropriate content. A bare "safety" is not
+// one: a misconfigured safety_settings parameter mentions it too, and must
+// fail a synchronous review instead of letting the text through.
 var refusalMarkers = []string{
 	"content exists risk", "content risk", "content_filter", "content filter", "content_policy", "content policy",
-	"content management policy", "data_inspection_failed", "datainspectionfailed", "safety", "sensitive",
-	"moderation", "inappropriate",
+	"content management policy", "data_inspection_failed", "datainspectionfailed", "safety reasons", "safety system",
+	"safety filter", "unsafe", "sensitive", "moderation", "inappropriate", "high risk", "敏感", "不安全", "违规",
 }
 
 // IsReviewRefusal reports whether err, returned by a review channel, is the
