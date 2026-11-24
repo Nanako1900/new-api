@@ -90,14 +90,17 @@ func validateAlerts(value string) error {
 	return nil
 }
 
-// GetActiveAlerts returns the enabled alerts whose schedule contains now, the
-// most severe first and the newest first within a level. Callers must hold
-// common.OptionMapRWMutex for reading.
-func GetActiveAlerts(now time.Time) []Alert {
-	active := []Alert{}
+type expiredAlert struct {
+	alert  Alert
+	endsAt time.Time
+}
+
+func collectPublishedAlerts(now time.Time) ([]Alert, []expiredAlert) {
+	live := []Alert{}
+	var expired []expiredAlert
 	var alerts []Alert
 	if err := common.UnmarshalJsonStr(GetConsoleSetting().Alerts, &alerts); err != nil {
-		return active
+		return live, nil
 	}
 	for _, alert := range alerts {
 		if !alert.Enabled {
@@ -115,15 +118,47 @@ func GetActiveAlerts(now time.Time) []Alert {
 			continue
 		}
 		if endsAt != nil && !now.Before(*endsAt) {
+			expired = append(expired, expiredAlert{alert: alert, endsAt: *endsAt})
 			continue
 		}
-		active = append(active, alert)
+		live = append(live, alert)
 	}
-	slices.SortStableFunc(active, func(a, b Alert) int {
+	slices.SortStableFunc(live, func(a, b Alert) int {
 		return cmp.Or(
 			cmp.Compare(alertLevelRank[a.Level], alertLevelRank[b.Level]),
 			cmp.Compare(b.Id, a.Id),
 		)
 	})
-	return active
+	return live, expired
+}
+
+// GetActiveAlerts returns the enabled alerts whose schedule contains now, the
+// most severe first and the newest first within a level. Callers must hold
+// common.OptionMapRWMutex for reading.
+func GetActiveAlerts(now time.Time) []Alert {
+	live, _ := collectPublishedAlerts(now)
+	return live
+}
+
+// GetPublishedAlerts returns enabled alerts whose start time has passed: live
+// alerts first (same order as GetActiveAlerts), followed by expired alerts
+// ordered by most recently ended then newest ID. Callers must hold
+// common.OptionMapRWMutex for reading.
+func GetPublishedAlerts(now time.Time) []Alert {
+	live, expired := collectPublishedAlerts(now)
+	if len(expired) == 0 {
+		return live
+	}
+	slices.SortStableFunc(expired, func(a, b expiredAlert) int {
+		return cmp.Or(
+			b.endsAt.Compare(a.endsAt),
+			cmp.Compare(b.alert.Id, a.alert.Id),
+		)
+	})
+	result := make([]Alert, 0, len(live)+len(expired))
+	result = append(result, live...)
+	for _, item := range expired {
+		result = append(result, item.alert)
+	}
+	return result
 }

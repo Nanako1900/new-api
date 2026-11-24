@@ -17,13 +17,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { useState, useMemo } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
 
+import { getPublishedAlerts } from '@/features/console-alerts/api'
+import { CONSOLE_ALERTS_HISTORY_QUERY_KEY } from '@/features/console-alerts/constants'
+import { getAlertStatus } from '@/features/console-alerts/lib/alert-status'
+import { getAlertDismissKey } from '@/features/console-alerts/lib/dismiss-key'
+import type { ConsoleAlert } from '@/features/console-alerts/types'
 import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
 import { hashString } from '@/lib/hash'
 import { requireServerSuccess } from '@/lib/server-error-message'
-import { useNotificationStore } from '@/stores/notification-store'
+import { useAlertDismissalStore } from '@/stores/alert-dismissal-store'
+import { useAuthStore } from '@/stores/auth-store'
+import {
+  useNotificationStore,
+  type NotificationTab,
+} from '@/stores/notification-store'
+
+const ALERTS_STALE_TIME_MS = 60 * 1000
+const ALERTS_REFETCH_INTERVAL_MS = 5 * 60 * 1000
 
 /**
  * Generate a unique key for an announcement
@@ -48,14 +61,46 @@ function getAnnouncementKey(item: Record<string, unknown>): string {
 }
 
 /**
- * Hook to manage notifications (Notice + Announcements)
- * Provides unread counts and read status management
+ * Hook to manage notifications (Alerts + Notice + Announcements)
+ * Provides unread counts, read status, and alert banner restore/dismiss actions
  */
 export function useNotifications() {
-  const [popoverOpen, setPopoverOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'notice' | 'announcements'>(
-    'notice'
+  const signedIn = useAuthStore((s) => !!s.auth.user)
+
+  // Notification store selectors
+  const popoverOpen = useNotificationStore((s) => s.popoverOpen)
+  const storedActiveTab = useNotificationStore((s) => s.activeTab)
+  const setPopoverOpenStore = useNotificationStore((s) => s.setPopoverOpen)
+  const setActiveTabStore = useNotificationStore((s) => s.setActiveTab)
+  const lastReadNotice = useNotificationStore((s) => s.lastReadNotice)
+  const readAnnouncementKeys = useNotificationStore(
+    (s) => s.readAnnouncementKeys
   )
+  const readAlertKeys = useNotificationStore((s) => s.readAlertKeys)
+  const markNoticeRead = useNotificationStore((s) => s.markNoticeRead)
+  const markAnnouncementsRead = useNotificationStore(
+    (s) => s.markAnnouncementsRead
+  )
+  const markAlertsRead = useNotificationStore((s) => s.markAlertsRead)
+  const pruneReadAlerts = useNotificationStore((s) => s.pruneReadAlerts)
+
+  // Alert dismissal store selectors
+  const dismissedAlertKeys = useAlertDismissalStore((s) => s.dismissedKeys)
+  const dismissAlertKey = useAlertDismissalStore((s) => s.dismiss)
+  const restoreAlertKey = useAlertDismissalStore((s) => s.restore)
+  const restoreAllAlertKeys = useAlertDismissalStore((s) => s.restoreAll)
+
+  // Fetch published alerts (live + expired history) when signed in
+  const alertsQuery = useQuery({
+    queryKey: CONSOLE_ALERTS_HISTORY_QUERY_KEY,
+    queryFn: async () =>
+      requireServerSuccess(await getPublishedAlerts()).data ?? [],
+    enabled: signedIn,
+    staleTime: ALERTS_STALE_TIME_MS,
+    refetchInterval: ALERTS_REFETCH_INTERVAL_MS,
+    refetchOnWindowFocus: true,
+    meta: { errorToast: false },
+  })
 
   // Fetch Notice from API
   const {
@@ -79,101 +124,229 @@ export function useNotifications() {
     )
   }, [announcementsEnabled, status?.announcements])
 
-  // Notification store
-  const {
-    lastReadNotice,
-    markNoticeRead,
-    markAnnouncementsRead,
-    isAnnouncementRead,
-  } = useNotificationStore()
+  const alerts = useMemo<ConsoleAlert[]>(() => {
+    if (!signedIn) return []
+    return alertsQuery.data ?? []
+  }, [signedIn, alertsQuery.data])
+
+  useEffect(() => {
+    if (signedIn && alertsQuery.data) {
+      pruneReadAlerts(
+        alertsQuery.data.map((alert) => getAlertDismissKey(alert))
+      )
+    }
+  }, [signedIn, alertsQuery.data, pruneReadAlerts])
 
   // Extract notice content
   const noticeContent = noticeResponse?.success
     ? (noticeResponse.data || '').trim()
     : ''
 
+  const effectiveTab: NotificationTab =
+    !signedIn && storedActiveTab === 'alerts' ? 'notice' : storedActiveTab
+
+  // Classify live alerts (re-evaluated when alerts change or popover toggles)
+  const liveAlerts = useMemo(() => {
+    const now = Date.now()
+    return alerts.filter((alert) => getAlertStatus(alert, now) === 'live')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alerts, popoverOpen])
+
   // Calculate unread counts
   const unreadCounts = useMemo(() => {
+    const alertsUnread = liveAlerts.filter((alert) => {
+      const key = getAlertDismissKey(alert)
+      const isDismissed = alert.dismissible && dismissedAlertKeys.includes(key)
+      return !isDismissed && !readAlertKeys.includes(key)
+    }).length
+
     const noticeUnread =
       noticeContent && noticeContent !== lastReadNotice ? 1 : 0
 
     const announcementsUnread = announcements.filter(
       (item: Record<string, unknown>) => {
         const key = getAnnouncementKey(item)
-        return !isAnnouncementRead(key)
+        return !readAnnouncementKeys.includes(key)
       }
     ).length
 
     return {
+      alerts: alertsUnread,
       notice: noticeUnread,
       announcements: announcementsUnread,
-      total: noticeUnread + announcementsUnread,
+      total: alertsUnread + noticeUnread + announcementsUnread,
     }
-  }, [noticeContent, lastReadNotice, announcements, isAnnouncementRead])
+  }, [
+    liveAlerts,
+    dismissedAlertKeys,
+    readAlertKeys,
+    noticeContent,
+    lastReadNotice,
+    announcements,
+    readAnnouncementKeys,
+  ])
 
-  const markAnnouncementsAsRead = () => {
-    if (announcements.length > 0) {
-      const allKeys = announcements.map((item: Record<string, unknown>) =>
-        getAnnouncementKey(item)
-      )
-      markAnnouncementsRead(allKeys)
-    }
-  }
+  // Mark active tab's items as read whenever the popover is open on that tab
+  useEffect(() => {
+    if (!popoverOpen) return
 
-  // Handle popover open
-  const handleOpenPopover = (tab?: 'notice' | 'announcements') => {
-    const nextTab = tab || activeTab
-
-    // Mark currently visible content as read when opening the notification center
-    if (noticeContent) {
-      markNoticeRead(noticeContent)
-    }
-    if (nextTab === 'announcements') {
-      markAnnouncementsAsRead()
-    }
-
-    setActiveTab(nextTab)
-    setPopoverOpen(true)
-  }
-
-  const handlePopoverOpenChange = (open: boolean) => {
-    if (open) {
-      handleOpenPopover(activeTab)
+    if (effectiveTab === 'alerts') {
+      if (liveAlerts.length > 0) {
+        markAlertsRead(liveAlerts.map((alert) => getAlertDismissKey(alert)))
+      }
       return
     }
 
-    setPopoverOpen(false)
-  }
-
-  // Handle tab change - mark announcements as read when switching to that tab
-  const handleTabChange = (tab: 'notice' | 'announcements') => {
-    setActiveTab(tab)
-
-    if (tab === 'announcements') {
-      markAnnouncementsAsRead()
+    if (effectiveTab === 'notice') {
+      if (noticeContent) {
+        markNoticeRead(noticeContent)
+      }
+      return
     }
-  }
+
+    if (effectiveTab === 'announcements' && announcements.length > 0) {
+      markAnnouncementsRead(
+        announcements.map((item) => getAnnouncementKey(item))
+      )
+    }
+  }, [
+    popoverOpen,
+    effectiveTab,
+    liveAlerts,
+    noticeContent,
+    announcements,
+    markAlertsRead,
+    markNoticeRead,
+    markAnnouncementsRead,
+  ])
+
+  const pickDefaultTab = useCallback((): NotificationTab => {
+    const tabUnread: Record<NotificationTab, number> = {
+      alerts: unreadCounts.alerts,
+      notice: unreadCounts.notice,
+      announcements: unreadCounts.announcements,
+    }
+    if (tabUnread[effectiveTab] > 0) return effectiveTab
+
+    if (signedIn && unreadCounts.alerts > 0) return 'alerts'
+    if (unreadCounts.notice > 0) return 'notice'
+    if (unreadCounts.announcements > 0) return 'announcements'
+
+    const tabHasContent: Record<NotificationTab, boolean> = {
+      alerts: signedIn && alerts.length > 0,
+      notice: noticeContent.length > 0,
+      announcements: announcements.length > 0,
+    }
+    if (tabHasContent[effectiveTab]) return effectiveTab
+
+    if (tabHasContent.alerts) return 'alerts'
+    if (tabHasContent.notice) return 'notice'
+    if (tabHasContent.announcements) return 'announcements'
+    return effectiveTab
+  }, [
+    effectiveTab,
+    signedIn,
+    unreadCounts,
+    alerts.length,
+    noticeContent,
+    announcements.length,
+  ])
+
+  const handleOpenPopover = useCallback(
+    (tab?: NotificationTab) => {
+      const requestedTab =
+        tab && (tab !== 'alerts' || signedIn) ? tab : pickDefaultTab()
+      setActiveTabStore(requestedTab)
+      setPopoverOpenStore(true)
+    },
+    [signedIn, pickDefaultTab, setActiveTabStore, setPopoverOpenStore]
+  )
+
+  const handlePopoverOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        handleOpenPopover()
+        return
+      }
+      setPopoverOpenStore(false)
+    },
+    [handleOpenPopover, setPopoverOpenStore]
+  )
+
+  const handleTabChange = useCallback(
+    (tab: NotificationTab) => {
+      if (tab === 'alerts' && !signedIn) return
+      setActiveTabStore(tab)
+    },
+    [signedIn, setActiveTabStore]
+  )
+
+  const markAllRead = useCallback(() => {
+    if (liveAlerts.length > 0) {
+      markAlertsRead(liveAlerts.map((alert) => getAlertDismissKey(alert)))
+    }
+    if (noticeContent) {
+      markNoticeRead(noticeContent)
+    }
+    if (announcements.length > 0) {
+      markAnnouncementsRead(
+        announcements.map((item) => getAnnouncementKey(item))
+      )
+    }
+  }, [
+    liveAlerts,
+    noticeContent,
+    announcements,
+    markAlertsRead,
+    markNoticeRead,
+    markAnnouncementsRead,
+  ])
+
+  const dismissAlert = useCallback(
+    (alert: ConsoleAlert) => {
+      const key = getAlertDismissKey(alert)
+      dismissAlertKey(key)
+      markAlertsRead([key])
+    },
+    [dismissAlertKey, markAlertsRead]
+  )
+
+  const restoreAlert = useCallback(
+    (alert: ConsoleAlert) => {
+      restoreAlertKey(getAlertDismissKey(alert))
+    },
+    [restoreAlertKey]
+  )
 
   return {
     // Data
+    showAlertsTab: signedIn,
+    alerts,
+    dismissedAlertKeys,
     notice: noticeContent,
     announcements,
-    loading: noticeLoading || statusLoading,
+    loading:
+      noticeLoading || statusLoading || (signedIn && alertsQuery.isLoading),
 
     // Unread counts
     unreadCount: unreadCounts.total,
+    unreadAlertsCount: unreadCounts.alerts,
     unreadNoticeCount: unreadCounts.notice,
     unreadAnnouncementsCount: unreadCounts.announcements,
 
     // Popover state
     popoverOpen,
     setPopoverOpen: handlePopoverOpenChange,
-    activeTab,
+    activeTab: effectiveTab,
     setActiveTab: handleTabChange,
 
     // Actions
     openPopover: handleOpenPopover,
-    closePopover: () => setPopoverOpen(false),
+    closePopover: () => setPopoverOpenStore(false),
+    markAllRead,
+    dismissAlert,
+    restoreAlert,
+    restoreAllAlerts: restoreAllAlertKeys,
     refetchNotice,
   }
 }
