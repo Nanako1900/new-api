@@ -29,6 +29,7 @@ var (
 	syncLimiter  common.InMemoryRateLimiter
 	asyncLimiter common.InMemoryRateLimiter
 	riskLimiter  common.InMemoryRateLimiter
+	shadowBudget common.InMemoryRateLimiter
 
 	forceSyncOnce  sync.Once
 	forceSyncUsers *hot.HotCache[int, bool]
@@ -111,6 +112,14 @@ func AllowRiskRequest(ctx context.Context, userId, perMinute int) bool {
 	return allowPerMinute(ctx, "content_safety:risk_rate", &riskLimiter, userId, perMinute, 1)
 }
 
+// AllowShadowReviews counts units a shadow review would read against the
+// budget of perMinute pieces shared by every account, across nodes with
+// Redis. Units of a request over the budget are counted too, so the rest of
+// a busy minute stays within the sample.
+func AllowShadowReviews(ctx context.Context, perMinute, units int) bool {
+	return allowPerMinute(ctx, "content_safety:shadow_budget", &shadowBudget, 0, perMinute, units)
+}
+
 // AllowEnqueue counts units background reviews of userId against perMinute,
 // so one account cannot fill the shared queue.
 func AllowEnqueue(ctx context.Context, userId, perMinute, units int) bool {
@@ -134,6 +143,7 @@ func allowPerMinute(ctx context.Context, prefix string, local *common.InMemoryRa
 		syncLimiter.Init(5 * time.Minute)
 		asyncLimiter.Init(5 * time.Minute)
 		riskLimiter.Init(5 * time.Minute)
+		shadowBudget.Init(5 * time.Minute)
 	})
 	for range units {
 		if !local.Request(strconv.Itoa(userId), perMinute, 60) {

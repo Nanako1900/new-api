@@ -507,6 +507,16 @@ func TestAllowReviewCountsUnitsPerUserInRedis(t *testing.T) {
 	assert.False(t, contentsafety.AllowReview(ctx, 9, 3, 4), "more units than the budget never pass")
 }
 
+// The shadow review budget counts the pieces of every account together.
+func TestAllowShadowReviewsSharesOneBudgetInRedis(t *testing.T) {
+	useMiniRedis(t)
+	ctx := context.Background()
+	assert.True(t, contentsafety.AllowShadowReviews(ctx, 3, 2))
+	assert.True(t, contentsafety.AllowShadowReviews(ctx, 3, 1))
+	assert.False(t, contentsafety.AllowShadowReviews(ctx, 3, 1), "the budget of the minute is spent")
+	assert.True(t, contentsafety.AllowReview(ctx, 7, 3, 3), "the budget is apart from the account limits")
+}
+
 // A Redis outage must not stop every review: the node counts on its own.
 func TestAllowReviewCountsOnTheNodeWhenRedisFails(t *testing.T) {
 	server := useMiniRedis(t)

@@ -33,7 +33,9 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -990,6 +992,120 @@ func TestContentSafetyShadowReviewSample(t *testing.T) {
 	c, info = newContentSafetyContext(userId)
 	require.Nil(t, checkContent(c, info, saltedText("a synchronous question")))
 	assert.Equal(t, int32(3), calls.Load(), "a synchronous review reads everything")
+}
+
+// With a budget, a shadow review reads the text out of the sample too while
+// the minute's budget of pieces lasts, shared by every account: a quiet
+// minute reviews everything, a busy one keeps to the sample.
+func TestContentSafetyShadowReviewBudget(t *testing.T) {
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "sample-test-secret"
+	t.Cleanup(func() { common.CryptoSecret = previousSecret })
+	for _, tc := range []struct {
+		name   string
+		budget int
+		// spent are pieces of the minute's budget other requests used.
+		spent        int
+		wantReviewed int32
+	}{
+		{name: "a request within the budget is read whole", budget: 5, wantReviewed: 2},
+		{name: "a request over the budget keeps to the sample", budget: 1, wantReviewed: 1},
+		{name: "without a budget only the sample is read", budget: 0, wantReviewed: 1},
+		{name: "a request read whole counts its sampled pieces too", budget: 2, spent: 1, wantReviewed: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previousEnabled, previousClient := common.RedisEnabled, common.RDB
+			client := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+			common.RedisEnabled, common.RDB = true, client
+			t.Cleanup(func() {
+				_ = client.Close()
+				common.RedisEnabled, common.RDB = previousEnabled, previousClient
+			})
+			calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+			cfg := operation_setting.GetContentSafetySetting()
+			cfg.PassLogPercent = 100
+			reviewInTheBackground(operation_setting.ContentReviewModeShadow)
+
+			userId := nextContentSafetyUser()
+			var inSample, outOfSample string
+			for i := range 64 {
+				if inSample != "" && outOfSample != "" {
+					break
+				}
+				text := saltedText(fmt.Sprintf("budget probe %d", i))
+				c, info := newContentSafetyContext(userId)
+				require.Nil(t, scanRequestContent(c, info, text))
+				if contentsafety.SampledForReview(userId, reviewPlan(c).pending[0].Key, 50) {
+					inSample = cmp.Or(inSample, text)
+				} else {
+					outOfSample = cmp.Or(outOfSample, text)
+				}
+			}
+			require.NotEmpty(t, inSample)
+			require.NotEmpty(t, outOfSample)
+
+			cfg.ReviewSamplePercent, cfg.ReviewBudgetPerMinute = 50, tc.budget
+			if tc.spent > 0 {
+				require.True(t, contentsafety.AllowShadowReviews(context.Background(), tc.budget, tc.spent))
+			}
+			c, info := newContentSafetyContext(userId)
+			info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{
+				{Role: "assistant", Content: outOfSample}, {Role: "user", Content: inSample},
+			}}
+			require.Nil(t, checkContent(c, info, ""))
+			requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
+			assert.Equal(t, tc.wantReviewed, calls.Load())
+		})
+	}
+}
+
+// With a budget, the sample keeps its slots: text out of the sample fills
+// only what max_units leaves, and is never counted as truncated.
+func TestContentSafetyShadowReviewBudgetKeepsTheSampleFirst(t *testing.T) {
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "sample-test-secret"
+	t.Cleanup(func() { common.CryptoSecret = previousSecret })
+	previousEnabled, previousClient := common.RedisEnabled, common.RDB
+	client := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	common.RedisEnabled, common.RDB = true, client
+	t.Cleanup(func() {
+		_ = client.Close()
+		common.RedisEnabled, common.RDB = previousEnabled, previousClient
+	})
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	cfg := operation_setting.GetContentSafetySetting()
+	cfg.PassLogPercent = 100
+	reviewInTheBackground(operation_setting.ContentReviewModeShadow)
+
+	// The older user message is in the sample and the newer reply is not,
+	// so the newest-first cap of one piece would keep the reply.
+	userId := nextContentSafetyUser()
+	var messages []kitdto.Message
+	for i := range 64 {
+		candidate := []kitdto.Message{
+			{Role: "user", Content: saltedText(fmt.Sprintf("sampled question %d", i))},
+			{Role: "assistant", Content: saltedText(fmt.Sprintf("unsampled answer %d", i))},
+		}
+		c, info := newContentSafetyContext(userId)
+		info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: candidate}
+		require.Nil(t, scanRequestContent(c, info, ""))
+		units := reviewPlan(c).pending
+		require.Len(t, units, 2)
+		if !contentsafety.SampledForReview(userId, units[0].Key, 50) && contentsafety.SampledForReview(userId, units[1].Key, 50) {
+			messages = candidate
+			break
+		}
+	}
+	require.NotNil(t, messages)
+
+	cfg.ReviewSamplePercent, cfg.ReviewBudgetPerMinute, cfg.MaxUnits = 50, 100, 1
+	c, info := newContentSafetyContext(userId)
+	info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: messages}
+	require.Nil(t, checkContent(c, info, ""))
+	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
+	assert.Equal(t, int32(1), calls.Load())
+	assert.False(t, logs[0].Truncated, "text out of the sample that does not fit is not truncation")
+	assert.Equal(t, 1, logs[0].UnitCount)
 }
 
 // A review whose time ran out before its first call, as an escalation can at

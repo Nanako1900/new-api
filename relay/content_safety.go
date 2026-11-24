@@ -50,9 +50,12 @@ type contentReviewPlan struct {
 	truncated int
 	// skipped are the keys of the new units past max_units, left unreviewed.
 	skipped []string
-	mode    string
-	prompt  string
-	cfg     operation_setting.ContentSafetySetting
+	// extra are the new units of a shadow review out of its sample, read too
+	// when the minute's review budget allows it as the review is queued.
+	extra  []contentsafety.Unit
+	mode   string
+	prompt string
+	cfg    operation_setting.ContentSafetySetting
 }
 
 type cachedUnit struct {
@@ -158,15 +161,23 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 			plan.mode = model.ContentSafetyModeSync
 		}
 	}
-	// A shadow review reads the sample of the new text. Enforced reviews read
-	// all of it: text left out is never cached, so an account turning
-	// synchronous would find its whole history new and over max_units.
-	// Cached verdicts count whatever the sample.
+	// A shadow review reads the sample of the new text, and with a budget
+	// the rest in the slots max_units leaves, when queueContentReview finds
+	// the minute's budget allows it. Enforced reviews read all of it: text
+	// left out is never cached, so an account turning synchronous would find
+	// its whole history new and over max_units. Cached verdicts count
+	// whatever the sample.
 	if plan.mode == model.ContentSafetyModeShadow && cfg.ReviewSamplePercent < 100 {
-		plan.pending = slices.DeleteFunc(plan.pending, func(unit contentsafety.Unit) bool {
-			return !contentsafety.SampledForReview(info.UserId, unit.Key, cfg.ReviewSamplePercent)
-		})
-		if len(plan.pending) == 0 && len(plan.flagged) == 0 && plan.truncated == 0 {
+		sampled := make([]contentsafety.Unit, 0, len(plan.pending))
+		for _, unit := range plan.pending {
+			if contentsafety.SampledForReview(info.UserId, unit.Key, cfg.ReviewSamplePercent) {
+				sampled = append(sampled, unit)
+			} else if cfg.ReviewBudgetPerMinute > 0 {
+				plan.extra = append(plan.extra, unit)
+			}
+		}
+		plan.pending = sampled
+		if len(plan.pending) == 0 && len(plan.extra) == 0 && len(plan.flagged) == 0 && plan.truncated == 0 {
 			return nil
 		}
 	}
@@ -177,6 +188,7 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 		}
 		plan.pending = plan.pending[:cfg.MaxUnits]
 	}
+	plan.extra = plan.extra[:min(len(plan.extra), cfg.MaxUnits-len(plan.pending))]
 	if plan.mode == model.ContentSafetyModeSync {
 		if apiErr := rejectCachedOrOversized(c, info, plan); apiErr != nil {
 			return apiErr
@@ -420,7 +432,7 @@ func EnforceContentSafety(c *gin.Context, info *relaycommon.RelayInfo) *types.Ne
 			if apiErr := reviewSynchronously(c, info, plan); apiErr != nil {
 				return apiErr
 			}
-		} else if plan.mode != model.ContentSafetyModeSync && (len(plan.pending) > 0 || plan.truncated > 0) {
+		} else if plan.mode != model.ContentSafetyModeSync && (len(plan.pending) > 0 || len(plan.extra) > 0 || plan.truncated > 0) {
 			queueContentReview(c, info, plan)
 		}
 	}
@@ -543,6 +555,22 @@ func interruptedReviewDetail(parent context.Context, timeoutSeconds int, last st
 // keeps a message from being reviewed.
 func queueContentReview(c *gin.Context, info *relaycommon.RelayInfo, plan *contentReviewPlan) {
 	cfg := plan.cfg
+	// The shadow review budget counts every piece a sampled shadow review
+	// would read, charged here for a request that reached its review. The
+	// account's own quota counts only the sample, so text out of the sample
+	// never costs the sample its review.
+	sampled := len(plan.pending)
+	budgeted := plan.mode == model.ContentSafetyModeShadow && cfg.ReviewSamplePercent < 100 && cfg.ReviewBudgetPerMinute > 0
+	if budgeted && sampled+len(plan.extra) > 0 {
+		withinBudget := contentsafety.AllowShadowReviews(c.Request.Context(), cfg.ReviewBudgetPerMinute, sampled+len(plan.extra))
+		if withinBudget {
+			plan.pending = slices.Concat(plan.pending, plan.extra)
+		}
+	}
+	plan.extra = nil
+	if len(plan.pending) == 0 && plan.truncated == 0 {
+		return
+	}
 	entry := contentSafetyLogEntry(c, info)
 	entry.Mode, entry.ReviewModel = plan.mode, cfg.ReviewModel
 	entry.UnitCount, entry.Truncated = len(plan.pending)+plan.truncated, plan.truncated > 0
@@ -551,7 +579,7 @@ func queueContentReview(c *gin.Context, info *relaycommon.RelayInfo, plan *conte
 	case len(plan.pending) == 0:
 		failure = model.ContentSafetyFailureTooManyUnits
 		detail = fmt.Sprintf("%d new pieces beyond the review limits were left unreviewed", plan.truncated)
-	case !contentsafety.AllowEnqueue(c.Request.Context(), info.UserId, cfg.AsyncRatePerMinute, len(plan.pending)):
+	case !contentsafety.AllowEnqueue(c.Request.Context(), info.UserId, cfg.AsyncRatePerMinute, sampled):
 		failure = model.ContentSafetyFailureRateLimited
 		detail = fmt.Sprintf("the account is over %d background review pieces per minute", cfg.AsyncRatePerMinute)
 	default:

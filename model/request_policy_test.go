@@ -151,6 +151,8 @@ func TestBuildRequestPolicyValidatesContentSafety(t *testing.T) {
 		{name: "a sampled background review", options: with(p+"review_sample_percent", "5")},
 		{name: "a sample of nothing", options: with(p+"review_sample_percent", "0"), wantErr: "review_sample_percent"},
 		{name: "a sample above everything", options: with(p+"review_sample_percent", "101"), wantErr: "review_sample_percent"},
+		{name: "a shadow review budget", options: with(p+"review_budget_per_minute", "600")},
+		{name: "a negative review budget", options: with(p+"review_budget_per_minute", "-1"), wantErr: "review_budget_per_minute"},
 		{name: "zero cache ttl disables the cache", options: map[string]string{p + "cache_ttl_seconds": "0"}},
 		{name: "non-integer concurrency", options: map[string]string{p + "review_max_concurrency": "1.5"}, wantErr: "review_max_concurrency"},
 		{name: "unknown content safety field", options: map[string]string{p + "mode": "strict"}, wantErr: "unknown content safety option"},
