@@ -46,7 +46,8 @@ export type ContentSafetyFailureReason =
  * rows written before reviews had modes. For AI rows `hit_words` holds the
  * verdict categories instead of matched words. `escalated_model` is empty
  * unless a second model reviewed the request again and gave the final verdict. `id` is always 0 on a
- * ClickHouse log store, so rows are keyed by `event_id`.
+ * ClickHouse log store, so rows are keyed by `event_id`. `failure_detail` is
+ * untranslated diagnostic text of a failed or refused review, empty otherwise.
  */
 export type ContentSafetyLog = {
   id: number
@@ -62,6 +63,7 @@ export type ContentSafetyLog = {
   request_path: string
   decision: string
   failure_reason: string
+  failure_detail: string
   hit_words: string
   snippets: string
   ai_category: string

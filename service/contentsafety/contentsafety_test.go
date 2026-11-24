@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
@@ -196,25 +197,31 @@ func TestParseVerdicts(t *testing.T) {
 		reply      string
 		count      int
 		wantLevels []string
+		// wantErr is part of the error of a reply that does not parse.
+		wantErr string
 	}{
 		{name: "plain json", reply: `{"results":[{"id":1,"level":"safe"},{"id":2,"level":"unsafe","category":"weapons","reason":"asks for a bomb recipe"}]}`, count: 2, wantLevels: []string{"safe", "unsafe"}},
 		{name: "fenced json", reply: "```json\n{\"results\":[{\"id\":1,\"level\":\"controversial\",\"category\":\"fraud\"}]}\n```", count: 1, wantLevels: []string{"controversial"}},
 		{name: "results out of order", reply: `{"results":[{"id":2,"level":"safe"},{"id":1,"level":"unsafe"}]}`, count: 2, wantLevels: []string{"unsafe", "safe"}},
 		{name: "level case and spaces", reply: `{"results":[{"id":1,"level":" Unsafe "}]}`, count: 1, wantLevels: []string{"unsafe"}},
 		{name: "bare fence", reply: "```\n{\"results\":[{\"id\":1,\"level\":\"safe\"}]}\n```", count: 1, wantLevels: []string{"safe"}},
-		{name: "duplicate id", reply: `{"results":[{"id":1,"level":"unsafe"},{"id":1,"level":"safe"}]}`, count: 1},
+		{name: "duplicate id", reply: `{"results":[{"id":1,"level":"unsafe"},{"id":1,"level":"safe"}]}`, count: 1, wantErr: "result id 1 is unknown or repeated"},
 		{name: "negative count", reply: `{"results":[]}`, count: -1},
 		{name: "trailing prose", reply: `{"results":[{"id":1,"level":"safe"}]} done`, count: 1},
-		{name: "a missing item", reply: `{"results":[{"id":1,"level":"safe"}]}`, count: 2},
-		{name: "unknown level", reply: `{"results":[{"id":1,"level":"maybe"}]}`, count: 1},
+		{name: "a missing item", reply: `{"results":[{"id":1,"level":"safe"}]}`, count: 2, wantErr: "no result for id 2"},
+		{name: "unknown level", reply: `{"results":[{"id":1,"level":"maybe"}]}`, count: 1, wantErr: `unknown level "maybe"`},
 		{name: "level is missing", reply: `{"results":[{"id":1,"safe":true}]}`, count: 1},
 		{name: "id out of range", reply: `{"results":[{"id":3,"level":"safe"}]}`, count: 1},
-		{name: "prose instead of json", reply: "The content is safe.", count: 1},
+		{name: "prose instead of json", reply: "The content is safe.", count: 1, wantErr: "invalid character"},
+		{name: "an empty reply", reply: " \n ", count: 1, wantErr: "the reply is empty"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			verdicts, err := contentsafety.ParseVerdicts(tc.reply, tc.count)
 			if tc.wantLevels == nil {
 				assert.ErrorIs(t, err, contentsafety.ErrUnparseable)
+				if tc.wantErr != "" {
+					assert.ErrorContains(t, err, tc.wantErr)
+				}
 				return
 			}
 			require.NoError(t, err)
@@ -667,4 +674,39 @@ func TestCollectFormTextReadsFieldNamesAndValuesInOrderAndSkipsInlineMedia(t *te
 			assert.Equal(t, tc.want, contentsafety.CollectFormText(tc.values))
 		})
 	}
+}
+
+// The sample is a keyed hash of the account and the unit key: a key is
+// always in or out for an account, raising the percent only adds keys, the
+// share follows the percent, and another account or another secret draws
+// another sample.
+func TestSampledForReview(t *testing.T) {
+	previous := common.CryptoSecret
+	t.Cleanup(func() { common.CryptoSecret = previous })
+	common.CryptoSecret = "secret-a"
+	keys := make([]string, 1000)
+	for i := range keys {
+		keys[i] = contentsafety.CacheKey("llm_json\x00judge", "prompt", fmt.Sprintf("text %d", i), "")
+	}
+	sampled := func(userId, percent int) map[string]bool {
+		in := map[string]bool{}
+		for _, key := range keys {
+			if contentsafety.SampledForReview(userId, key, percent) {
+				in[key] = true
+			}
+		}
+		return in
+	}
+	assert.Len(t, sampled(7, 100), len(keys))
+	low, high := sampled(7, 30), sampled(7, 60)
+	assert.InDelta(t, 300, len(low), 50)
+	assert.InDelta(t, 600, len(high), 50)
+	for key := range low {
+		assert.True(t, high[key], "a key sampled at 30%% is sampled at 60%%")
+	}
+	assert.Equal(t, low, sampled(7, 30), "the same keys every time")
+	assert.NotEqual(t, low, sampled(8, 30), "another account draws another sample")
+
+	common.CryptoSecret = "secret-b"
+	assert.NotEqual(t, low, sampled(7, 30), "another secret draws another sample")
 }

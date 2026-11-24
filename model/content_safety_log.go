@@ -92,6 +92,10 @@ type ContentSafetyLog struct {
 	// EscalatedModel is the escalation model when it, not ReviewModel, gave
 	// the verdicts behind the decision.
 	EscalatedModel string `json:"escalated_model" gorm:"type:varchar(128)"`
+	// FailureDetail says what went wrong with a failed or refused review:
+	// the channel, the upstream status and error, or the reply that did not
+	// parse. It is diagnostic English text, not a translated message.
+	FailureDetail string `json:"failure_detail" gorm:"type:text"`
 }
 
 type ContentSafetyLogFilter struct {
@@ -106,6 +110,10 @@ type ContentSafetyLogFilter struct {
 func ValidContentSafetyDecision(decision string) bool {
 	return decision == "" || slices.Contains(contentSafetyDecisions, decision)
 }
+
+// MaxContentSafetyFailureDetailRunes bounds the stored failure detail of a
+// log entry.
+const MaxContentSafetyFailureDetailRunes = 1000
 
 // RecordContentSafetyLog stores one decision. A failed write is only logged
 // because the decision has already been enforced.
@@ -125,7 +133,7 @@ func RecordContentSafetyLog(entry ContentSafetyLog) {
 		{&entry.EventId, 64}, {&entry.RequestId, 64}, {&entry.Username, 64}, {&entry.TokenName, 128},
 		{&entry.UsingGroup, 64}, {&entry.Model, 255}, {&entry.RequestPath, 255}, {&entry.Decision, 32},
 		{&entry.FailureReason, 32}, {&entry.AiCategory, 64}, {&entry.ReviewModel, 128}, {&entry.Mode, 16},
-		{&entry.EscalatedModel, 128},
+		{&entry.EscalatedModel, 128}, {&entry.FailureDetail, MaxContentSafetyFailureDetailRunes},
 	} {
 		if runes := []rune(*field.value); len(runes) > field.width {
 			*field.value = string(runes[:field.width])
@@ -321,7 +329,7 @@ func MigrateContentSafetyLogs() error {
 		latency_ms Int64, review_tokens Int64, cache_hit UInt8,
 		mode String, unit_count Int64, truncated UInt8, weight Int64 DEFAULT 1,
 		risk_delta Int64, risk_score Int64,
-		escalated_model String
+		escalated_model String, failure_detail String
 	) ENGINE = MergeTree()
 	PARTITION BY toYYYYMM(toDateTime(created_at))
 	ORDER BY (created_at, event_id)`).Error; err != nil {
@@ -329,7 +337,7 @@ func MigrateContentSafetyLogs() error {
 	}
 	// Tables created before these columns get them; IF NOT EXISTS makes a
 	// second start a no-op.
-	for _, column := range []string{"mode String", "unit_count Int64", "truncated UInt8", "weight Int64 DEFAULT 1", "risk_delta Int64", "risk_score Int64", "escalated_model String"} {
+	for _, column := range []string{"mode String", "unit_count Int64", "truncated UInt8", "weight Int64 DEFAULT 1", "risk_delta Int64", "risk_score Int64", "escalated_model String", "failure_detail String"} {
 		if err := LOG_DB.Exec("ALTER TABLE content_safety_logs ADD COLUMN IF NOT EXISTS " + column).Error; err != nil {
 			return err
 		}

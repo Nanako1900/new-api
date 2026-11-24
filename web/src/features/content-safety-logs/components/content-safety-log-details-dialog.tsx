@@ -208,6 +208,19 @@ export function ContentSafetyLogDetailsDialog(props: {
               )
             }
           />
+          {props.entry.failure_detail && (
+            <DetailRow
+              label={t('Failure detail')}
+              value={
+                <AuditDetailValue
+                  label={t('Failure detail')}
+                  value={props.entry.failure_detail}
+                  mono
+                  copyable
+                />
+              }
+            />
+          )}
           <DetailRow
             label={t('Review model')}
             value={props.entry.review_model || '—'}

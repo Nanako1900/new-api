@@ -9,9 +9,10 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 )
 
-// Content review modes. Shadow reviews every new message in the background
-// and never blocks; enforce reviews the same way but holds the requests of
+// Content review modes. Shadow reviews new messages in the background and
+// never blocks; enforce reviews the same way but holds the requests of
 // accounts that need a synchronous review until the reviewer answers.
+// Shadow reviews read the review_sample_percent sample of new text.
 const (
 	ContentReviewModeOff     = "off"
 	ContentReviewModeShadow  = "shadow"
@@ -44,11 +45,14 @@ type ContentSafetySetting struct {
 	AsyncQueueSize           int    `json:"async_queue_size"`
 	AsyncRatePerMinute       int    `json:"async_rate_per_minute"`
 	PassLogPercent           int    `json:"pass_log_percent"`
-	SyncAll                  bool   `json:"sync_all"`
-	SyncNewUserDays          int    `json:"sync_new_user_days"`
-	SyncGroups               string `json:"sync_groups"`
-	CacheTTLSeconds          int    `json:"cache_ttl_seconds"`
-	LogRetentionDays         int    `json:"log_retention_days"`
+	// ReviewSamplePercent is the share of new text a shadow review reads;
+	// enforced reviews read all of it (see contentsafety.SampledForReview).
+	ReviewSamplePercent int    `json:"review_sample_percent"`
+	SyncAll             bool   `json:"sync_all"`
+	SyncNewUserDays     int    `json:"sync_new_user_days"`
+	SyncGroups          string `json:"sync_groups"`
+	CacheTTLSeconds     int    `json:"cache_ttl_seconds"`
+	LogRetentionDays    int    `json:"log_retention_days"`
 	// ReviewEngine reads ReviewModel's replies. EscalateModel, when set, is
 	// asked again with llm_json through EscalateGroup about every unit the
 	// first reviewer found controversial or refused, and its verdict wins.
@@ -98,6 +102,7 @@ var contentSafetySetting = ContentSafetySetting{
 	AsyncQueueSize:           2000,
 	AsyncRatePerMinute:       300,
 	PassLogPercent:           10,
+	ReviewSamplePercent:      100,
 	SyncNewUserDays:          3,
 	CacheTTLSeconds:          86400,
 	LogRetentionDays:         30,
@@ -132,6 +137,7 @@ var contentSafetyIntOptions = []contentSafetyIntOption{
 	{"async_queue_size", 10, 100000, func(s *ContentSafetySetting) *int { return &s.AsyncQueueSize }},
 	{"async_rate_per_minute", 1, 10000, func(s *ContentSafetySetting) *int { return &s.AsyncRatePerMinute }},
 	{"pass_log_percent", 0, 100, func(s *ContentSafetySetting) *int { return &s.PassLogPercent }},
+	{"review_sample_percent", 1, 100, func(s *ContentSafetySetting) *int { return &s.ReviewSamplePercent }},
 	{"sync_new_user_days", 0, 365, func(s *ContentSafetySetting) *int { return &s.SyncNewUserDays }},
 	{"cache_ttl_seconds", 0, 604800, func(s *ContentSafetySetting) *int { return &s.CacheTTLSeconds }},
 	{"log_retention_days", 1, 3650, func(s *ContentSafetySetting) *int { return &s.LogRetentionDays }},

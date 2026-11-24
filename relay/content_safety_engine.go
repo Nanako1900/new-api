@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -73,7 +74,15 @@ func escalateReview(ctx context.Context, requestId string, cfg operation_setting
 		if reason == "" {
 			reason = model.ContentSafetyFailureRefused
 		}
-		common.SysLog(common.LogText("content safety escalation to %s kept the first verdict (request_id=%s): %s", cfg.EscalateModel, requestId, reason))
+		common.SysLog(common.LogText("content safety escalation to %s kept the first verdict (request_id=%s): %s: %q", cfg.EscalateModel, requestId, reason, second.detail))
+		escalation := fmt.Sprintf("escalation to %s kept the first verdict: %s", cfg.EscalateModel, reason)
+		if second.detail != "" {
+			escalation += ": " + second.detail
+		}
+		if first.detail != "" {
+			escalation = first.detail + "; " + escalation
+		}
+		first.detail = escalation
 		first.tokens += second.tokens
 		return first
 	}

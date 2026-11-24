@@ -422,6 +422,66 @@ describe('request policy settings', () => {
     expect(api.patch).not.toHaveBeenCalled()
   })
 
+  it('the background review sample opens at its default of 100 percent', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await selectMode('Shadow')
+    expect(
+      screen.getByRole('spinbutton', { name: 'Shadow review sample (%)' })
+    ).toHaveValue(100)
+  })
+
+  it('saving a changed background review sample writes it with the review mode and group', async () => {
+    settings = {
+      ...settings,
+      'content_safety_setting.review_mode': 'shadow',
+      'content_safety_setting.review_model': 'judge-model',
+    }
+    await renderPolicies('/system-settings/request-policies/filtering')
+    fireEvent.change(
+      await screen.findByRole('spinbutton', {
+        name: 'Shadow review sample (%)',
+      }),
+      { target: { value: '25' } }
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            'content_safety_setting.review_mode': 'shadow',
+            'content_safety_setting.review_group': 'default',
+            'content_safety_setting.review_sample_percent': '25',
+          },
+        }
+      )
+    )
+  })
+
+  it.each(['0', '101'])(
+    'a background review sample of %s shows the allowed range and does not write options',
+    async (value) => {
+      settings = {
+        ...settings,
+        'content_safety_setting.review_mode': 'shadow',
+        'content_safety_setting.review_model': 'judge-model',
+      }
+      await renderPolicies('/system-settings/request-policies/filtering')
+      const sample = await screen.findByRole('spinbutton', {
+        name: 'Shadow review sample (%)',
+      })
+      fireEvent.change(sample, { target: { value } })
+      await userEvent.click(
+        screen.getByRole('button', { name: 'Save Changes' })
+      )
+      await waitFor(() =>
+        expect(sample).toHaveAttribute('aria-invalid', 'true')
+      )
+      expect(screen.getByText('Enter an integer from 1 to 100')).toBeVisible()
+      expect(api.patch).not.toHaveBeenCalled()
+    }
+  )
+
   it('an invalid option revealed by saving stays open and focused while it is corrected', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
     expect(await screen.findByRole('radio', { name: 'Off' })).toBeChecked()

@@ -56,6 +56,7 @@ const rejected: ContentSafetyLog = {
   request_path: '/v1/chat/completions',
   decision: 'review_rejected',
   failure_reason: '',
+  failure_detail: '',
   hit_words: '["knife"]',
   snippets: '["how to sharpen a kitchen knife"]',
   ai_category: 'violence',

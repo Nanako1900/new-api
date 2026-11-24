@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen, within } from '@testing-library/react'
+import {
+  getDefaultNormalizer,
+  render,
+  screen,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { afterEach, expect, it } from 'vitest'
@@ -38,6 +43,7 @@ const rejected: ContentSafetyLog = {
   request_path: '/v1/chat/completions',
   decision: 'review_rejected',
   failure_reason: '',
+  failure_detail: '',
   hit_words: '["knife"]',
   snippets: '["how to sharpen a kitchen knife","then use the knife on him"]',
   ai_category: 'violence',
@@ -223,6 +229,51 @@ it('an escalated review names the model that gave the final verdict', async () =
 it('a review without escalation has no escalation row', async () => {
   const dialog = await openDetails(rejected)
   expect(within(dialog).queryByText('Escalated to')).not.toBeInTheDocument()
+})
+
+const FAILURE_DETAIL =
+  'channel #3 "ds": reply is not a complete verdict (unknown level "medium"; finish_reason=length, 0 content chars, 3812 reasoning chars):\n{"level":"medium"'
+
+it('a failed review shows its failure detail with a copy button', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    decision: 'review_failed',
+    failure_reason: 'unparseable',
+    failure_detail: FAILURE_DETAIL,
+  })
+  expect(within(dialog).getByText('Failure detail')).toBeVisible()
+  expect(
+    within(dialog).getByRole('button', { name: 'Copy Failure detail' })
+  ).toBeVisible()
+})
+
+it('a failure detail keeps its line breaks in wrapping monospace text', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    decision: 'review_failed',
+    failure_reason: 'unparseable',
+    failure_detail: FAILURE_DETAIL,
+  })
+  const detail = within(dialog).getByText(FAILURE_DETAIL, {
+    normalizer: getDefaultNormalizer({ collapseWhitespace: false }),
+  })
+  expect(detail).toHaveClass('font-mono', 'whitespace-pre-wrap')
+})
+
+it('shows a failure detail as stored, even when it matches a translation key', async () => {
+  const dialog = await openDetailsInChinese({
+    ...rejected,
+    decision: 'review_failed',
+    failure_reason: 'upstream_error',
+    ai_reason: '',
+    failure_detail: 'Describes hurting a person',
+  })
+  expect(within(dialog).getByText('Describes hurting a person')).toBeVisible()
+})
+
+it('a review without a failure detail has no failure detail row', async () => {
+  const dialog = await openDetails(rejected)
+  expect(within(dialog).queryByText('Failure detail')).not.toBeInTheDocument()
 })
 
 it('a keyword block labels its matches as hit words, not categories', async () => {

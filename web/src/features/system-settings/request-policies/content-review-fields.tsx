@@ -417,6 +417,13 @@ function ReviewOptionFields(props: {
           )}
         />
         <ReviewNumberField
+          name='review_sample_percent'
+          label={t('Shadow review sample (%)')}
+          description={t(
+            "Share of an account's new text that shadow mode reviews. Its text is always in or out of the sample, so resent history is not drawn again. Enforce mode reviews everything."
+          )}
+        />
+        <ReviewNumberField
           name='pass_log_percent'
           label={t('Passed reviews logged (%)')}
           description={t('Share of passed reviews written to the log.')}
