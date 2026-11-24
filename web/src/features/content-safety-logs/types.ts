@@ -44,7 +44,8 @@ export type ContentSafetyFailureReason =
  * JSON-encoded string arrays. `decision` and `failure_reason` stay plain
  * strings because a newer server may add values. `mode` is empty on keyword
  * rows written before reviews had modes. For AI rows `hit_words` holds the
- * verdict categories instead of matched words. `id` is always 0 on a
+ * verdict categories instead of matched words. `escalated_model` is empty
+ * unless a second model reviewed the request again and gave the final verdict. `id` is always 0 on a
  * ClickHouse log store, so rows are keyed by `event_id`.
  */
 export type ContentSafetyLog = {
@@ -67,6 +68,7 @@ export type ContentSafetyLog = {
   ai_reason: string
   review_channel_id: number
   review_model: string
+  escalated_model: string
   latency_ms: number
   review_tokens: number
   cache_hit: boolean

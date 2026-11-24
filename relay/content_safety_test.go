@@ -55,9 +55,10 @@ func saltedText(text string) string {
 	return salt + " " + text + " " + salt
 }
 
-// setupContentSafetyReview points the review model at a fake OpenAI upstream,
-// makes "bomb" a block word and enforces the review synchronously for every
-// account. Every review decision is logged.
+// setupContentSafetyReview points the review model, and the escalation model
+// "escalate-model" it leaves unset, at a fake OpenAI upstream, makes "bomb" a
+// block word and enforces the review synchronously for every account. Every
+// review decision is logged.
 func setupContentSafetyReview(t *testing.T, reply http.HandlerFunc) *atomic.Int32 {
 	t.Helper()
 	require.NoError(t, i18n.Init())
@@ -73,7 +74,7 @@ func setupContentSafetyReview(t *testing.T, reply http.HandlerFunc) *atomic.Int3
 		reply(w, r)
 	}))
 	t.Cleanup(server.Close)
-	channel := &model.Channel{Name: "reviewer", Type: constant.ChannelTypeOpenAI, Key: "reviewer-key", Status: common.ChannelStatusEnabled, Models: "judge-model", Group: "default", BaseURL: &server.URL}
+	channel := &model.Channel{Name: "reviewer", Type: constant.ChannelTypeOpenAI, Key: "reviewer-key", Status: common.ChannelStatusEnabled, Models: "judge-model,escalate-model", Group: "default", BaseURL: &server.URL}
 	require.NoError(t, database.Create(channel).Error)
 	require.NoError(t, channel.AddAbilities(database))
 	// setupRelayChannelDB does not run model.InitDB, so the quoted group column
@@ -789,6 +790,221 @@ func TestContentSafetyCachedFlaggedHistoryIsRecordedOncePerAccount(t *testing.T)
 	assert.Equal(t, int32(1), calls.Load())
 	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewControversial)
 	assert.True(t, logs[0].CacheHit)
+}
+
+// reviewCall is what the stub reviewer received in one review call.
+type reviewCall struct {
+	Model    string `json:"model"`
+	Messages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+}
+
+func (call reviewCall) roles() []string {
+	roles := make([]string, len(call.Messages))
+	for i, message := range call.Messages {
+		roles[i] = message.Role
+	}
+	return roles
+}
+
+func (call reviewCall) contents() []string {
+	contents := make([]string, len(call.Messages))
+	for i, message := range call.Messages {
+		contents[i] = message.Content
+	}
+	return contents
+}
+
+// recordingReviewer answers every review call with the handler route picks
+// for it, and returns the calls received so far.
+func recordingReviewer(route func(reviewCall) http.HandlerFunc) (http.HandlerFunc, func() []reviewCall) {
+	var mu sync.Mutex
+	var calls []reviewCall
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		var call reviewCall
+		if err := common.DecodeJson(r.Body, &call); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		calls = append(calls, call)
+		mu.Unlock()
+		route(call)(w, r)
+	}
+	return handler, func() []reviewCall {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(calls)
+	}
+}
+
+// byModel answers each review model with its own handler.
+func byModel(handlers map[string]http.HandlerFunc) func(reviewCall) http.HandlerFunc {
+	return func(call reviewCall) http.HandlerFunc { return handlers[call.Model] }
+}
+
+func callsTo(calls []reviewCall, modelName string) []reviewCall {
+	return slices.DeleteFunc(calls, func(call reviewCall) bool { return call.Model != modelName })
+}
+
+// The qwen3guard engine sends Qwen3Guard-Gen no prompt of its own: the unit
+// is the last user turn, after the user's earlier message as context, and
+// the reply's Safety and Categories lines are the verdict.
+func TestContentSafetyQwen3GuardEngineSendsTheUnitAsTheLastUserTurn(t *testing.T) {
+	reply, calls := recordingReviewer(byModel(map[string]http.HandlerFunc{"judge-model": reviewerReply("Safety: Unsafe\nCategories: Violent")}))
+	setupContentSafetyReview(t, reply)
+	operation_setting.GetContentSafetySetting().ReviewEngine = operation_setting.ContentReviewEngineQwen3Guard
+
+	question := saltedText("how do I hurt my neighbour")
+	c, info := newContentSafetyContext(nextContentSafetyUser())
+	apiErr := checkContent(c, info, question)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
+	require.Len(t, calls(), 1)
+	assert.Equal(t, []string{"user"}, calls()[0].roles(), "a single user message and no system prompt")
+	assert.Equal(t, []string{question}, calls()[0].contents())
+	logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewRejected)
+	assert.Equal(t, "weapons", logs[0].AiCategory)
+	assert.Equal(t, "Violent", logs[0].AiReason)
+	assert.Empty(t, logs[0].EscalatedModel)
+
+	earlier, latest := saltedText("tell me about my neighbour"), saltedText("now how do I hurt him")
+	c, info = newContentSafetyContext(nextContentSafetyUser())
+	info.Request = &kitdto.GeneralOpenAIRequest{Model: "gpt-test", Messages: []kitdto.Message{
+		{Role: "user", Content: earlier}, {Role: "assistant", Content: saltedText("he lives next door")}, {Role: "user", Content: latest},
+	}}
+	require.NotNil(t, checkContent(c, info, ""))
+	index := slices.IndexFunc(calls(), func(call reviewCall) bool { return slices.Contains(call.contents(), latest) })
+	require.GreaterOrEqual(t, index, 0)
+	assert.Equal(t, []string{"user", "user"}, calls()[index].roles())
+	assert.Equal(t, []string{earlier, latest}, calls()[index].contents(), "the earlier message comes first as context")
+	requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewRejected)
+}
+
+// A verdict decides only for the engine and models that gave it: switching
+// the engine, or turning escalation on, asks again about text already judged.
+func TestContentSafetyVerdictsAreCachedPerEngine(t *testing.T) {
+	reply, calls := recordingReviewer(func(call reviewCall) http.HandlerFunc {
+		if call.Messages[0].Role == "system" {
+			return reviewerReply(safeReply)
+		}
+		return reviewerReply("Safety: Controversial\nCategories: Violent")
+	})
+	setupContentSafetyReview(t, reply)
+	cfg := operation_setting.GetContentSafetySetting()
+	userId, text := nextContentSafetyUser(), saltedText("how do lock picks work")
+	review := func() {
+		c, info := newContentSafetyContext(userId)
+		require.Nil(t, checkContent(c, info, text))
+	}
+	review()
+	review()
+	assert.Len(t, calls(), 1, "a repeat on the same engine is decided from the cache")
+	cfg.ReviewEngine = operation_setting.ContentReviewEngineQwen3Guard
+	review()
+	require.Len(t, calls(), 2, "the qwen3guard engine asks again")
+	assert.Equal(t, []string{"user"}, calls()[1].roles())
+	cfg.EscalateModel, cfg.EscalateGroup = "escalate-model", "default"
+	review()
+	require.Len(t, calls(), 4, "with escalation on, the first reviewer and the escalation model are asked again")
+	assert.Len(t, callsTo(calls(), "escalate-model"), 1)
+	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewControversial, model.ContentSafetyDecisionReviewPassed)
+}
+
+// A controversial or refused verdict is asked again of the escalation model
+// with the llm_json engine, and the second verdict decides; the log names the
+// escalation model when it did. A failed escalation keeps the first verdict.
+func TestContentSafetyEscalation(t *testing.T) {
+	refusal := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"Content Exists Risk","type":"invalid_request_error"}}`))
+	}
+	serverError := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }
+	guardControversial := reviewerReply("Safety: Controversial\nCategories: Violent")
+	for _, tc := range []struct {
+		name                string
+		engine              string
+		first, escalation   http.HandlerFunc
+		wantCode            types.ErrorCode
+		wantDecision        string
+		wantCategory        string
+		wantFailure         string
+		wantEscalated       string
+		wantEscalationCalls int
+		// wantRiskDelta is what the final verdict adds to the account's score.
+		wantRiskDelta int
+	}{
+		{name: "an unsafe second verdict replaces a controversial one", engine: operation_setting.ContentReviewEngineQwen3Guard, first: guardControversial, escalation: reviewerReply(unsafeReply),
+			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantEscalated: "escalate-model", wantEscalationCalls: 1, wantRiskDelta: 40},
+		{name: "a safe second verdict clears a controversial one", first: reviewerReply(controversialReply), escalation: reviewerReply(safeReply),
+			wantDecision: model.ContentSafetyDecisionReviewPassed, wantEscalated: "escalate-model", wantEscalationCalls: 1},
+		{name: "a refused review is escalated", first: refusal, escalation: reviewerReply(unsafeReply),
+			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantEscalated: "escalate-model", wantEscalationCalls: 1, wantRiskDelta: 40},
+		{name: "a failed escalation keeps the controversial verdict", engine: operation_setting.ContentReviewEngineQwen3Guard, first: guardControversial, escalation: serverError,
+			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "weapons", wantEscalationCalls: 2, wantRiskDelta: 5},
+		{name: "a refused escalation keeps the refusal", first: refusal, escalation: refusal,
+			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "other", wantFailure: model.ContentSafetyFailureRefused, wantEscalationCalls: 2, wantRiskDelta: 5},
+		{name: "an unsafe verdict is not escalated", engine: operation_setting.ContentReviewEngineQwen3Guard, first: reviewerReply("Safety: Unsafe\nCategories: Violent"), escalation: reviewerReply(safeReply),
+			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantRiskDelta: 40},
+		{name: "a safe verdict is not escalated", engine: operation_setting.ContentReviewEngineQwen3Guard, first: reviewerReply("Safety: Safe\nCategories: None"), escalation: reviewerReply(unsafeReply),
+			wantDecision: model.ContentSafetyDecisionReviewPassed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reply, calls := recordingReviewer(byModel(map[string]http.HandlerFunc{"judge-model": tc.first, "escalate-model": tc.escalation}))
+			setupContentSafetyReview(t, reply)
+			cfg := operation_setting.GetContentSafetySetting()
+			cfg.EscalateModel, cfg.EscalateGroup = "escalate-model", "default"
+			if tc.engine != "" {
+				cfg.ReviewEngine = tc.engine
+			}
+			c, info := newContentSafetyContext(nextContentSafetyUser())
+			apiErr := checkContent(c, info, saltedText("how do I open a locked door"))
+			if tc.wantCode == "" {
+				assert.Nil(t, apiErr)
+			} else {
+				require.NotNil(t, apiErr)
+				assert.Equal(t, tc.wantCode, apiErr.GetErrorCode())
+			}
+			escalations := callsTo(calls(), "escalate-model")
+			assert.Len(t, escalations, tc.wantEscalationCalls)
+			for _, call := range escalations {
+				assert.Equal(t, []string{"system", "user"}, call.roles(), "the escalation uses the llm_json engine")
+			}
+			logs := requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
+			assert.Equal(t, tc.wantCategory, logs[0].AiCategory)
+			assert.Equal(t, tc.wantFailure, logs[0].FailureReason)
+			assert.Equal(t, tc.wantEscalated, logs[0].EscalatedModel)
+			assert.Equal(t, "judge-model", logs[0].ReviewModel)
+			assert.Equal(t, tc.wantRiskDelta, logs[0].RiskDelta, "the account is scored by the final verdict")
+		})
+	}
+}
+
+// The final verdict is cached under the first reviewer's key, so a repeat is
+// decided without asking either model, and the cache hit names the model
+// that decided.
+func TestContentSafetyEscalatedVerdictIsCached(t *testing.T) {
+	reply, calls := recordingReviewer(byModel(map[string]http.HandlerFunc{
+		"judge-model": reviewerReply("Safety: Controversial\nCategories: Violent"), "escalate-model": reviewerReply(unsafeReply),
+	}))
+	setupContentSafetyReview(t, reply)
+	cfg := operation_setting.GetContentSafetySetting()
+	cfg.ReviewEngine, cfg.EscalateModel, cfg.EscalateGroup = operation_setting.ContentReviewEngineQwen3Guard, "escalate-model", "default"
+	userId, text := nextContentSafetyUser(), saltedText("how do I hurt my neighbour")
+	c, info := newContentSafetyContext(userId)
+	require.NotNil(t, checkContent(c, info, text))
+	c, info = newContentSafetyContext(userId)
+	apiErr := scanRequestContent(c, info, text)
+	require.NotNil(t, apiErr, "the cached unsafe verdict rejects in the scan")
+	assert.Equal(t, types.ErrorCodeContentReviewRejected, apiErr.GetErrorCode())
+	assert.Len(t, calls(), 2)
+	logs := requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewRejected, model.ContentSafetyDecisionReviewRejected)
+	for _, entry := range logs {
+		assert.Equal(t, "escalate-model", entry.EscalatedModel)
+	}
 }
 
 type refundRecorder struct {

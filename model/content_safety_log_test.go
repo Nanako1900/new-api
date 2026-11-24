@@ -97,9 +97,10 @@ func TestContentSafetyLogDatabaseMatrix(t *testing.T) {
 
 			RecordContentSafetyLog(ContentSafetyLog{
 				EventId: "evt-long", CreatedAt: 400, UserId: 10,
-				Model:       strings.Repeat("模", 300),
-				RequestPath: strings.Repeat("p", 300),
-				TokenName:   strings.Repeat("令", 200),
+				Model:          strings.Repeat("模", 300),
+				RequestPath:    strings.Repeat("p", 300),
+				TokenName:      strings.Repeat("令", 200),
+				EscalatedModel: strings.Repeat("升", 200),
 			})
 			logs, _, err = GetContentSafetyLogs(ContentSafetyLogFilter{UserId: 10}, 0, 10, common.RoleRootUser)
 			require.NoError(t, err)
@@ -107,6 +108,7 @@ func TestContentSafetyLogDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, 255, utf8.RuneCountInString(logs[0].Model))
 			assert.Equal(t, 255, utf8.RuneCountInString(logs[0].RequestPath))
 			assert.Equal(t, 128, utf8.RuneCountInString(logs[0].TokenName))
+			assert.Equal(t, 128, utf8.RuneCountInString(logs[0].EscalatedModel))
 
 			old := make([]ContentSafetyLog, 2050)
 			for i := range old {

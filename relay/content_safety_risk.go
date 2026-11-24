@@ -86,7 +86,8 @@ func recordFlaggedVerdicts(c *gin.Context, info *relaycommon.RelayInfo, plan *co
 		var reviews []unitReview
 		for i, hit := range hits {
 			if sighted[i] || outcome.Counted[i] {
-				reviews = append(reviews, unitReview{unit: hit.unit, verdict: contentsafety.Verdict{Level: hit.verdict.Level, Category: hit.verdict.Category, Reason: hit.verdict.Reason}})
+				reviews = append(reviews, unitReview{unit: hit.unit, verdict: contentsafety.Verdict{Level: hit.verdict.Level, Category: hit.verdict.Category, Reason: hit.verdict.Reason},
+					escalatedModel: hit.verdict.EscalatedModel})
 			}
 		}
 		if len(reviews) == 0 {

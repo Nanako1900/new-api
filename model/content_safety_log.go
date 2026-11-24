@@ -89,6 +89,9 @@ type ContentSafetyLog struct {
 	// RiskScore the account's rounded score after them.
 	RiskDelta int `json:"risk_delta"`
 	RiskScore int `json:"risk_score"`
+	// EscalatedModel is the escalation model when it, not ReviewModel, gave
+	// the verdicts behind the decision.
+	EscalatedModel string `json:"escalated_model" gorm:"type:varchar(128)"`
 }
 
 type ContentSafetyLogFilter struct {
@@ -122,6 +125,7 @@ func RecordContentSafetyLog(entry ContentSafetyLog) {
 		{&entry.EventId, 64}, {&entry.RequestId, 64}, {&entry.Username, 64}, {&entry.TokenName, 128},
 		{&entry.UsingGroup, 64}, {&entry.Model, 255}, {&entry.RequestPath, 255}, {&entry.Decision, 32},
 		{&entry.FailureReason, 32}, {&entry.AiCategory, 64}, {&entry.ReviewModel, 128}, {&entry.Mode, 16},
+		{&entry.EscalatedModel, 128},
 	} {
 		if runes := []rune(*field.value); len(runes) > field.width {
 			*field.value = string(runes[:field.width])
@@ -316,7 +320,8 @@ func MigrateContentSafetyLogs() error {
 		ai_category String, ai_reason String, review_channel_id Int64, review_model String,
 		latency_ms Int64, review_tokens Int64, cache_hit UInt8,
 		mode String, unit_count Int64, truncated UInt8, weight Int64 DEFAULT 1,
-		risk_delta Int64, risk_score Int64
+		risk_delta Int64, risk_score Int64,
+		escalated_model String
 	) ENGINE = MergeTree()
 	PARTITION BY toYYYYMM(toDateTime(created_at))
 	ORDER BY (created_at, event_id)`).Error; err != nil {
@@ -324,7 +329,7 @@ func MigrateContentSafetyLogs() error {
 	}
 	// Tables created before these columns get them; IF NOT EXISTS makes a
 	// second start a no-op.
-	for _, column := range []string{"mode String", "unit_count Int64", "truncated UInt8", "weight Int64 DEFAULT 1", "risk_delta Int64", "risk_score Int64"} {
+	for _, column := range []string{"mode String", "unit_count Int64", "truncated UInt8", "weight Int64 DEFAULT 1", "risk_delta Int64", "risk_score Int64", "escalated_model String"} {
 		if err := LOG_DB.Exec("ALTER TABLE content_safety_logs ADD COLUMN IF NOT EXISTS " + column).Error; err != nil {
 			return err
 		}

@@ -232,18 +232,28 @@ func refreshRequestPolicySnapshot() error {
 // group that does not exist. It runs on the write path only: BuildRequestPolicy
 // also runs on every refresh, and a group deleted later must not discard the
 // whole snapshot. At runtime a missing group means no review channel, so a
-// synchronous review fails closed instead. values are the written options,
-// options the merged set.
+// synchronous review fails closed instead. The escalation group is checked
+// the same way while an escalation model is set. values are the written
+// options, options the merged set.
 func validateContentSafetyReviewGroup(values, options map[string]string) error {
-	_, modeChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_mode"]
-	_, groupChanged := values[operation_setting.ContentSafetyOptionPrefix+"review_group"]
-	if !modeChanged && !groupChanged {
+	const p = operation_setting.ContentSafetyOptionPrefix
+	_, modeChanged := values[p+"review_mode"]
+	_, groupChanged := values[p+"review_group"]
+	_, escalateModelChanged := values[p+"escalate_model"]
+	_, escalateGroupChanged := values[p+"escalate_group"]
+	if !modeChanged && !groupChanged && !escalateModelChanged && !escalateGroupChanged {
 		return nil
 	}
-	mode := options[operation_setting.ContentSafetyOptionPrefix+"review_mode"]
-	group := strings.TrimSpace(options[operation_setting.ContentSafetyOptionPrefix+"review_group"])
-	if mode != operation_setting.ContentReviewModeOff && !ratio_setting.ContainsGroupRatio(group) {
+	if options[p+"review_mode"] == operation_setting.ContentReviewModeOff {
+		return nil
+	}
+	group := strings.TrimSpace(options[p+"review_group"])
+	if !ratio_setting.ContainsGroupRatio(group) {
 		return fmt.Errorf("content safety review group %q does not exist", group)
+	}
+	escalateGroup := strings.TrimSpace(options[p+"escalate_group"])
+	if strings.TrimSpace(options[p+"escalate_model"]) != "" && !ratio_setting.ContainsGroupRatio(escalateGroup) {
+		return fmt.Errorf("content safety escalation group %q does not exist", escalateGroup)
 	}
 	return nil
 }

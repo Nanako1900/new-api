@@ -33,6 +33,14 @@ import {
 } from '@/components/ui/form'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { getEnabledModels } from '@/features/channels/api'
@@ -43,11 +51,13 @@ import {
   SettingsControlChildren,
   SettingsControlGroup,
   SettingsFormGrid,
+  SettingsFormGridItem,
   SettingsSwitchContent,
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
+import { ContentReviewEscalationFields } from './content-review-escalation-fields'
 import { ContentReviewSyncFields } from './content-review-sync-fields'
-import type { ContentReviewMode } from './defaults'
+import type { ContentReviewEngine, ContentReviewMode } from './defaults'
 import type { RequestChecksFormValues } from './request-checks-form'
 import { ReviewNumberField } from './review-number-field'
 
@@ -58,6 +68,7 @@ type ContentReviewFieldsProps = {
 }
 
 const REVIEW_MODES: ContentReviewMode[] = ['off', 'shadow', 'enforce']
+const REVIEW_ENGINES: ContentReviewEngine[] = ['llm_json', 'qwen3guard']
 
 export function ContentReviewFields(props: ContentReviewFieldsProps) {
   const { t } = useTranslation()
@@ -152,10 +163,27 @@ function ReviewOptionFields(props: {
 }) {
   const { t } = useTranslation()
   const form = useFormContext<RequestChecksFormValues>()
-  const toolResults = useWatch({
+  const [toolResults, engine] = useWatch({
     control: form.control,
-    name: 'content_safety_setting.review_tool_results',
+    name: [
+      'content_safety_setting.review_tool_results',
+      'content_safety_setting.review_engine',
+    ],
   })
+  // The classifier answers in its own format and ignores the review prompt.
+  const promptUnused = engine === 'qwen3guard'
+  const engineLabels: Record<ContentReviewEngine, string> = {
+    llm_json: t('Chat model (JSON verdict)'),
+    qwen3guard: t('Qwen3Guard classifier'),
+  }
+  const engineDescriptions: Record<ContentReviewEngine, string> = {
+    llm_json: t(
+      'A general chat model judges the text with the review prompt and answers in JSON.'
+    ),
+    qwen3guard: t(
+      'A Qwen3Guard safety classifier served through an OpenAI-compatible channel.'
+    ),
+  }
   const models = useQuery({
     queryKey: ['enabled-models'],
     queryFn: async () => requireServerSuccess(await getEnabledModels()),
@@ -192,6 +220,45 @@ function ReviewOptionFields(props: {
         )}
       </p>
       <SettingsFormGrid>
+        <SettingsFormGridItem span='full'>
+          <FormField
+            control={form.control}
+            name='content_safety_setting.review_engine'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Review engine')}</FormLabel>
+                <Select
+                  items={REVIEW_ENGINES.map((value) => ({
+                    value,
+                    label: engineLabels[value],
+                  }))}
+                  value={field.value}
+                  onValueChange={field.onChange}
+                >
+                  <FormControl>
+                    {/* As wide as one column of the grid below (gap-x-5). */}
+                    <SelectTrigger className='w-full lg:w-[calc(50%-0.625rem)]'>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {REVIEW_ENGINES.map((value) => (
+                        <SelectItem key={value} value={value}>
+                          {engineLabels[value]}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {engineDescriptions[field.value]}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </SettingsFormGridItem>
         <FormField
           control={form.control}
           name='content_safety_setting.review_model'
@@ -256,12 +323,15 @@ function ReviewOptionFields(props: {
                   rows={6}
                   placeholder={t('Built-in prompt')}
                   {...field}
+                  disabled={promptUnused}
                 />
               </FormControl>
               <FormDescription>
-                {t(
-                  'Leave empty to use the built-in prompt. The required answer format is always appended.'
-                )}
+                {promptUnused
+                  ? t('Not used by the Qwen3Guard classifier.')
+                  : t(
+                      'Leave empty to use the built-in prompt. The required answer format is always appended.'
+                    )}
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -357,6 +427,10 @@ function ReviewOptionFields(props: {
           description={t('Set to 0 to disable the cache.')}
         />
       </SettingsFormGrid>
+      <ContentReviewEscalationFields
+        modelOptions={modelOptions}
+        groupOptions={groupOptions}
+      />
       {props.mode === 'enforce' && <ContentReviewSyncFields />}
     </>
   )
