@@ -63,6 +63,7 @@ export type ContentSafetySettings = {
   'content_safety_setting.async_queue_size': number
   'content_safety_setting.async_rate_per_minute': number
   'content_safety_setting.review_sample_percent': number
+  'content_safety_setting.review_budget_per_minute': number
   'content_safety_setting.pass_log_percent': number
   'content_safety_setting.sync_all': boolean
   'content_safety_setting.sync_new_user_days': number
@@ -130,6 +131,7 @@ export const defaultRequestPolicySettings: RequestPolicySettings = {
   'content_safety_setting.async_queue_size': 2000,
   'content_safety_setting.async_rate_per_minute': 300,
   'content_safety_setting.review_sample_percent': 100,
+  'content_safety_setting.review_budget_per_minute': 0,
   'content_safety_setting.pass_log_percent': 10,
   'content_safety_setting.sync_all': false,
   'content_safety_setting.sync_new_user_days': 3,

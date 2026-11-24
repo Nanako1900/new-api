@@ -458,6 +458,50 @@ describe('request policy settings', () => {
     )
   })
 
+  it('the shadow review budget opens off and saves a changed value with the review mode and group', async () => {
+    settings = {
+      ...settings,
+      'content_safety_setting.review_mode': 'shadow',
+      'content_safety_setting.review_model': 'judge-model',
+    }
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const budget = await screen.findByRole('spinbutton', {
+      name: 'Shadow review budget per minute (pieces)',
+    })
+    expect(budget).toHaveValue(0)
+    fireEvent.change(budget, { target: { value: '600' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledExactlyOnceWith(
+        '/api/option/request_policy',
+        {
+          options: {
+            'content_safety_setting.review_mode': 'shadow',
+            'content_safety_setting.review_group': 'default',
+            'content_safety_setting.review_budget_per_minute': '600',
+          },
+        }
+      )
+    )
+  })
+
+  it('a negative shadow review budget shows the allowed range and does not write options', async () => {
+    settings = {
+      ...settings,
+      'content_safety_setting.review_mode': 'shadow',
+      'content_safety_setting.review_model': 'judge-model',
+    }
+    await renderPolicies('/system-settings/request-policies/filtering')
+    const budget = await screen.findByRole('spinbutton', {
+      name: 'Shadow review budget per minute (pieces)',
+    })
+    fireEvent.change(budget, { target: { value: '-1' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(budget).toHaveAttribute('aria-invalid', 'true'))
+    expect(screen.getByText('Enter an integer from 0 to 100,000')).toBeVisible()
+    expect(api.patch).not.toHaveBeenCalled()
+  })
+
   it.each(['0', '101'])(
     'a background review sample of %s shows the allowed range and does not write options',
     async (value) => {
