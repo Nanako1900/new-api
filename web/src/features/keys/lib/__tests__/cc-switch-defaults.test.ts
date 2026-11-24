@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { describe, expect, it } from 'vitest'
 
 import {
+  antigravityModelName,
   ccSwitchModelChoices,
   defaultCCSwitchApp,
   defaultCCSwitchModels,
@@ -44,7 +45,7 @@ const SITE_MODELS = [
 ]
 
 describe('ccSwitchModelChoices', () => {
-  it('offers Codex its GPT and codex models first, then the Gemini models', () => {
+  it('offers Codex its GPT and codex models only, without Gemini models', () => {
     expect(ccSwitchModelChoices('codex', SITE_MODELS)).toEqual([
       'codex-auto-review',
       'gpt-6-astra',
@@ -53,16 +54,7 @@ describe('ccSwitchModelChoices', () => {
       'gpt-6-sol',
       'gpt-5.6-sol',
       'gpt-3.5-turbo-0125',
-      'gemini-3.8-flash',
-      'gemini-4-carbon',
-      'gemini-4-neon',
     ])
-  })
-
-  it('keeps the Codex default on GPT when Gemini models are offered too', () => {
-    const models = ccSwitchModelChoices('codex', SITE_MODELS)
-
-    expect(defaultCCSwitchModels('codex', models).model).toBe('gpt-6.1-sol')
   })
 
   it('offers Claude Code the Claude models only', () => {
@@ -73,13 +65,16 @@ describe('ccSwitchModelChoices', () => {
     ])
   })
 
-  it('offers Gemini CLI the Gemini models only', () => {
-    expect(ccSwitchModelChoices('gemini', SITE_MODELS)).toEqual([
-      'gemini-3.8-flash',
-      'gemini-4-carbon',
-      'gemini-4-neon',
-    ])
-  })
+  it.each(['gemini', 'agy'] as const)(
+    'offers %s the Gemini models only',
+    (app) => {
+      expect(ccSwitchModelChoices(app, SITE_MODELS)).toEqual([
+        'gemini-3.8-flash',
+        'gemini-4-carbon',
+        'gemini-4-neon',
+      ])
+    }
+  )
 })
 
 describe('defaultCCSwitchModels', () => {
@@ -134,20 +129,22 @@ describe('defaultCCSwitchModels', () => {
     expect(defaultCCSwitchModels('codex', models).model).toBe('gpt-6.1-terra')
   })
 
-  it('fills Gemini CLI with the newest Gemini neon model', () => {
-    expect(defaultCCSwitchModels('gemini', SITE_MODELS)).toEqual({
-      model: 'gemini-4-neon',
-    })
-    expect(
-      defaultCCSwitchModels('gemini', ['gemini-4-neon', 'gemini-4.5-neon'])
-        .model
-    ).toBe('gemini-4.5-neon')
-  })
+  it.each(['gemini', 'agy'] as const)(
+    'fills %s with the newest Gemini neon model',
+    (app) => {
+      expect(defaultCCSwitchModels(app, SITE_MODELS)).toEqual({
+        model: 'gemini-4-neon',
+      })
+      expect(
+        defaultCCSwitchModels(app, ['gemini-4-neon', 'gemini-4.5-neon']).model
+      ).toBe('gemini-4.5-neon')
+    }
+  )
 
-  it('falls back to the Gemini default for Codex when no GPT model exists', () => {
+  it('leaves Codex empty when the user has only Gemini models', () => {
     expect(
       defaultCCSwitchModels('codex', ['gemini-3.8-flash', 'gemini-4-neon'])
-    ).toEqual({ model: 'gemini-4-neon' })
+    ).toEqual({ model: '' })
   })
 
   it('falls back to the newest Gemini model when no neon model exists', () => {
@@ -237,14 +234,34 @@ describe('keyModels', () => {
 describe('defaultCCSwitchApp', () => {
   it('picks the client whose own family the key can call', () => {
     expect(defaultCCSwitchApp(['gpt-6.1-sol'])).toBe('codex')
-    expect(defaultCCSwitchApp(['gemini-4-neon'])).toBe('gemini')
     expect(defaultCCSwitchApp(['gemini-4-neon', 'claude-opus-5-5'])).toBe(
       'claude'
     )
   })
 
+  it('picks Gemini CLI rather than Antigravity for Gemini models', () => {
+    expect(defaultCCSwitchApp(['gemini-4-neon'])).toBe('gemini')
+  })
+
   it('returns null when no client runs any of the models', () => {
     expect(defaultCCSwitchApp(['deepseek-flash'])).toBeNull()
     expect(defaultCCSwitchApp([])).toBeNull()
+  })
+})
+
+describe('antigravityModelName', () => {
+  it.each([
+    ['gemini-4-neon', 'Gemini 4 Neon (High)'],
+    ['gemini-4-hydrogen', 'Gemini 4 Hydrogen (High)'],
+    ['gemini-3.8-flash', 'Gemini 3.8 Flash (High)'],
+  ])('names %s by its High display name', (model, name) => {
+    expect(antigravityModelName(model)).toBe(name)
+  })
+
+  it('keeps a display name the user typed and an empty model as they are', () => {
+    expect(antigravityModelName('Gemini 4 Neon (Low)')).toBe(
+      'Gemini 4 Neon (Low)'
+    )
+    expect(antigravityModelName('')).toBe('')
   })
 })
