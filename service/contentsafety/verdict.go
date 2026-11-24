@@ -128,6 +128,9 @@ func ParseVerdicts(reply string, count int) ([]Verdict, error) {
 		return nil, ErrUnparseable
 	}
 	body := strings.TrimSpace(reply)
+	if body == "" {
+		return nil, fmt.Errorf("%w: the reply is empty", ErrUnparseable)
+	}
 	if fenced, ok := strings.CutPrefix(body, "```"); ok {
 		if len(fenced) >= 4 && strings.EqualFold(fenced[:4], "json") {
 			fenced = fenced[4:]
@@ -145,7 +148,7 @@ func ParseVerdicts(reply string, count int) ([]Verdict, error) {
 	for _, verdict := range parsed.Results {
 		verdict.Level = strings.ToLower(strings.TrimSpace(verdict.Level))
 		if verdict.Id < 1 || verdict.Id > count || seen[verdict.Id-1] {
-			return nil, ErrUnparseable
+			return nil, fmt.Errorf("%w: result id %d is unknown or repeated", ErrUnparseable, verdict.Id)
 		}
 		switch verdict.Level {
 		case LevelSafe:
@@ -156,14 +159,14 @@ func ParseVerdicts(reply string, count int) ([]Verdict, error) {
 				verdict.Category = "other"
 			}
 		default:
-			return nil, ErrUnparseable
+			return nil, fmt.Errorf("%w: unknown level %q", ErrUnparseable, verdict.Level)
 		}
 		verdict.Reason = truncateRunes(verdict.Reason, maxReasonRunes)
 		verdicts[verdict.Id-1] = verdict
 		seen[verdict.Id-1] = true
 	}
-	if slices.Contains(seen, false) {
-		return nil, ErrUnparseable
+	if missing := slices.Index(seen, false); missing >= 0 {
+		return nil, fmt.Errorf("%w: no result for id %d", ErrUnparseable, missing+1)
 	}
 	return verdicts, nil
 }

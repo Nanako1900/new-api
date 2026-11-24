@@ -101,6 +101,7 @@ func TestContentSafetyLogDatabaseMatrix(t *testing.T) {
 				RequestPath:    strings.Repeat("p", 300),
 				TokenName:      strings.Repeat("令", 200),
 				EscalatedModel: strings.Repeat("升", 200),
+				FailureDetail:  "channel #3 \"审核\": " + strings.Repeat("错", 1200),
 			})
 			logs, _, err = GetContentSafetyLogs(ContentSafetyLogFilter{UserId: 10}, 0, 10, common.RoleRootUser)
 			require.NoError(t, err)
@@ -109,6 +110,8 @@ func TestContentSafetyLogDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, 255, utf8.RuneCountInString(logs[0].RequestPath))
 			assert.Equal(t, 128, utf8.RuneCountInString(logs[0].TokenName))
 			assert.Equal(t, 128, utf8.RuneCountInString(logs[0].EscalatedModel))
+			assert.Equal(t, MaxContentSafetyFailureDetailRunes, utf8.RuneCountInString(logs[0].FailureDetail))
+			assert.True(t, strings.HasPrefix(logs[0].FailureDetail, "channel #3 \"审核\": 错"))
 
 			old := make([]ContentSafetyLog, 2050)
 			for i := range old {

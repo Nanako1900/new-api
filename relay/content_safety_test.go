@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -181,6 +182,8 @@ func TestContentSafetyGate(t *testing.T) {
 		wantCalls    int32
 		wantDecision string
 		wantFailure  string
+		// wantDetail are parts of the failure detail; without them it is empty.
+		wantDetail []string
 	}{
 		{name: "review off checks only block words", text: "hello there", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) {
 			cfg.ReviewMode = operation_setting.ContentReviewModeOff
@@ -189,15 +192,30 @@ func TestContentSafetyGate(t *testing.T) {
 		{name: "a safe verdict releases", text: "cut bread with a knife", reply: reviewerReply(safeReply), wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewPassed},
 		{name: "text without any keyword is reviewed too", text: "how do I hurt my neighbour", reply: reviewerReply(unsafeReply), wantCode: types.ErrorCodeContentReviewRejected, wantStatus: http.StatusBadRequest, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewRejected},
 		{name: "a controversial verdict lets the request through", text: "how do lock picks work", reply: reviewerReply(controversialReply), wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewControversial},
-		{name: "a refusal by the review channel concludes as controversial", text: "a text the reviewer will not read", reply: refusal, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewControversial, wantFailure: model.ContentSafetyFailureRefused},
+		{name: "a refusal by the review channel concludes as controversial", text: "a text the reviewer will not read", reply: refusal, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewControversial, wantFailure: model.ContentSafetyFailureRefused,
+			wantDetail: []string{`channel #`, `"reviewer": HTTP 400`, "Content Exists Risk"}},
 		{name: "a client error that is no content refusal fails closed", text: "a question with a bad parameter", reply: func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":{"message":"max_tokens is too large","type":"invalid_request_error","code":"invalid_value"}}`))
-		}, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUpstreamError},
-		{name: "an unreadable verdict fails closed", text: "a question", reply: reviewerReply("I think it is fine"), wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUnparseable},
-		{name: "an upstream error fails closed after one more channel attempt", text: "another question", reply: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUpstreamError},
-		{name: "no review channel fails closed", text: "a text without reviewer", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.ReviewModel = "missing-model" }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureNoChannel},
+		}, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUpstreamError,
+			wantDetail: []string{"HTTP 400", "max_tokens is too large"}},
+		{name: "an unreadable verdict fails closed", text: "a question", reply: reviewerReply("I think it is fine"), wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUnparseable,
+			wantDetail: []string{`finish_reason="stop"`, "18 content chars", "reply: I think it is fine"}},
+		{name: "a reply cut off while reasoning says so", text: "a long think", reply: func(w http.ResponseWriter, _ *http.Request) {
+			body, _ := common.Marshal(map[string]any{
+				"id": "chatcmpl-review", "object": "chat.completion", "model": "judge-model",
+				"choices": []map[string]any{{"index": 0, "finish_reason": "length", "message": map[string]any{"role": "assistant", "content": "", "reasoning_content": "let me think"}}},
+				"usage":   map[string]any{"prompt_tokens": 40, "completion_tokens": 1024, "total_tokens": 1064},
+			})
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(body)
+		}, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 1, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUnparseable,
+			wantDetail: []string{"the reply is empty", `finish_reason="length"`, "0 content chars", "12 reasoning chars"}},
+		{name: "an upstream error fails closed after one more channel attempt", text: "another question", reply: func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantCalls: 2, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureUpstreamError,
+			wantDetail: []string{"HTTP 500"}},
+		{name: "no review channel fails closed", text: "a text without reviewer", reply: reviewerReply(""), configure: func(cfg *operation_setting.ContentSafetySetting) { cfg.ReviewModel = "missing-model" }, wantCode: types.ErrorCodeContentReviewUnavailable, wantStatus: http.StatusServiceUnavailable, wantDecision: model.ContentSafetyDecisionReviewFailed, wantFailure: model.ContentSafetyFailureNoChannel,
+			wantDetail: []string{`no enabled channel in group "default" serves model "missing-model"`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := setupContentSafetyReview(t, tc.reply)
@@ -222,6 +240,13 @@ func TestContentSafetyGate(t *testing.T) {
 			}
 			logs := requireContentSafetyDecisions(t, info.UserId, tc.wantDecision)
 			assert.Equal(t, tc.wantFailure, logs[0].FailureReason)
+			if tc.wantDetail == nil {
+				assert.Empty(t, logs[0].FailureDetail)
+			}
+			for _, part := range tc.wantDetail {
+				assert.Contains(t, logs[0].FailureDetail, part)
+			}
+			assert.NotContains(t, logs[0].FailureDetail, "127.0.0.1", "the upstream address is masked")
 			if tc.wantDecision != model.ContentSafetyDecisionKeywordBlocked {
 				assert.Equal(t, model.ContentSafetyModeSync, logs[0].Mode)
 			}
@@ -771,6 +796,7 @@ func TestContentSafetyBackgroundQuotaForcesSyncReview(t *testing.T) {
 		return entry.Decision != model.ContentSafetyDecisionReviewFailed
 	})
 	assert.Equal(t, model.ContentSafetyFailureRateLimited, failed[0].FailureReason)
+	assert.Equal(t, "the account is over 1 background review pieces per minute", failed[0].FailureDetail)
 }
 
 // A flagged message the cache decided is recorded the first time an account
@@ -913,6 +939,71 @@ func TestContentSafetyVerdictsAreCachedPerEngine(t *testing.T) {
 	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewControversial, model.ContentSafetyDecisionReviewPassed)
 }
 
+// A shadow review reads the sample of an account's new text: a text out of
+// the sample is never sent to the reviewer however often the account resends
+// it, while enforced reviews, in the background or not, read it all the same.
+func TestContentSafetyShadowReviewSample(t *testing.T) {
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "sample-test-secret"
+	t.Cleanup(func() { common.CryptoSecret = previousSecret })
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	cfg := operation_setting.GetContentSafetySetting()
+	cfg.PassLogPercent = 100
+	reviewInTheBackground(operation_setting.ContentReviewModeShadow)
+
+	userId := nextContentSafetyUser()
+	var inSample, outOfSample string
+	for i := range 64 {
+		if inSample != "" && outOfSample != "" {
+			break
+		}
+		text := saltedText(fmt.Sprintf("sample probe %d", i))
+		c, info := newContentSafetyContext(userId)
+		require.Nil(t, scanRequestContent(c, info, text))
+		require.Len(t, reviewPlan(c).pending, 1)
+		if contentsafety.SampledForReview(userId, reviewPlan(c).pending[0].Key, 50) {
+			inSample = cmp.Or(inSample, text)
+		} else {
+			outOfSample = cmp.Or(outOfSample, text)
+		}
+	}
+	require.NotEmpty(t, inSample)
+	require.NotEmpty(t, outOfSample)
+
+	cfg.ReviewSamplePercent = 50
+	for range 2 {
+		c, info := newContentSafetyContext(userId)
+		require.Nil(t, checkContent(c, info, outOfSample))
+	}
+	c, info := newContentSafetyContext(userId)
+	require.Nil(t, checkContent(c, info, inSample))
+	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed)
+	assert.Equal(t, int32(1), calls.Load(), "only the text in the sample is reviewed, once")
+
+	reviewInTheBackground(operation_setting.ContentReviewModeEnforce)
+	c, info = newContentSafetyContext(userId)
+	require.Nil(t, checkContent(c, info, outOfSample))
+	requireContentSafetyDecisions(t, userId, model.ContentSafetyDecisionReviewPassed, model.ContentSafetyDecisionReviewPassed)
+	assert.Equal(t, int32(2), calls.Load(), "an enforced background review reads text out of the sample")
+
+	cfg.SyncAll = true
+	c, info = newContentSafetyContext(userId)
+	require.Nil(t, checkContent(c, info, saltedText("a synchronous question")))
+	assert.Equal(t, int32(3), calls.Load(), "a synchronous review reads everything")
+}
+
+// A review whose time ran out before its first call, as an escalation can at
+// the end of the review timeout, reports the timeout, not a missing channel.
+func TestContentSafetyReviewOutOfTimeReportsTimeout(t *testing.T) {
+	calls := setupContentSafetyReview(t, reviewerReply(safeReply))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	review := reviewUnitOnChannels(ctx, "req-out-of-time", operation_setting.GetContentSafetySetting().Bounded(), contentsafety.DefaultReviewPrompt, contentsafety.Unit{Text: "late", Key: "late"})
+	assert.Equal(t, model.ContentSafetyFailureTimeout, review.failure)
+	assert.Equal(t, "the review time had run out before the call", review.detail)
+	assert.Zero(t, calls.Load())
+}
+
 // A controversial or refused verdict is asked again of the escalation model
 // with the llm_json engine, and the second verdict decides; the log names the
 // escalation model when it did. A failed escalation keeps the first verdict.
@@ -936,6 +1027,7 @@ func TestContentSafetyEscalation(t *testing.T) {
 		wantEscalationCalls int
 		// wantRiskDelta is what the final verdict adds to the account's score.
 		wantRiskDelta int
+		wantDetail    []string
 	}{
 		{name: "an unsafe second verdict replaces a controversial one", engine: operation_setting.ContentReviewEngineQwen3Guard, first: guardControversial, escalation: reviewerReply(unsafeReply),
 			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantEscalated: "escalate-model", wantEscalationCalls: 1, wantRiskDelta: 40},
@@ -944,9 +1036,11 @@ func TestContentSafetyEscalation(t *testing.T) {
 		{name: "a refused review is escalated", first: refusal, escalation: reviewerReply(unsafeReply),
 			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantEscalated: "escalate-model", wantEscalationCalls: 1, wantRiskDelta: 40},
 		{name: "a failed escalation keeps the controversial verdict", engine: operation_setting.ContentReviewEngineQwen3Guard, first: guardControversial, escalation: serverError,
-			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "weapons", wantEscalationCalls: 2, wantRiskDelta: 5},
+			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "weapons", wantEscalationCalls: 2, wantRiskDelta: 5,
+			wantDetail: []string{"escalation to escalate-model kept the first verdict: upstream_error", "HTTP 500"}},
 		{name: "a refused escalation keeps the refusal", first: refusal, escalation: refusal,
-			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "other", wantFailure: model.ContentSafetyFailureRefused, wantEscalationCalls: 2, wantRiskDelta: 5},
+			wantDecision: model.ContentSafetyDecisionReviewControversial, wantCategory: "other", wantFailure: model.ContentSafetyFailureRefused, wantEscalationCalls: 2, wantRiskDelta: 5,
+			wantDetail: []string{"Content Exists Risk", "escalation to escalate-model kept the first verdict: refused"}},
 		{name: "an unsafe verdict is not escalated", engine: operation_setting.ContentReviewEngineQwen3Guard, first: reviewerReply("Safety: Unsafe\nCategories: Violent"), escalation: reviewerReply(safeReply),
 			wantCode: types.ErrorCodeContentReviewRejected, wantDecision: model.ContentSafetyDecisionReviewRejected, wantCategory: "weapons", wantRiskDelta: 40},
 		{name: "a safe verdict is not escalated", engine: operation_setting.ContentReviewEngineQwen3Guard, first: reviewerReply("Safety: Safe\nCategories: None"), escalation: reviewerReply(unsafeReply),
@@ -979,6 +1073,9 @@ func TestContentSafetyEscalation(t *testing.T) {
 			assert.Equal(t, tc.wantEscalated, logs[0].EscalatedModel)
 			assert.Equal(t, "judge-model", logs[0].ReviewModel)
 			assert.Equal(t, tc.wantRiskDelta, logs[0].RiskDelta, "the account is scored by the final verdict")
+			for _, part := range tc.wantDetail {
+				assert.Contains(t, logs[0].FailureDetail, part)
+			}
 		})
 	}
 }
@@ -1089,6 +1186,7 @@ func TestContentSafetyReviewTimeoutCancelsTheUpstreamAndFreesTheSlot(t *testing.
 	}
 	logs := requireContentSafetyDecisions(t, info.UserId, model.ContentSafetyDecisionReviewFailed)
 	assert.Equal(t, model.ContentSafetyFailureTimeout, logs[0].FailureReason)
+	assert.Contains(t, logs[0].FailureDetail, "no verdict within the 1s review timeout")
 
 	healthy.Store(true)
 	c, info = newContentSafetyContext(nextContentSafetyUser())
@@ -1430,6 +1528,7 @@ func TestContentSafetyBackgroundQueueCapsOneAccount(t *testing.T) {
 	var failed model.ContentSafetyLog
 	require.NoError(t, model.LOG_DB.Where("user_id = ? AND decision = ?", userId, model.ContentSafetyDecisionReviewFailed).First(&failed).Error)
 	assert.Equal(t, model.ContentSafetyFailureRateLimited, failed.FailureReason)
+	assert.Equal(t, fmt.Sprintf("the account already has %d background reviews queued", contentsafety.MaxQueuedReviewsPerAccount), failed.FailureDetail)
 }
 
 // A pass kept at percent stands for 100/percent passes on average, so the

@@ -1,8 +1,14 @@
 package contentsafety
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/binary"
+	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 // Message roles as review units name them. RoleMeta holds request text that
@@ -116,6 +122,26 @@ func BuildUnits(messages []Message, chunkRunes int, keyOf func(text, context str
 		}
 	}
 	return units, truncated
+}
+
+// SampledForReview reports whether a shadow review at percent reads the unit
+// with key sent by userId. The choice is a hash of both under the server
+// secret: an account's text is always in or out of the sample however often
+// its conversation resends it, so the reviewer calls scale with percent,
+// while a text many accounts send is in the sample of some of them. Raising
+// percent only adds texts. Without a configured CRYPTO_SECRET or
+// SESSION_SECRET the secret, and so the sample, changes when the process
+// restarts.
+func SampledForReview(userId int, key string, percent int) bool {
+	if percent >= 100 {
+		return true
+	}
+	if percent <= 0 {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte("content review sample\x00"+common.CryptoSecret))
+	mac.Write([]byte(strconv.Itoa(userId) + "\x00" + key))
+	return binary.BigEndian.Uint64(mac.Sum(nil))%100 < uint64(percent)
 }
 
 // chunkCount is how many chunks of at most size runes a text of length runes

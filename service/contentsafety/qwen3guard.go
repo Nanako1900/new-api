@@ -1,6 +1,9 @@
 package contentsafety
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // qwen3GuardCategory is where a category Qwen3Guard names lands in this
 // gateway's policy. A category outside the policy is "other" and at most
@@ -55,7 +58,7 @@ func ParseQwen3GuardVerdict(reply string) (Verdict, error) {
 		line = strings.TrimSpace(line)
 		if value, ok := strings.CutPrefix(line, "Safety:"); ok {
 			if verdict.Level != "" {
-				return Verdict{}, ErrUnparseable
+				return Verdict{}, fmt.Errorf("%w: more than one Safety line", ErrUnparseable)
 			}
 			verdict.Level = strings.ToLower(strings.TrimSpace(value))
 			continue
@@ -75,8 +78,10 @@ func ParseQwen3GuardVerdict(reply string) (Verdict, error) {
 	case LevelSafe:
 		return verdict, nil
 	case LevelControversial, LevelUnsafe:
+	case "":
+		return Verdict{}, fmt.Errorf("%w: no Safety line", ErrUnparseable)
 	default:
-		return Verdict{}, ErrUnparseable
+		return Verdict{}, fmt.Errorf("%w: unknown Safety level %q", ErrUnparseable, verdict.Level)
 	}
 	verdict.Category, verdict.Reason = "other", truncateRunes(strings.Join(names, ", "), maxReasonRunes)
 	inPolicy, unknown := "", false

@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -64,15 +65,32 @@ type cachedUnit struct {
 // A refusal by the review channel concludes as controversial. escalatedModel
 // is set when the escalation model gave the verdict.
 type unitReview struct {
-	unit           contentsafety.Unit
-	verdict        contentsafety.Verdict
-	refused        bool
-	channelId      int
-	tokens         int
-	latencyMs      int
-	failure        string
+	unit      contentsafety.Unit
+	verdict   contentsafety.Verdict
+	refused   bool
+	channelId int
+	tokens    int
+	latencyMs int
+	failure   string
+	// detail says what went wrong when the review failed or the channel
+	// refused it; it is stored as the log entry's failure detail.
+	detail         string
 	escalatedModel string
 }
+
+// reviewerAnswer is what a review channel answered: the reply text, how the
+// completion ended and how much hidden reasoning came with it, which tell a
+// reply cut off by max_tokens from one that broke the reply contract.
+type reviewerAnswer struct {
+	content        string
+	finishReason   string
+	reasoningRunes int
+	tokens         int
+}
+
+// maxReplyExcerptRunes bounds the reply excerpt in the failure detail of a
+// review whose reply did not parse.
+const maxReplyExcerptRunes = 300
 
 // refusedReason is the verdict reason of a unit the review channel refused.
 // It is a key of the frontend locale files, which translate it when a log's
@@ -134,18 +152,30 @@ func scanRequestContent(c *gin.Context, info *relaycommon.RelayInfo, combineText
 	if len(plan.pending) == 0 && len(plan.flagged) == 0 && plan.truncated == 0 {
 		return nil
 	}
+	if cfg.ReviewMode == operation_setting.ContentReviewModeEnforce {
+		plan.mode = model.ContentSafetyModeAsync
+		if needsSyncReview(c, info, cfg) {
+			plan.mode = model.ContentSafetyModeSync
+		}
+	}
+	// A shadow review reads the sample of the new text. Enforced reviews read
+	// all of it: text left out is never cached, so an account turning
+	// synchronous would find its whole history new and over max_units.
+	// Cached verdicts count whatever the sample.
+	if plan.mode == model.ContentSafetyModeShadow && cfg.ReviewSamplePercent < 100 {
+		plan.pending = slices.DeleteFunc(plan.pending, func(unit contentsafety.Unit) bool {
+			return !contentsafety.SampledForReview(info.UserId, unit.Key, cfg.ReviewSamplePercent)
+		})
+		if len(plan.pending) == 0 && len(plan.flagged) == 0 && plan.truncated == 0 {
+			return nil
+		}
+	}
 	if len(plan.pending) > cfg.MaxUnits {
 		plan.truncated += len(plan.pending) - cfg.MaxUnits
 		for _, unit := range plan.pending[cfg.MaxUnits:] {
 			plan.skipped = append(plan.skipped, unit.Key)
 		}
 		plan.pending = plan.pending[:cfg.MaxUnits]
-	}
-	if cfg.ReviewMode == operation_setting.ContentReviewModeEnforce {
-		plan.mode = model.ContentSafetyModeAsync
-		if needsSyncReview(c, info, cfg) {
-			plan.mode = model.ContentSafetyModeSync
-		}
 	}
 	if plan.mode == model.ContentSafetyModeSync {
 		if apiErr := rejectCachedOrOversized(c, info, plan); apiErr != nil {
@@ -221,6 +251,7 @@ func rejectCachedOrOversized(c *gin.Context, info *relaycommon.RelayInfo, plan *
 	entry := contentSafetyLogEntry(c, info)
 	entry.Decision, entry.Mode, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, model.ContentSafetyModeSync, model.ContentSafetyFailureTooManyUnits
 	entry.ReviewModel, entry.UnitCount, entry.Truncated = cfg.ReviewModel, len(plan.pending)+plan.truncated, true
+	entry.FailureDetail = fmt.Sprintf("%d new pieces are more than the %d a synchronous review reads", len(plan.pending)+plan.truncated, cfg.MaxUnits)
 	recordContentSafetyLog(entry, nil, nil)
 	return rejectContent(c, types.ErrorCodeContentReviewUnavailable, http.StatusServiceUnavailable, i18n.MsgContentSafetyUnavailable)
 }
@@ -422,6 +453,7 @@ func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, plan *cont
 	entry.Mode, entry.ReviewModel, entry.UnitCount = model.ContentSafetyModeSync, cfg.ReviewModel, len(plan.pending)
 	if !contentsafety.AllowReview(c.Request.Context(), info.UserId, cfg.ReviewRateLimitPerMinute, len(plan.pending)) {
 		entry.Decision, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, model.ContentSafetyFailureRateLimited
+		entry.FailureDetail = fmt.Sprintf("the account is over %d synchronous review pieces per minute", cfg.ReviewRateLimitPerMinute)
 		recordContentSafetyLog(entry, nil, nil)
 		return rejectContent(c, types.ErrorCodeContentReviewUnavailable, http.StatusServiceUnavailable, i18n.MsgContentSafetyUnavailable)
 	}
@@ -456,9 +488,11 @@ func reviewSynchronously(c *gin.Context, info *relaycommon.RelayInfo, plan *cont
 // with the timeout or with the client request; the slot is held until the
 // call truly returns.
 func reviewWithSlot(ctx, parent context.Context, requestId string, userId int, plan *contentReviewPlan, unit contentsafety.Unit) unitReview {
+	timeout := plan.cfg.ReviewTimeoutSeconds
 	release, err := contentsafety.AcquireSlot(ctx, userId, plan.cfg.ReviewMaxConcurrency)
 	if err != nil {
-		return unitReview{unit: unit, failure: interruptedReviewFailure(parent)}
+		return unitReview{unit: unit, failure: interruptedReviewFailure(parent),
+			detail: interruptedReviewDetail(parent, timeout, "waiting for a free synchronous review slot")}
 	}
 	done := make(chan unitReview, 1)
 	gopool.Go(func() {
@@ -469,11 +503,12 @@ func reviewWithSlot(ctx, parent context.Context, requestId string, userId int, p
 	case review := <-done:
 		// A call cut short by the context fails because of the context.
 		if review.failure != "" && ctx.Err() != nil {
-			review.failure = interruptedReviewFailure(parent)
+			review.failure, review.detail = interruptedReviewFailure(parent), interruptedReviewDetail(parent, timeout, review.detail)
 		}
 		return review
 	case <-ctx.Done():
-		return unitReview{unit: unit, failure: interruptedReviewFailure(parent)}
+		return unitReview{unit: unit, failure: interruptedReviewFailure(parent),
+			detail: interruptedReviewDetail(parent, timeout, "the review channel had not answered")}
 	}
 }
 
@@ -484,6 +519,19 @@ func interruptedReviewFailure(parent context.Context) string {
 		return model.ContentSafetyFailureClientCanceled
 	}
 	return model.ContentSafetyFailureTimeout
+}
+
+// interruptedReviewDetail is the failure detail of a review that ended before
+// it concluded, with what was going on when it ended.
+func interruptedReviewDetail(parent context.Context, timeoutSeconds int, last string) string {
+	detail := fmt.Sprintf("no verdict within the %ds review timeout", timeoutSeconds)
+	if parent.Err() != nil {
+		detail = "the client request ended before the review concluded"
+	}
+	if last != "" {
+		detail += "; " + last
+	}
+	return detail
 }
 
 // queueContentReview hands the pending units to the background reviewers.
@@ -498,12 +546,14 @@ func queueContentReview(c *gin.Context, info *relaycommon.RelayInfo, plan *conte
 	entry := contentSafetyLogEntry(c, info)
 	entry.Mode, entry.ReviewModel = plan.mode, cfg.ReviewModel
 	entry.UnitCount, entry.Truncated = len(plan.pending)+plan.truncated, plan.truncated > 0
-	failure := ""
+	failure, detail := "", ""
 	switch {
 	case len(plan.pending) == 0:
 		failure = model.ContentSafetyFailureTooManyUnits
+		detail = fmt.Sprintf("%d new pieces beyond the review limits were left unreviewed", plan.truncated)
 	case !contentsafety.AllowEnqueue(c.Request.Context(), info.UserId, cfg.AsyncRatePerMinute, len(plan.pending)):
 		failure = model.ContentSafetyFailureRateLimited
+		detail = fmt.Sprintf("the account is over %d background review pieces per minute", cfg.AsyncRatePerMinute)
 	default:
 		size := int64(0)
 		for _, unit := range plan.pending {
@@ -512,8 +562,9 @@ func queueContentReview(c *gin.Context, info *relaycommon.RelayInfo, plan *conte
 		err := contentsafety.EnqueueReview(info.UserId, size, func() { reviewInBackground(entry, plan) })
 		if errors.Is(err, contentsafety.ErrAccountQueueFull) {
 			failure = model.ContentSafetyFailureRateLimited
+			detail = fmt.Sprintf("the account already has %d background reviews queued", contentsafety.MaxQueuedReviewsPerAccount)
 		} else if err != nil {
-			failure = model.ContentSafetyFailureQueueFull
+			failure, detail = model.ContentSafetyFailureQueueFull, err.Error()
 		}
 	}
 	if plan.mode == model.ContentSafetyModeAsync && (failure != "" || plan.truncated > 0) {
@@ -522,7 +573,7 @@ func queueContentReview(c *gin.Context, info *relaycommon.RelayInfo, plan *conte
 	if failure == "" {
 		return
 	}
-	entry.Decision, entry.FailureReason = model.ContentSafetyDecisionReviewFailed, failure
+	entry.Decision, entry.FailureReason, entry.FailureDetail = model.ContentSafetyDecisionReviewFailed, failure, detail
 	recordContentSafetyLog(entry, nil, nil)
 }
 
@@ -536,6 +587,7 @@ func reviewInBackground(entry model.ContentSafetyLog, plan *contentReviewPlan) {
 		review := reviewUnit(ctx, entry.RequestId, cfg, plan.prompt, unit)
 		if review.failure != "" && ctx.Err() != nil {
 			review.failure = model.ContentSafetyFailureTimeout
+			review.detail = interruptedReviewDetail(context.Background(), cfg.ReviewTimeoutSeconds, review.detail)
 		}
 		cancel()
 		reviews = append(reviews, review)
@@ -571,38 +623,83 @@ func reviewUnit(ctx context.Context, requestId string, cfg operation_setting.Con
 func reviewUnitOnChannels(ctx context.Context, requestId string, cfg operation_setting.ContentSafetySetting, prompt string, unit contentsafety.Unit) unitReview {
 	messages, maxTokens, err := reviewRequestMessages(cfg.ReviewEngine, prompt, unit)
 	if err != nil {
-		return unitReview{unit: unit, failure: model.ContentSafetyFailureUpstreamError}
+		return unitReview{unit: unit, failure: model.ContentSafetyFailureUpstreamError, detail: "building the review request failed: " + err.Error()}
 	}
 	review := unitReview{unit: unit, failure: model.ContentSafetyFailureNoChannel}
 	for retry := range 2 {
 		if ctx.Err() != nil {
+			if retry == 0 {
+				review.failure, review.detail = model.ContentSafetyFailureTimeout, "the review time had run out before the call"
+			}
 			return review
 		}
 		channel, err := model.GetRandomSatisfiedChannel(cfg.ReviewGroup, cfg.ReviewModel, retry, nil)
 		if err != nil || channel == nil {
+			if retry == 0 {
+				review.detail = fmt.Sprintf("no enabled channel in group %q serves model %q", cfg.ReviewGroup, cfg.ReviewModel)
+				if err != nil {
+					review.detail += ": " + err.Error()
+				}
+				logReviewAttempt(requestId, cfg, retry, model.ContentSafetyFailureNoChannel, review.detail, 0)
+			}
 			return review
 		}
-		reply, tokens, err := askContentReviewer(ctx, requestId, channel, cfg.ReviewModel, messages, maxTokens)
+		started := time.Now()
+		reply, err := askContentReviewer(ctx, requestId, channel, cfg.ReviewModel, messages, maxTokens)
+		elapsed := time.Since(started)
+		label := fmt.Sprintf("channel #%d %q", channel.Id, channel.Name)
 		if err != nil {
-			common.SysError(common.LogText("content safety review via channel %d failed (request_id=%s): %s", channel.Id, requestId, err.Error()))
+			// The upstream address of the channel is masked, as in client errors.
+			detail := label + ": " + common.MaskSensitiveInfo(err.Error(), channel.GetBaseURL())
 			var apiErr *types.NewAPIError
-			if errors.As(err, &apiErr) && contentsafety.IsReviewRefusal(apiErr) {
-				review = unitReview{unit: unit, channelId: channel.Id, refused: true,
+			if errors.As(err, &apiErr) {
+				detail = fmt.Sprintf("%s: %s: %s", label, apiErr.GetErrorCode(), apiErr.MaskSensitiveError(channel.GetBaseURL()))
+				if apiErr.StatusCode > 0 {
+					detail = fmt.Sprintf("%s: HTTP %d %s: %s", label, apiErr.StatusCode, apiErr.GetErrorCode(), apiErr.MaskSensitiveError(channel.GetBaseURL()))
+				}
+			}
+			if apiErr != nil && contentsafety.IsReviewRefusal(apiErr) {
+				logReviewAttempt(requestId, cfg, retry, model.ContentSafetyFailureRefused, detail, elapsed)
+				review = unitReview{unit: unit, channelId: channel.Id, refused: true, detail: detail,
 					verdict: contentsafety.Verdict{Level: contentsafety.LevelControversial, Category: "other", Reason: refusedReason}}
 				continue
 			}
+			logReviewAttempt(requestId, cfg, retry, model.ContentSafetyFailureUpstreamError, detail, elapsed)
 			if !review.refused {
-				review = unitReview{unit: unit, channelId: channel.Id, failure: model.ContentSafetyFailureUpstreamError}
+				review = unitReview{unit: unit, channelId: channel.Id, failure: model.ContentSafetyFailureUpstreamError, detail: detail}
 			}
 			continue
 		}
-		verdict, err := parseReviewReply(cfg.ReviewEngine, reply)
+		verdict, err := parseReviewReply(cfg.ReviewEngine, reply.content)
 		if err != nil {
-			return unitReview{unit: unit, channelId: channel.Id, tokens: tokens, failure: model.ContentSafetyFailureUnparseable}
+			runes := []rune(reply.content)
+			detail := fmt.Sprintf("%s: %v (finish_reason=%q, %d content chars, %d reasoning chars)",
+				label, err, reply.finishReason, len(runes), reply.reasoningRunes)
+			// The reply can quote the user's text, so its excerpt goes only to
+			// the log entry, which log_retention_days bounds.
+			logReviewAttempt(requestId, cfg, retry, model.ContentSafetyFailureUnparseable, detail, elapsed)
+			return unitReview{unit: unit, channelId: channel.Id, tokens: reply.tokens, failure: model.ContentSafetyFailureUnparseable,
+				detail: detail + "; reply: " + string(runes[:min(len(runes), maxReplyExcerptRunes)])}
 		}
-		return unitReview{unit: unit, verdict: verdict, channelId: channel.Id, tokens: tokens}
+		if common.DebugEnabled {
+			common.SysLog(common.LogText("content safety review via %s concluded %s %s (request_id=%s, model=%s, %dms, %d tokens, finish_reason=%s)",
+				label, verdict.Level, verdict.Category, requestId, cfg.ReviewModel, elapsed.Milliseconds(), reply.tokens, reply.finishReason))
+		}
+		return unitReview{unit: unit, verdict: verdict, channelId: channel.Id, tokens: reply.tokens}
 	}
 	return review
+}
+
+// logReviewAttempt writes one review call that did not conclude to the server
+// log: a refusal as information, anything else as an error.
+func logReviewAttempt(requestId string, cfg operation_setting.ContentSafetySetting, attempt int, outcome, detail string, elapsed time.Duration) {
+	line := common.LogText("content safety review %s (request_id=%s, engine=%s, model=%s, group=%s, attempt=%d, %dms): %q",
+		outcome, requestId, cfg.ReviewEngine, cfg.ReviewModel, cfg.ReviewGroup, attempt+1, elapsed.Milliseconds(), detail)
+	if outcome == model.ContentSafetyFailureRefused {
+		common.SysLog(line)
+		return
+	}
+	common.SysError(line)
 }
 
 // storeVerdicts caches every verdict the reviewer gave, and a refusal as the
@@ -659,6 +756,12 @@ func summarizeReviews(entry model.ContentSafetyLog, reviews []unitReview) (model
 		return entry, nil, nil
 	}
 	entry.EscalatedModel = escalatedModelOf(decisive)
+	for _, review := range decisive {
+		if review.detail != "" {
+			entry.FailureDetail = review.detail
+			break
+		}
+	}
 	var categories, snippets []string
 	for _, review := range decisive[:min(len(decisive), maxLoggedSnippets)] {
 		snippets = append(snippets, unitSnippet(review.unit))
@@ -706,7 +809,7 @@ func sampledPassWeight(percent, roll int) int {
 // channel through its adaptor, the way a channel test does, and returns the
 // assistant reply. The upstream request ends with ctx. It never touches the
 // requesting user's billing.
-func askContentReviewer(ctx context.Context, requestId string, channel *model.Channel, modelName string, messages []dto.Message, maxTokens uint) (string, int, error) {
+func askContentReviewer(ctx context.Context, requestId string, channel *model.Channel, modelName string, messages []dto.Message, maxTokens uint) (reviewerAnswer, error) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", nil)
@@ -714,42 +817,42 @@ func askContentReviewer(ctx context.Context, requestId string, channel *model.Ch
 	c.Set(common.RequestIdKey, requestId)
 	common.SetContextKey(c, constant.ContextKeyBindUpstreamToRequestContext, true)
 	if apiErr := middleware.SetupContextForInternalChannel(c, channel, modelName); apiErr != nil {
-		return "", 0, apiErr
+		return reviewerAnswer{}, apiErr
 	}
 	stream, temperature := false, 0.0
 	request := &dto.GeneralOpenAIRequest{Model: modelName, Stream: &stream, Temperature: &temperature, MaxTokens: &maxTokens, Messages: messages}
 	info, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, request, nil)
 	if err != nil {
-		return "", 0, err
+		return reviewerAnswer{}, err
 	}
 	info.InitChannelMeta(c)
 	if err := helper.ModelMappedHelper(c, info, request); err != nil {
-		return "", 0, err
+		return reviewerAnswer{}, err
 	}
 	apiType, _ := common.ChannelType2APIType(channel.Type)
 	adaptor := GetAdaptor(apiType)
 	if adaptor == nil {
-		return "", 0, fmt.Errorf("invalid api type: %d", apiType)
+		return reviewerAnswer{}, fmt.Errorf("invalid api type: %d", apiType)
 	}
 	adaptor.Init(info)
 	converted, err := adaptor.ConvertOpenAIRequest(c, info, request)
 	if err != nil {
-		return "", 0, err
+		return reviewerAnswer{}, err
 	}
 	body, err := common.Marshal(converted)
 	if err != nil {
-		return "", 0, err
+		return reviewerAnswer{}, err
 	}
 	if len(info.ParamOverride) > 0 {
 		if body, err = relaycommon.ApplyParamOverrideWithRelayInfo(body, info); err != nil {
-			return "", 0, err
+			return reviewerAnswer{}, err
 		}
 	}
 	// Pass-through adaptors such as AWS read the body from the request.
 	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	resp, err := adaptor.DoRequest(c, info, bytes.NewReader(body))
 	if err != nil {
-		return "", 0, err
+		return reviewerAnswer{}, err
 	}
 	// Some adaptors (AWS) send the request inside DoResponse and return no
 	// response here, as in the relay and channel test paths.
@@ -757,29 +860,35 @@ func askContentReviewer(ctx context.Context, requestId string, channel *model.Ch
 	if resp != nil {
 		response, ok := resp.(*http.Response)
 		if !ok {
-			return "", 0, fmt.Errorf("review channel returned an unexpected response type %T", resp)
+			return reviewerAnswer{}, fmt.Errorf("review channel returned an unexpected response type %T", resp)
 		}
 		httpResp = response
 	}
 	if httpResp != nil && httpResp.StatusCode != http.StatusOK {
-		return "", 0, service.RelayErrorHandler(c, httpResp, false)
+		return reviewerAnswer{}, service.RelayErrorHandler(c, httpResp, false)
 	}
 	usage, apiErr := adaptor.DoResponse(c, httpResp, info)
 	if apiErr != nil {
-		return "", 0, apiErr
+		return reviewerAnswer{}, apiErr
 	}
 	var completion dto.OpenAITextResponse
 	if err := common.Unmarshal(recorder.Body.Bytes(), &completion); err != nil {
-		return "", 0, err
+		return reviewerAnswer{}, err
 	}
 	if len(completion.Choices) == 0 {
-		return "", 0, errors.New("review reply has no choices")
+		return reviewerAnswer{}, errors.New("review reply has no choices")
 	}
-	tokens := 0
+	choice := completion.Choices[0]
+	reply := reviewerAnswer{content: choice.Message.StringContent(), finishReason: choice.FinishReason}
+	if choice.Message.ReasoningContent != nil {
+		reply.reasoningRunes = utf8.RuneCountInString(*choice.Message.ReasoningContent)
+	} else if choice.Message.Reasoning != nil {
+		reply.reasoningRunes = utf8.RuneCountInString(*choice.Message.Reasoning)
+	}
 	if u, ok := usage.(*dto.Usage); ok && u != nil {
-		tokens = u.TotalTokens
+		reply.tokens = u.TotalTokens
 	}
-	return completion.Choices[0].Message.StringContent(), tokens, nil
+	return reply, nil
 }
 
 // rejectContent builds the client error for a content safety decision,
