@@ -24,3 +24,10 @@ export async function getActiveAlerts(): Promise<GetActiveAlertsResponse> {
   const res = await api.get<GetActiveAlertsResponse>('/api/alerts')
   return res.data
 }
+
+export async function getPublishedAlerts(): Promise<GetActiveAlertsResponse> {
+  const res = await api.get<GetActiveAlertsResponse>('/api/alerts', {
+    params: { include_expired: true },
+  })
+  return res.data
+}

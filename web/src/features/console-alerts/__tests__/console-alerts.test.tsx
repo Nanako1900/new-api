@@ -26,6 +26,7 @@ import { MAIN_CONTENT_ID } from '@/components/layout/constants'
 import { api } from '@/lib/api'
 import { createAppQueryClient } from '@/lib/query-client'
 import { useAlertDismissalStore } from '@/stores/alert-dismissal-store'
+import { useNotificationStore } from '@/stores/notification-store'
 
 import { ConsoleAlerts } from '../components/console-alerts'
 import { CONSOLE_ALERTS_QUERY_KEY } from '../constants'
@@ -62,7 +63,13 @@ function renderAlerts(
 
 beforeEach(() => {
   useAlertDismissalStore.setState({ dismissedKeys: [] })
+  useNotificationStore.setState({
+    readAlertKeys: [],
+    popoverOpen: false,
+    activeTab: 'notice',
+  })
   localStorage.clear()
+  vi.restoreAllMocks()
 })
 
 test('a live alert renders its title and Markdown content in a labelled region', async () => {
@@ -250,4 +257,72 @@ test('a dismissed alert shows again when it is made non-dismissible', async () =
   renderAlerts()
 
   expect(await screen.findByText('Maintenance')).toBeInTheDocument()
+})
+
+test('dismissing an alert offers Undo to restore it and View in bell to open notifications', async () => {
+  const user = userEvent.setup()
+  const toastInfo = vi.spyOn(toast, 'info')
+  mockAlerts([makeAlert()])
+  renderAlerts()
+
+  const dismissButton = await screen.findByRole('button', {
+    name: 'Dismiss alert',
+  })
+  await user.click(dismissButton)
+
+  expect(screen.queryByText('Maintenance')).not.toBeInTheDocument()
+  expect(useNotificationStore.getState().readAlertKeys).toEqual([
+    getAlertDismissKey(makeAlert()),
+  ])
+  expect(toastInfo).toHaveBeenCalledTimes(1)
+
+  const [, toastOptions] = toastInfo.mock.calls[0]
+  const cancel = toastOptions?.cancel
+  const action = toastOptions?.action
+  expect(cancel && typeof cancel === 'object' && 'onClick' in cancel).toBe(true)
+  expect(action && typeof action === 'object' && 'onClick' in action).toBe(true)
+
+  if (cancel && typeof cancel === 'object' && 'onClick' in cancel) {
+    cancel.onClick({} as never)
+  }
+  expect(useNotificationStore.getState().popoverOpen).toBe(true)
+  expect(useNotificationStore.getState().activeTab).toBe('alerts')
+
+  if (action && typeof action === 'object' && 'onClick' in action) {
+    action.onClick({} as never)
+  }
+  expect(await screen.findByText('Maintenance')).toBeInTheDocument()
+})
+
+test('more than two live alerts collapse behind an expandable toggle', async () => {
+  const user = userEvent.setup()
+  mockAlerts([
+    makeAlert({ id: 1, title: 'First alert' }),
+    makeAlert({ id: 2, title: 'Second alert' }),
+    makeAlert({ id: 3, title: 'Third alert' }),
+    makeAlert({ id: 4, title: 'Fourth alert' }),
+  ])
+  renderAlerts()
+
+  expect(await screen.findByText('First alert')).toBeInTheDocument()
+  expect(screen.getByText('Second alert')).toBeInTheDocument()
+  expect(screen.queryByText('Third alert')).not.toBeInTheDocument()
+  expect(screen.queryByText('Fourth alert')).not.toBeInTheDocument()
+
+  const expandButton = screen.getByRole('button', {
+    name: 'Show 2 more alerts',
+  })
+  expect(expandButton).toHaveAttribute('aria-expanded', 'false')
+
+  await user.click(expandButton)
+  expect(screen.getByText('Third alert')).toBeInTheDocument()
+  expect(screen.getByText('Fourth alert')).toBeInTheDocument()
+
+  const collapseButton = screen.getByRole('button', {
+    name: 'Show fewer alerts',
+  })
+  expect(collapseButton).toHaveAttribute('aria-expanded', 'true')
+
+  await user.click(collapseButton)
+  expect(screen.queryByText('Third alert')).not.toBeInTheDocument()
 })

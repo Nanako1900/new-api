@@ -75,3 +75,29 @@ test.each([[null], ['oops'], [[1, '1:a']]])(
     expect(useAlertDismissalStore.getState().dismissedKeys).toEqual([])
   }
 )
+
+test('restoring a dismissed key removes only that key', () => {
+  useAlertDismissalStore.setState({ dismissedKeys: ['1:a', '2:b'] })
+
+  useAlertDismissalStore.getState().restore('1:a')
+
+  expect(useAlertDismissalStore.getState().dismissedKeys).toEqual(['2:b'])
+  expect(storedKeys()).toEqual(['2:b'])
+})
+
+test('restoring an unknown key leaves dismissals stored by another tab untouched', () => {
+  writeFromAnotherTab(['1:a'])
+
+  useAlertDismissalStore.getState().restore('9:missing')
+
+  expect(storedKeys()).toEqual(['1:a'])
+})
+
+test('restoreAll clears all dismissed keys', () => {
+  useAlertDismissalStore.setState({ dismissedKeys: ['1:a', '2:b'] })
+
+  useAlertDismissalStore.getState().restoreAll()
+
+  expect(useAlertDismissalStore.getState().dismissedKeys).toEqual([])
+  expect(storedKeys()).toEqual([])
+})

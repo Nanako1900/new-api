@@ -118,3 +118,38 @@ func TestGetActiveAlertsReturnsEmptySliceWhenUnset(t *testing.T) {
 	require.NotNil(t, alerts)
 	assert.Empty(t, alerts)
 }
+
+func TestGetPublishedAlertsIncludesExpiredAfterLive(t *testing.T) {
+	original := GetConsoleSetting().Alerts
+	t.Cleanup(func() { GetConsoleSetting().Alerts = original })
+	GetConsoleSetting().Alerts = `[
+		{"id":1,"content":"disabled expired","level":"error","enabled":false,"endsAt":"2026-11-06T12:00:00Z"},
+		{"id":2,"content":"starts later","level":"error","enabled":true,"startsAt":"2026-11-07T12:00:01Z"},
+		{"id":3,"content":"ended earlier","level":"error","enabled":true,"endsAt":"2026-11-06T12:00:00Z"},
+		{"id":4,"content":"ended recently older id","level":"info","enabled":true,"endsAt":"2026-11-07T12:00:00Z"},
+		{"id":5,"content":"ended recently newer id","level":"warning","enabled":true,"endsAt":"2026-11-07T12:00:00Z"},
+		{"id":6,"content":"live info","level":"info","enabled":true},
+		{"id":7,"content":"live error","level":"error","enabled":true},
+		{"id":8,"content":"unknown level","level":"bogus","enabled":true,"endsAt":"2026-11-06T12:00:00Z"}
+	]`
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+
+	alerts := GetPublishedAlerts(now)
+
+	ids := make([]int64, 0, len(alerts))
+	for _, alert := range alerts {
+		ids = append(ids, alert.Id)
+	}
+	assert.Equal(t, []int64{7, 6, 5, 4, 3}, ids)
+}
+
+func TestGetPublishedAlertsReturnsEmptySliceWhenUnset(t *testing.T) {
+	original := GetConsoleSetting().Alerts
+	t.Cleanup(func() { GetConsoleSetting().Alerts = original })
+	GetConsoleSetting().Alerts = ""
+
+	alerts := GetPublishedAlerts(time.Now())
+
+	require.NotNil(t, alerts)
+	assert.Empty(t, alerts)
+}
