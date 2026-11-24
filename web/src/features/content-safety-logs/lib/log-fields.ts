@@ -16,10 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { DECISION_PRESENTATION, FAILURE_REASON_LABEL_KEYS } from '../constants'
+import {
+  DECISION_PRESENTATION,
+  FAILURE_REASON_LABEL_KEYS,
+  MODE_LABEL_KEYS,
+  UNASKED_FAILURE_REASONS,
+} from '../constants'
 import type {
   ContentSafetyDecision,
   ContentSafetyFailureReason,
+  ContentSafetyMode,
+  ContentSafetyStatsCount,
   DecisionPresentation,
 } from '../types'
 
@@ -77,4 +84,72 @@ export function failureReasonLabelKey(reason: string): string {
     return FAILURE_REASON_LABEL_KEYS[reason]
   }
   return reason
+}
+
+export function isContentSafetyMode(value: string): value is ContentSafetyMode {
+  return Object.hasOwn(MODE_LABEL_KEYS, value)
+}
+
+/** Label key of a review mode; empty (old keyword rows) is null, unknown keeps its text. */
+export function modeLabelKey(mode: string): string | null {
+  if (!mode) return null
+  if (isContentSafetyMode(mode)) return MODE_LABEL_KEYS[mode]
+  return mode
+}
+
+/** Keyword rows are not AI reviews; every other decision is one. */
+export function isReviewedDecision(decision: string): boolean {
+  return decision !== 'keyword_blocked'
+}
+
+export type ContentSafetyStatsSummary = {
+  reviews: number
+  flaggedOrRejected: number
+  controversial: number
+  failed: number
+  refused: number
+}
+
+/**
+ * Whether a stats row counts reviews that asked the reviewer: not a cache
+ * hit, and not a failure that stopped the review before it asked.
+ */
+function askedReviewer(row: ContentSafetyStatsCount): boolean {
+  if (!row.decision.startsWith('review_') || row.cache_hit) return false
+  return !UNASKED_FAILURE_REASONS.some(
+    (reason) => reason === row.failure_reason
+  )
+}
+
+/**
+ * Adds the weighted totals of the stats rows into the figures of the strip.
+ * Reviews counts only the reviews that asked the reviewer; the other figures
+ * count every review decision.
+ */
+export function summarizeStatsCounts(
+  counts: readonly ContentSafetyStatsCount[]
+): ContentSafetyStatsSummary {
+  const summary: ContentSafetyStatsSummary = {
+    reviews: 0,
+    flaggedOrRejected: 0,
+    controversial: 0,
+    failed: 0,
+    refused: 0,
+  }
+  for (const row of counts) {
+    if (row.failure_reason === 'refused') summary.refused += row.total
+    if (!row.decision.startsWith('review_')) continue
+    if (askedReviewer(row)) summary.reviews += row.total
+    if (
+      row.decision === 'review_flagged' ||
+      row.decision === 'review_rejected'
+    ) {
+      summary.flaggedOrRejected += row.total
+    }
+    if (row.decision === 'review_controversial') {
+      summary.controversial += row.total
+    }
+    if (row.decision === 'review_failed') summary.failed += row.total
+  }
+  return summary
 }

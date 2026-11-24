@@ -1261,6 +1261,7 @@ ORDER BY (created_at, request_id)`
 func newContentSafetyLogTestRouter() *gin.Engine {
 	router := gin.New()
 	router.GET("/api/content_safety/logs", middleware.DisableCache(), middleware.AdminAuth(), middleware.RequirePermission(authz.AuditRead), GetContentSafetyLogs)
+	router.GET("/api/content_safety/stats", middleware.DisableCache(), middleware.AdminAuth(), middleware.RequirePermission(authz.AuditRead), GetContentSafetyStats)
 	return router
 }
 
@@ -1344,4 +1345,67 @@ func TestGetContentSafetyLogsHidesRootUsersFromNonRootAuditors(t *testing.T) {
 	assert.Contains(t, rootResponse.Body.String(), "root-row")
 	assert.Contains(t, rootResponse.Body.String(), "common-row")
 	assert.Contains(t, rootResponse.Body.String(), `"total":2`)
+}
+
+// The stats a shadow-mode evaluation reads: sampled passes count with their
+// weight, failures by reason, verdicts the cache decided apart from reviews
+// that asked the reviewer, latency percentiles over those reviews weighted
+// like the counts, and never the records of root users for a non-root viewer.
+func TestGetContentSafetyStatsSumsDecisionsForAuditors(t *testing.T) {
+	admin, pat := setupAccessTokenAudit(t)
+	rootToken := "root-stats-token"
+	root := &model.User{Username: "root-stats", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &rootToken, AffCode: "root-stats"}
+	require.NoError(t, model.DB.Create(root).Error)
+	require.NoError(t, model.MigrateContentSafetyLogs())
+	now := time.Now().Unix()
+	for _, entry := range []model.ContentSafetyLog{
+		{CreatedAt: now, UserId: 7, Decision: model.ContentSafetyDecisionReviewPassed, Mode: model.ContentSafetyModeShadow, Weight: 10, LatencyMs: 100},
+		{CreatedAt: now, UserId: 7, Decision: model.ContentSafetyDecisionReviewPassed, Mode: model.ContentSafetyModeShadow, Weight: 10, LatencyMs: 100},
+		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewFlagged, Mode: model.ContentSafetyModeShadow, LatencyMs: 900},
+		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewControversial, Mode: model.ContentSafetyModeShadow, LatencyMs: 1000},
+		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewFailed, Mode: model.ContentSafetyModeShadow, FailureReason: model.ContentSafetyFailureTimeout, LatencyMs: 1100},
+		{CreatedAt: now, UserId: 8, Decision: model.ContentSafetyDecisionReviewFlagged, Mode: model.ContentSafetyModeShadow, CacheHit: true},
+		{CreatedAt: now - 3*3600, UserId: 8, Decision: model.ContentSafetyDecisionReviewFlagged, Mode: model.ContentSafetyModeShadow},
+		{CreatedAt: now, UserId: root.Id, Decision: model.ContentSafetyDecisionReviewFlagged, Mode: model.ContentSafetyModeShadow},
+	} {
+		model.RecordContentSafetyLog(entry)
+	}
+	router := newContentSafetyLogTestRouter()
+
+	assert.Equal(t, http.StatusForbidden, auditRequest(router, "GET", "/api/content_safety/stats", pat).Code)
+	grantAuditRead(t, admin.Id)
+	var result struct {
+		Success    bool
+		MessageKey string `json:"message_key"`
+		Data       model.ContentSafetyStats
+	}
+	require.NoError(t, common.Unmarshal(auditRequest(router, "GET", "/api/content_safety/stats?hours=1", pat).Body.Bytes(), &result))
+	require.True(t, result.Success)
+	totals := map[string]int64{}
+	for _, count := range result.Data.Counts {
+		totals[fmt.Sprintf("%s/%s/%t", count.Decision, count.FailureReason, count.CacheHit)] += count.Total
+	}
+	assert.Equal(t, map[string]int64{"review_passed//false": 20, "review_flagged//false": 1, "review_flagged//true": 1,
+		"review_controversial//false": 1, "review_failed/timeout/false": 1}, totals,
+		"passes count with their weight, cache hits apart, older rows and the root user's are left out")
+	assert.Equal(t, 5, result.Data.LatencySamples)
+	assert.Equal(t, 100, result.Data.LatencyP50Ms, "the weighted passes make up most reviews")
+	assert.Equal(t, 1000, result.Data.LatencyP95Ms)
+
+	rootResult := result
+	require.NoError(t, common.Unmarshal(auditRequest(router, "GET", "/api/content_safety/stats?hours=1", rootToken).Body.Bytes(), &rootResult))
+	flagged := int64(0)
+	for _, count := range rootResult.Data.Counts {
+		if count.Decision == model.ContentSafetyDecisionReviewFlagged {
+			flagged += count.Total
+		}
+	}
+	assert.Equal(t, int64(3), flagged, "root sees every account")
+
+	for _, query := range []string{"hours=0", "hours=721", "hours=abc"} {
+		result.MessageKey = ""
+		require.NoError(t, common.Unmarshal(auditRequest(router, "GET", "/api/content_safety/stats?"+query, pat).Body.Bytes(), &result))
+		assert.False(t, result.Success, query)
+		assert.Equal(t, "Invalid content safety stats query", result.MessageKey, query)
+	}
 }

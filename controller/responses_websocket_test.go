@@ -872,16 +872,17 @@ func TestResponsesWebSocketInitialUpstreamRejectionRefundsReservation(t *testing
 	}
 }
 
-// A review word holds a WebSocket request for the AI review after its
-// reservation. An unsafe verdict answers with content_review_rejected, the
-// upstream is never dialed, and the reservation is returned.
+// An enforced synchronous review holds a WebSocket request for the AI review
+// after its reservation. An unsafe verdict answers with
+// content_review_rejected, the upstream is never dialed, and the reservation
+// is returned.
 func TestResponsesWebSocketContentReviewRejectionRefundsReservation(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	fixture := newResponsesWSBillingTest(t, `tier("request", fixed(0.002))`, func(*websocket.Conn, *http.Request) {})
 	require.NoError(t, model.LOG_DB.AutoMigrate(&model.ContentSafetyLog{}))
 	cfg := operation_setting.GetContentSafetySetting()
 	previous := *cfg
-	cfg.ReviewEnabled, cfg.ReviewModel, cfg.ReviewGroup, cfg.ReviewWords, cfg.ReviewTimeoutSeconds = true, "ws-judge", "default", "knife", 5
+	cfg.ReviewMode, cfg.ReviewModel, cfg.ReviewGroup, cfg.SyncAll, cfg.ReviewTimeoutSeconds = operation_setting.ContentReviewModeEnforce, "ws-judge", "default", true, 5
 	previousWords, previousEnabled, previousOnPrompt := setting.SensitiveWords, setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled
 	setting.SensitiveWords, setting.CheckSensitiveEnabled, setting.CheckSensitiveOnPromptEnabled = nil, true, true
 	t.Cleanup(func() {
@@ -890,7 +891,7 @@ func TestResponsesWebSocketContentReviewRejectionRefundsReservation(t *testing.T
 	})
 	reply, err := common.Marshal(map[string]any{
 		"id": "chatcmpl-review", "object": "chat.completion", "model": "ws-judge",
-		"choices": []map[string]any{{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": `{"results":[{"id":1,"safe":false,"category":"violence","reason":"harm"}]}`}}},
+		"choices": []map[string]any{{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": `{"results":[{"id":1,"level":"unsafe","category":"weapons","reason":"harm"}]}`}}},
 		"usage":   map[string]any{"prompt_tokens": 40, "completion_tokens": 10, "total_tokens": 50},
 	})
 	require.NoError(t, err)

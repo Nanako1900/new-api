@@ -55,6 +55,10 @@ type PolicyBeforeLoad = (context: { params: { section: string } }) => void
 let queryClient: QueryClient
 let settings: RequestPolicySettings
 
+async function selectMode(name: 'Off' | 'Shadow' | 'Enforce') {
+  await userEvent.click(await screen.findByRole('radio', { name }))
+}
+
 function optionsResponse() {
   return {
     success: true,
@@ -260,9 +264,9 @@ describe('request policy settings', () => {
     const prompt = screen.getByRole('switch', { name: 'Inspect user prompts' })
     expect(prompt).toHaveAttribute('aria-disabled', 'true')
     expect(prompt).toBeChecked()
-    expect(screen.getByRole('textbox', { name: 'Block words' })).toHaveValue(
-      'blocked'
-    )
+    expect(
+      screen.getByRole('textbox', { name: 'Hard-block words (zero tolerance)' })
+    ).toHaveValue('blocked')
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(api.patch).toHaveBeenCalledExactlyOnceWith(
@@ -275,7 +279,7 @@ describe('request policy settings', () => {
   it('refreshing another policy keeps unsaved filter text', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
     const keywords = await screen.findByRole('textbox', {
-      name: 'Block words',
+      name: 'Hard-block words (zero tolerance)',
     })
     fireEvent.change(keywords, { target: { value: 'unsaved' } })
     settings.RetryTimes = 5
@@ -285,7 +289,7 @@ describe('request policy settings', () => {
     expect(keywords).toHaveValue('unsaved')
   })
 
-  it('saving a changed log retention also sends the current review switch and group', async () => {
+  it('saving a changed log retention also sends the current review mode and group', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
     fireEvent.change(
       await screen.findByRole('spinbutton', {
@@ -299,7 +303,7 @@ describe('request policy settings', () => {
         '/api/option/request_policy',
         {
           options: {
-            'content_safety_setting.review_enabled': 'false',
+            'content_safety_setting.review_mode': 'off',
             'content_safety_setting.review_group': 'default',
             'content_safety_setting.log_retention_days': '45',
           },
@@ -308,43 +312,54 @@ describe('request policy settings', () => {
     )
   })
 
-  it('AI review options stay hidden until AI review is switched on', async () => {
+  it('AI review options stay hidden until a review mode other than Off is chosen', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    const toggle = await screen.findByRole('switch', {
-      name: 'Enable AI review',
-    })
-    expect(toggle).not.toBeChecked()
+    expect(await screen.findByRole('radio', { name: 'Off' })).toBeChecked()
     expect(
       screen.queryByRole('group', { name: 'AI review options' })
     ).not.toBeInTheDocument()
-    await userEvent.click(toggle)
+    await selectMode('Shadow')
     const options = screen.getByRole('group', { name: 'AI review options' })
-    expect(
-      within(options).getByRole('textbox', { name: 'Review words' })
-    ).toBeVisible()
     expect(
       within(options).getByRole('combobox', { name: 'Review model' })
     ).toBeVisible()
     expect(
       within(options).getByRole('combobox', { name: 'Review group' })
     ).toBeVisible()
+    await selectMode('Off')
+    expect(
+      screen.queryByRole('group', { name: 'AI review options' })
+    ).not.toBeInTheDocument()
   })
 
-  it('enabling AI review without a model or review words shows field errors and does not write options', async () => {
+  it('the synchronous review options show only in Enforce mode', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    await userEvent.click(
-      await screen.findByRole('switch', { name: 'Enable AI review' })
-    )
+    await selectMode('Shadow')
+    expect(
+      screen.queryByRole('switch', { name: 'Review every account first' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('spinbutton', { name: 'New account period (days)' })
+    ).not.toBeInTheDocument()
+    await selectMode('Enforce')
+    expect(
+      screen.getByRole('switch', { name: 'Review every account first' })
+    ).toBeVisible()
+    expect(
+      screen.getByRole('spinbutton', { name: 'New account period (days)' })
+    ).toBeVisible()
+    expect(screen.getByText('Groups reviewed first')).toBeVisible()
+  })
+
+  it('choosing a review mode without a model shows field errors and does not write options', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await selectMode('Shadow')
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
       expect(
-        screen.getByRole('textbox', { name: 'Review words' })
+        screen.getByRole('combobox', { name: 'Review model' })
       ).toHaveAttribute('aria-invalid', 'true')
     )
-    expect(
-      screen.getByRole('combobox', { name: 'Review model' })
-    ).toHaveAttribute('aria-invalid', 'true')
-    expect(screen.getByText('Enter at least one review word')).toBeVisible()
     expect(screen.getByText('Select a review model')).toBeVisible()
     const modelInput = screen.getByRole('combobox', { name: 'Review model' })
     expect(modelInput).toHaveAccessibleDescription(
@@ -354,14 +369,23 @@ describe('request policy settings', () => {
     expect(api.patch).not.toHaveBeenCalled()
   })
 
+  it('turning tool results off shows a warning that they can skip review', async () => {
+    await renderPolicies('/system-settings/request-policies/filtering')
+    await selectMode('Shadow')
+    expect(
+      screen.queryByText(/text labelled as a tool result can skip review/)
+    ).not.toBeInTheDocument()
+    await userEvent.click(
+      screen.getByRole('switch', { name: 'Review tool results' })
+    )
+    expect(
+      screen.getByText(/text labelled as a tool result can skip review/)
+    ).toBeVisible()
+  })
+
   it('a valid AI review setup writes exactly the changed content safety options', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    await userEvent.click(
-      await screen.findByRole('switch', { name: 'Enable AI review' })
-    )
-    fireEvent.change(screen.getByRole('textbox', { name: 'Review words' }), {
-      target: { value: 'knife' },
-    })
+    await selectMode('Shadow')
     fireEvent.change(screen.getByRole('combobox', { name: 'Review model' }), {
       target: { value: 'judge-model' },
     })
@@ -375,9 +399,8 @@ describe('request policy settings', () => {
         '/api/option/request_policy',
         {
           options: {
-            'content_safety_setting.review_enabled': 'true',
+            'content_safety_setting.review_mode': 'shadow',
             'content_safety_setting.review_group': 'default',
-            'content_safety_setting.review_words': 'knife',
             'content_safety_setting.review_model': 'judge-model',
             'content_safety_setting.review_timeout_seconds': '20',
           },
@@ -388,9 +411,7 @@ describe('request policy settings', () => {
 
   it('an out-of-range review timeout shows the allowed range and does not write options', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    await userEvent.click(
-      await screen.findByRole('switch', { name: 'Enable AI review' })
-    )
+    await selectMode('Shadow')
     const timeout = screen.getByRole('spinbutton', {
       name: 'Review timeout (seconds)',
     })
@@ -403,21 +424,15 @@ describe('request policy settings', () => {
 
   it('an invalid option revealed by saving stays open and focused while it is corrected', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    expect(
-      await screen.findByRole('switch', { name: 'Enable AI review' })
-    ).not.toBeChecked()
+    expect(await screen.findByRole('radio', { name: 'Off' })).toBeChecked()
     // The timeout is invalid while AI review is off, so saving must open the
     // group that holds it and focus the field.
-    await userEvent.click(
-      screen.getByRole('switch', { name: 'Enable AI review' })
-    )
+    await selectMode('Shadow')
     const timeout = screen.getByRole('spinbutton', {
       name: 'Review timeout (seconds)',
     })
     fireEvent.change(timeout, { target: { value: '61' } })
-    await userEvent.click(
-      screen.getByRole('switch', { name: 'Enable AI review' })
-    )
+    await selectMode('Off')
     expect(
       screen.queryByRole('group', { name: 'AI review options' })
     ).not.toBeInTheDocument()
@@ -446,15 +461,13 @@ describe('request policy settings', () => {
 
   it('toggling Enable filtering while an invalid option is revealed keeps focus on the toggle', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    const toggle = await screen.findByRole('switch', {
-      name: 'Enable AI review',
-    })
-    await userEvent.click(toggle)
+    await screen.findByRole('radio', { name: 'Off' })
+    await selectMode('Shadow')
     const timeout = screen.getByRole('spinbutton', {
       name: 'Review timeout (seconds)',
     })
     fireEvent.change(timeout, { target: { value: '61' } })
-    await userEvent.click(toggle)
+    await selectMode('Off')
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     const revealed = await screen.findByRole('spinbutton', {
       name: 'Review timeout (seconds)',
@@ -469,15 +482,13 @@ describe('request policy settings', () => {
 
   it('a save with nothing changed closes the options an invalid save revealed', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    const toggle = await screen.findByRole('switch', {
-      name: 'Enable AI review',
-    })
-    await userEvent.click(toggle)
+    await screen.findByRole('radio', { name: 'Off' })
+    await selectMode('Shadow')
     const timeout = screen.getByRole('spinbutton', {
       name: 'Review timeout (seconds)',
     })
     fireEvent.change(timeout, { target: { value: '61' } })
-    await userEvent.click(toggle)
+    await selectMode('Off')
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     const revealed = await screen.findByRole('spinbutton', {
       name: 'Review timeout (seconds)',
@@ -511,23 +522,19 @@ describe('request policy settings', () => {
 
   it('the AI review options are described by the fail-closed note', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    await userEvent.click(
-      await screen.findByRole('switch', { name: 'Enable AI review' })
-    )
+    await selectMode('Shadow')
     expect(
       screen.getByRole('group', { name: 'AI review options' })
     ).toHaveAccessibleDescription(
       expect.stringMatching(
-        /fails closed.*Not covered: Realtime sessions \(including their text events\), images, files and audio content\./
+        /fail closed.*Not covered: Realtime sessions \(including their text events\), images, files and audio content\./
       )
     )
   })
 
   it('numeric review options state their allowed range from one shared message', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    await userEvent.click(
-      await screen.findByRole('switch', { name: 'Enable AI review' })
-    )
+    await selectMode('Shadow')
     expect(screen.getByText(/Allowed range: 1–60/)).toBeVisible()
     expect(screen.getByText(/Allowed range: 0–604,800/)).toBeVisible()
     expect(screen.getByText(/Allowed range: 1–3,650/)).toBeVisible()
@@ -535,9 +542,7 @@ describe('request policy settings', () => {
 
   it('range hints reformat their numbers when the interface language changes', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    await userEvent.click(
-      await screen.findByRole('switch', { name: 'Enable AI review' })
-    )
+    await selectMode('Shadow')
     expect(screen.getByText(/Allowed range: 0–604,800/)).toBeVisible()
     try {
       i18next.addResourceBundle('fr', 'translation', {})
@@ -555,23 +560,20 @@ describe('request policy settings', () => {
 
   it('the AI review notes are one static note, not a live alert', async () => {
     await renderPolicies('/system-settings/request-policies/filtering')
-    await userEvent.click(
-      await screen.findByRole('switch', { name: 'Enable AI review' })
-    )
+    await selectMode('Shadow')
     const options = screen.getByRole('group', { name: 'AI review options' })
     expect(within(options).queryByRole('alert')).not.toBeInTheDocument()
-    expect(within(options).getByText(/fails closed/)).toBeVisible()
+    expect(within(options).getByText(/fail closed/)).toBeVisible()
     expect(within(options).getByText(/prompt injection/)).toBeVisible()
   })
 
-  it('changing only the review words still sends the review switch and group', async () => {
-    settings['content_safety_setting.review_enabled'] = true
+  it('changing only the review prompt still sends the review mode and group', async () => {
+    settings['content_safety_setting.review_mode'] = 'shadow'
     settings['content_safety_setting.review_model'] = 'judge-model'
-    settings['content_safety_setting.review_words'] = 'knife'
     await renderPolicies('/system-settings/request-policies/filtering')
     fireEvent.change(
-      await screen.findByRole('textbox', { name: 'Review words' }),
-      { target: { value: 'knife\ngun' } }
+      await screen.findByRole('textbox', { name: 'Review prompt' }),
+      { target: { value: 'Be strict' } }
     )
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() =>
@@ -579,9 +581,9 @@ describe('request policy settings', () => {
         '/api/option/request_policy',
         {
           options: {
-            'content_safety_setting.review_enabled': 'true',
+            'content_safety_setting.review_mode': 'shadow',
             'content_safety_setting.review_group': 'default',
-            'content_safety_setting.review_words': 'knife\ngun',
+            'content_safety_setting.review_prompt': 'Be strict',
           },
         }
       )

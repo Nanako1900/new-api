@@ -20,6 +20,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contentsafety"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -552,7 +553,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	// The proxy receives the client's own body, not midjRequest: modal and
 	// video actions copy the origin task's prompt only into the task record.
 	// With mode clear on it receives the prompt without the speed flags.
-	if setting.ShouldCheckPromptSensitive() {
+	if contentsafety.Active() {
 		text, err := taskRequestText(c)
 		if err != nil {
 			return service.MidjourneyErrorWrapper(constant.MjRequestError, "read_request_body_failed")

@@ -954,8 +954,9 @@ export const STATIC_I18N_KEYS = [
   'The monitor console is not enabled on this site.',
   'This monitor console address is not allowed to sign in.',
   'Could not sign in to the monitor console. Please try again.',
-  // Content safety log decisions and failure reasons (constants), the cleanup
-  // task label, and the backend message for a rejected log query.
+  // Content safety log decisions and failure reasons (constants), the reason
+  // stored for a text the review channel refused, the cleanup task label, and
+  // the backend messages for rejected log and stats queries.
   'Blocked by keyword',
   'Review passed',
   'Review rejected',
@@ -963,12 +964,21 @@ export const STATIC_I18N_KEYS = [
   'Review timed out',
   'No review channel available',
   'Unreadable review answer',
-  'Too many review windows',
+  'Review controversial',
+  'Review flagged',
+  'Review refused by the channel',
+  'The review channel refused to review this text',
+  'Too many pieces to review',
+  'Review queue full',
+  'Synchronous',
+  'Background',
+  'Shadow',
   'Review rate limit reached',
   'Review upstream error',
   'Client canceled',
   'Content safety log cleanup',
   'Invalid content safety log query',
+  'Invalid content safety stats query',
   // Cache subsidy campaigns: status, grant and skip-reason labels, row
   // actions, confirmation copy, form messages, the calculation task label, and
   // backend messages shown on the admin page and the dashboard card.

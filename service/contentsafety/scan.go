@@ -1,7 +1,7 @@
-// Package contentsafety holds the request-independent parts of the prompt
-// content safety check: keyword scanning, reviewer prompts and verdicts, the
-// verdict cache and review rate limits. relay/content_safety.go wires them
-// into the relay paths.
+// Package contentsafety holds the request-independent parts of the request
+// content check: zero-tolerance keyword scanning, review units, reviewer
+// prompts and verdicts, the verdict cache, review limits and the background
+// review queue. relay/content_safety.go wires them into the relay paths.
 package contentsafety
 
 import (
@@ -9,14 +9,16 @@ import (
 	"unicode"
 
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 // SnippetRadius is how many runes around a hit a stored log excerpt keeps.
 const SnippetRadius = 100
 
 // Window is a stretch of request text around one or more word hits. Offsets
-// are rune offsets into the scanned text; HitStart and HitEnd bound the first
-// hit inside the window.
+// are rune offsets into the normalized text; HitStart and HitEnd bound the
+// first hit inside the window.
 type Window struct {
 	Start    int
 	End      int
@@ -26,37 +28,34 @@ type Window struct {
 	Words    []string
 }
 
-// Result is the keyword verdict for one request text. Blocked windows reject
-// the request; Review windows need an AI verdict; both empty means pass.
-type Result struct {
-	Blocked []Window
-	Review  []Window
+// BlockListActive reports whether the zero-tolerance word list checks prompts.
+func BlockListActive() bool {
+	return setting.ShouldCheckPromptSensitive() && len(setting.SensitiveWords) > 0
 }
 
-// Scan matches text against the block list and, when no block word matches,
-// against the review list. Review windows extend reviewRadius runes around
-// each hit, and overlapping windows merge.
-func Scan(text string, blockWords, reviewWords []string, reviewRadius int) Result {
-	if len(blockWords) == 0 && len(reviewWords) == 0 {
-		return Result{}
+// Active reports whether any tier of the request content check runs.
+func Active() bool {
+	return BlockListActive() || operation_setting.GetContentSafetySetting().ReviewActive()
+}
+
+// Scan matches the normalized text against the block list, ignoring letter
+// case and the width and zero-width tricks NormalizeReviewText removes. Each
+// hit gets a window of SnippetRadius runes around it, and overlapping windows
+// merge.
+func Scan(text string, blockWords []string) []Window {
+	if len(blockWords) == 0 || text == "" {
+		return nil
 	}
-	lower := []rune(text)
-	for i, r := range lower {
+	runes := []rune(NormalizeReviewText(text))
+	lower := make([]rune, len(runes))
+	for i, r := range runes {
 		lower[i] = unicode.ToLower(r)
 	}
-	blockMatches := service.AcMatches(lower, blockWords)
-	reviewMatches := []service.AcMatch(nil)
-	if len(blockMatches) == 0 {
-		reviewMatches = service.AcMatches(lower, reviewWords)
+	words := make([]string, 0, len(blockWords))
+	for _, word := range blockWords {
+		words = append(words, NormalizeReviewText(word))
 	}
-	if len(blockMatches) == 0 && len(reviewMatches) == 0 {
-		return Result{}
-	}
-	runes := []rune(text)
-	if blocked := windowsAround(runes, blockMatches, SnippetRadius); len(blocked) > 0 {
-		return Result{Blocked: blocked}
-	}
-	return Result{Review: windowsAround(runes, reviewMatches, max(0, reviewRadius))}
+	return windowsAround(runes, service.AcMatches(lower, words), SnippetRadius)
 }
 
 // windowsAround turns hits into context windows. Overlapping hits merge while
@@ -70,7 +69,7 @@ func windowsAround(runes []rune, matches []service.AcMatch, radius int) []Window
 	windows := make([]Window, 0, len(matches))
 	for _, match := range matches {
 		wordLen := len([]rune(match.Word))
-		hitEnd := match.Pos + wordLen
+		hitEnd := min(len(runes), match.Pos+wordLen)
 		start := max(0, match.Pos-radius)
 		end := min(len(runes), hitEnd+radius)
 		if n := len(windows); n > 0 && start <= windows[n-1].End && max(windows[n-1].End, end)-windows[n-1].Start <= 4*radius+wordLen {

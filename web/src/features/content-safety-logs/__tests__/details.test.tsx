@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it } from 'vitest'
+import i18next from 'i18next'
+import { afterEach, expect, it } from 'vitest'
 
 import { ContentSafetyLogDetailsDialog } from '../components/content-safety-log-details-dialog'
 import type { ContentSafetyLog } from '../types'
@@ -46,6 +47,10 @@ const rejected: ContentSafetyLog = {
   latency_ms: 1350,
   review_tokens: 210,
   cache_hit: true,
+  mode: 'sync',
+  unit_count: 2,
+  truncated: false,
+  weight: 1,
 }
 
 async function openDetails(entry: ContentSafetyLog) {
@@ -81,7 +86,7 @@ it('opens a record whose hit words and snippets are not valid JSON and shows the
     hit_words: 'knife,gun',
     snippets: '["a knife"',
   })
-  const words = within(dialog).getByRole('list', { name: 'Hit words' })
+  const words = within(dialog).getByRole('list', { name: 'Categories' })
   expect(within(words).getByRole('listitem')).toHaveTextContent('knife,gun')
   const snippets = within(dialog).getByRole('list', { name: 'Snippets' })
   expect(within(snippets).getByRole('listitem')).toHaveTextContent('["a knife"')
@@ -109,7 +114,7 @@ it('keeps repeated snippets and de-duplicates repeated hit words', async () => {
     hit_words: '["knife","knife"]',
     snippets: '["same text","same text"]',
   })
-  const words = within(dialog).getByRole('list', { name: 'Hit words' })
+  const words = within(dialog).getByRole('list', { name: 'Categories' })
   expect(within(words).getAllByRole('listitem')).toHaveLength(1)
   const snippets = within(dialog).getByRole('list', { name: 'Snippets' })
   expect(within(snippets).getAllByRole('listitem')).toHaveLength(2)
@@ -158,4 +163,60 @@ it('omits the time of a record whose timestamp is not a number', async () => {
     created_at: Number.NaN,
   })
   expect(within(dialog).queryByText('Invalid Date')).not.toBeInTheDocument()
+})
+
+it('an AI review shows its mode, pieces reviewed and truncation', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    mode: 'async',
+    unit_count: 12,
+    truncated: true,
+  })
+  expect(within(dialog).getByText('Background')).toBeVisible()
+  expect(within(dialog).getByText('12')).toBeVisible()
+  expect(within(dialog).getByText('Truncated')).toBeVisible()
+})
+
+const REFUSED = 'The review channel refused to review this text'
+
+async function openDetailsInChinese(entry: ContentSafetyLog) {
+  i18next.addResourceBundle('zh', 'translation', {
+    [REFUSED]: '审核渠道拒绝审核此文本',
+    'Describes hurting a person': '不应出现的译文',
+  })
+  await i18next.changeLanguage('zh')
+  return openDetails(entry)
+}
+
+afterEach(async () => {
+  await i18next.changeLanguage('en')
+  i18next.removeResourceBundle('zh', 'translation')
+})
+
+it('translates the reason the gateway stores for a refused text', async () => {
+  const dialog = await openDetailsInChinese({
+    ...rejected,
+    decision: 'review_controversial',
+    failure_reason: 'refused',
+    ai_category: 'other',
+    ai_reason: REFUSED,
+  })
+  expect(within(dialog).getByText('审核渠道拒绝审核此文本')).toBeVisible()
+})
+
+it('shows a reason the reviewer wrote as stored, even when it matches a translation key', async () => {
+  const dialog = await openDetailsInChinese(rejected)
+  expect(within(dialog).getByText('Describes hurting a person')).toBeVisible()
+})
+
+it('a keyword block labels its matches as hit words, not categories', async () => {
+  const dialog = await openDetails({
+    ...rejected,
+    decision: 'keyword_blocked',
+    mode: '',
+  })
+  expect(within(dialog).getByRole('list', { name: 'Hit words' })).toBeVisible()
+  expect(
+    within(dialog).queryByRole('list', { name: 'Categories' })
+  ).not.toBeInTheDocument()
 })

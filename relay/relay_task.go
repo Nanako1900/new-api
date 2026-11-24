@@ -26,7 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/service/contentsafety"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -369,7 +369,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 7.5 内容安全审核：预扣之后、构建上游请求之前。重试时已审核过的请求直接跳过；
 	//     拒绝时由 executeTaskSubmissionWith 现有的 Billing.Refund 退还预扣。
-	if setting.ShouldCheckPromptSensitive() && !common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked) {
+	if contentsafety.Active() && !common.GetContextKeyBool(c, constant.ContextKeyContentSafetyChecked) {
 		text, err := taskRequestText(c)
 		if err != nil {
 			return nil, service.TaskErrorWrapperLocal(err, "read_request_body_failed", http.StatusBadRequest)

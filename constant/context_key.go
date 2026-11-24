@@ -92,9 +92,9 @@ const (
 	// ContextKeyTokenAuditSucceeded disambiguates token responses that exceed the audit buffer.
 	ContextKeyTokenAuditSucceeded ContextKey = "token_audit_succeeded"
 
-	// ContextKeyContentSafetyWindows holds review-word windows found before
-	// pre-consume, for EnforceContentSafety to review after it.
-	ContextKeyContentSafetyWindows ContextKey = "content_safety_windows"
+	// ContextKeyContentSafetyPlan holds the review the scan before pre-consume
+	// planned, for EnforceContentSafety to run after it.
+	ContextKeyContentSafetyPlan ContextKey = "content_safety_plan"
 	// ContextKeyContentSafetyChecked marks a request whose content review
 	// passed or found nothing to review, so retries do not review it again.
 	ContextKeyContentSafetyChecked ContextKey = "content_safety_checked"

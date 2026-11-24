@@ -449,7 +449,7 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
-	if isInternalUserIDOption(key) || key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey || slices.Contains(retiredTurnstileOptionKeys, key) {
+	if isInternalUserIDOption(key) || key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey || slices.Contains(retiredTurnstileOptionKeys, key) || slices.Contains(operation_setting.RetiredContentSafetyOptionKeys, key) {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()

@@ -11,7 +11,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/service/contentsafety"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 )
@@ -20,9 +21,14 @@ import (
 // provide the current request body through BodyStorage or BillingRequestInput;
 // channel retries retain the resulting billing session and pricing snapshot.
 func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
-	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
+	needContentCheck := contentsafety.Active()
+	// The AI review reads chat formats by message and skips embeddings and
+	// rerank; only the block list and the review of other formats read the
+	// combined text.
+	needCombineText := contentsafety.BlockListActive() ||
+		(operation_setting.GetContentSafetySetting().ReviewActive() && reviewReadsCombineText(info.Request))
 	meta := &types.TokenCountMeta{TokenType: types.TokenTypeTokenizer}
-	if info.Request != nil && (needSensitiveCheck || constant.CountToken) {
+	if info.Request != nil && (needCombineText || constant.CountToken) {
 		meta = info.Request.GetTokenCountMeta()
 	} else {
 		// Avoid building CombineText when only the pricing quantities are needed.
@@ -38,7 +44,7 @@ func PrepareRequestBilling(c *gin.Context, info *relaycommon.RelayInfo) *types.N
 		}
 	}
 
-	if needSensitiveCheck && meta != nil {
+	if needContentCheck && meta != nil {
 		if apiErr := scanRequestContent(c, info, meta.CombineText); apiErr != nil {
 			return apiErr
 		}

@@ -75,25 +75,36 @@ function PromptFilteringStatus(props: {
   control: Control<RequestChecksFormValues>
 }) {
   const { t } = useTranslation()
-  const [filtering, promptInspection, words, reviewEnabled] = useWatch({
+  const [filtering, promptInspection, words, reviewMode] = useWatch({
     control: props.control,
     name: [
       'CheckSensitiveEnabled',
       'CheckSensitiveOnPromptEnabled',
       'SensitiveWords',
-      'content_safety_setting.review_enabled',
+      'content_safety_setting.review_mode',
     ],
   })
-  const active =
-    filtering && promptInspection && (words.trim() !== '' || reviewEnabled)
+  const hardBlockActive = filtering && promptInspection && words.trim() !== ''
+  const reviewStatus = {
+    off: t('AI review is off.'),
+    shadow: t(
+      'AI review is in shadow mode: new messages are reviewed in the background and nothing is blocked.'
+    ),
+    enforce: t(
+      'AI review is enforcing: unsafe content is rejected, and accounts that need it are reviewed before the request goes upstream.'
+    ),
+  }[reviewMode]
   return (
     <Alert>
       <AlertDescription>
-        {active
-          ? t('Prompt text filtering is active with the current form values.')
-          : t(
-              'Prompt text filtering needs both switches enabled and a non-empty block word list or AI review.'
-            )}
+        <p>
+          {hardBlockActive
+            ? t('Hard-block words are active with the current form values.')
+            : t(
+                'Hard-block words need both switches enabled and a non-empty word list.'
+              )}
+        </p>
+        <p>{reviewStatus}</p>
       </AlertDescription>
     </Alert>
   )
@@ -167,7 +178,7 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
       <h3 className='text-sm font-medium'>{t('Request text filtering')}</h3>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Checks text extracted from supported requests against keywords, ignoring case. A match rejects the request before upstream processing and does not affect channel health. Images, audio and generated responses are not checked.'
+          'Checks text extracted from supported requests against the hard-block words, ignoring case. A match rejects the request before upstream processing and does not affect channel health. Images, audio and generated responses are not checked.'
         )}
       </p>
       <Form {...form}>
@@ -187,9 +198,7 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
                   <SettingsSwitchContent>
                     <FormLabel>{t('Enable filtering')}</FormLabel>
                     <FormDescription>
-                      {t(
-                        'Blocks messages when sensitive keywords are detected.'
-                      )}
+                      {t('Rejects messages that contain a hard-block word.')}
                     </FormDescription>
                   </SettingsSwitchContent>
                   <FormControl>
@@ -234,7 +243,7 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
             name='SensitiveWords'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('Block words')}</FormLabel>
+                <FormLabel>{t('Hard-block words (zero tolerance)')}</FormLabel>
                 <FormControl>
                   <Textarea
                     rows={12}
@@ -244,7 +253,7 @@ export function RequestChecksSection(props: RequestChecksSectionProps) {
                 </FormControl>
                 <FormDescription>
                   {t(
-                    'Each line represents one keyword. Leave blank to disable the list but keep the switch states.'
+                    'One word per line. Matched on normalized text (full-width letters and invisible characters are folded), so a match rejects the request at once. Leave blank to disable the list but keep the switch states.'
                   )}
                 </FormDescription>
                 <FormMessage />

@@ -23,7 +23,12 @@ import type { ApiResponse } from '@/features/profile/types'
 import { api } from '@/lib/api'
 import { createServerError } from '@/lib/server-error-message'
 
-import type { ContentSafetyLogFilters, ContentSafetyLogPage } from './types'
+import type {
+  ContentSafetyLogFilters,
+  ContentSafetyLogPage,
+  ContentSafetyStats,
+  ContentSafetyStatsHours,
+} from './types'
 
 export async function getContentSafetyLogs(
   params: ContentSafetyLogFilters
@@ -51,6 +56,30 @@ export function useContentSafetyLogs(
     queryFn: () => getContentSafetyLogs(params),
     enabled,
     placeholderData: keepPreviousData,
+    retry: false,
+  })
+}
+
+export async function getContentSafetyStats(
+  hours: ContentSafetyStatsHours
+): Promise<ContentSafetyStats> {
+  const response = await api.get<ApiResponse<ContentSafetyStats>>(
+    '/api/content_safety/stats',
+    { params: { hours } }
+  )
+  if (!response.data.success || !response.data.data) {
+    throw createServerError(
+      response.data,
+      t('Failed to load content safety statistics')
+    )
+  }
+  return response.data.data
+}
+
+export function useContentSafetyStats(hours: ContentSafetyStatsHours) {
+  return useQuery({
+    queryKey: ['content-safety-stats', hours],
+    queryFn: () => getContentSafetyStats(hours),
     retry: false,
   })
 }

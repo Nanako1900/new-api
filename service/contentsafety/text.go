@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -49,6 +50,20 @@ var mediaSignatures = []struct {
 	{"audio", 0, "RIFF", "WAVE"},
 	{"video", 0, "RIFF", "AVI "},
 	{"video", 0, "\x1A\x45\xDF\xA3", ""},
+}
+
+// invisibleRunes are format characters a reader never sees. They split a
+// word for a matcher without changing what a model reads, so they are dropped
+// from review text.
+var invisibleRunes = strings.NewReplacer("\u00ad", "", "\u200b", "", "\u200c", "", "\u200d", "", "\u2060", "", "\ufeff", "")
+
+// NormalizeReviewText is the text the checks read: NFKC folds full-width and
+// compatibility forms into their plain letters and digits, and invisible
+// format characters are removed. The reviewer receives exactly this text and
+// the verdict cache keys on it, so a disguised variant can never be judged
+// apart from the plain text it decodes to.
+func NormalizeReviewText(text string) string {
+	return invisibleRunes.Replace(norm.NFKC.String(text))
 }
 
 // CollectJSONText joins the text of a JSON document, one string per line:
