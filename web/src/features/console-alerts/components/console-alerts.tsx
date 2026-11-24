@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import { X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { ChevronDown, ChevronUp, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { MAIN_CONTENT_ID } from '@/components/layout/constants'
 import { RichContent } from '@/components/rich-content'
@@ -35,6 +36,7 @@ import {
   ALERT_DISMISSALS_STORAGE_KEY,
   useAlertDismissalStore,
 } from '@/stores/alert-dismissal-store'
+import { useNotificationStore } from '@/stores/notification-store'
 
 import { getActiveAlerts } from '../api'
 import {
@@ -48,6 +50,7 @@ import type { ConsoleAlert } from '../types'
 
 const ALERTS_STALE_TIME_MS = 60 * 1000
 const ALERTS_REFETCH_INTERVAL_MS = 5 * 60 * 1000
+const MAX_COLLAPSED_ALERTS = 2
 
 /**
  * Live site alerts pinned above every signed-in console page. Failed fetches
@@ -58,8 +61,12 @@ export function ConsoleAlerts() {
   const { t } = useTranslation()
   const dismissedKeys = useAlertDismissalStore((s) => s.dismissedKeys)
   const dismiss = useAlertDismissalStore((s) => s.dismiss)
+  const restore = useAlertDismissalStore((s) => s.restore)
   const prune = useAlertDismissalStore((s) => s.prune)
+  const markAlertsRead = useNotificationStore((s) => s.markAlertsRead)
+  const openNotificationTab = useNotificationStore((s) => s.openNotificationTab)
 
+  const [expanded, setExpanded] = useState(false)
   const sectionRef = useRef<HTMLElement>(null)
   // Position of the dismiss button just used; focus moves to the button now
   // in that position so keyboard users keep their place.
@@ -102,6 +109,13 @@ export function ConsoleAlerts() {
     [alerts, dismissedKeys]
   )
 
+  const hasOverflow = visibleAlerts.length > MAX_COLLAPSED_ALERTS
+  const displayedAlerts =
+    hasOverflow && !expanded
+      ? visibleAlerts.slice(0, MAX_COLLAPSED_ALERTS)
+      : visibleAlerts
+  const hiddenCount = visibleAlerts.length - displayedAlerts.length
+
   useLayoutEffect(() => {
     const index = pendingFocusIndex.current
     if (index === null) return
@@ -115,14 +129,29 @@ export function ConsoleAlerts() {
       return
     }
     document.querySelector<HTMLElement>(`#${MAIN_CONTENT_ID}`)?.focus()
-  }, [visibleAlerts])
+  }, [displayedAlerts])
 
   const handleDismiss = (alert: ConsoleAlert, button: HTMLButtonElement) => {
     const buttons = [
       ...(sectionRef.current?.querySelectorAll('[data-alert-dismiss]') ?? []),
     ]
     pendingFocusIndex.current = buttons.indexOf(button)
-    dismiss(getAlertDismissKey(alert))
+    const key = getAlertDismissKey(alert)
+    dismiss(key)
+    markAlertsRead([key])
+    toast.info(
+      t('Alert dismissed. You can view it anytime in the notification bell.'),
+      {
+        action: {
+          label: t('Undo'),
+          onClick: () => restore(key),
+        },
+        cancel: {
+          label: t('View in bell'),
+          onClick: () => openNotificationTab('alerts'),
+        },
+      }
+    )
   }
 
   if (visibleAlerts.length === 0) return null
@@ -133,7 +162,7 @@ export function ConsoleAlerts() {
       aria-label={t('Site alerts')}
       className='flex max-h-[40svh] shrink-0 flex-col gap-2 overflow-y-auto px-3 pt-3 sm:px-4'
     >
-      {visibleAlerts.map((alert) => {
+      {displayedAlerts.map((alert) => {
         const LevelIcon = ALERT_LEVEL_ICON[alert.level]
         const titleId = `console-alert-${alert.id}-title`
         const contentId = `console-alert-${alert.id}-content`
@@ -166,6 +195,7 @@ export function ConsoleAlerts() {
                   variant='ghost'
                   size='icon-xs'
                   data-alert-dismiss=''
+                  title={t('Dismiss — still viewable in notifications')}
                   aria-label={t('Dismiss alert')}
                   aria-describedby={alert.title ? titleId : contentId}
                   onClick={(event) => handleDismiss(alert, event.currentTarget)}
@@ -177,6 +207,32 @@ export function ConsoleAlerts() {
           </Alert>
         )
       })}
+      {hasOverflow ? (
+        <div className='flex justify-center'>
+          <Button
+            type='button'
+            variant='ghost'
+            size='xs'
+            aria-expanded={expanded}
+            className='text-muted-foreground hover:text-foreground h-7 gap-1 text-xs'
+            onClick={() => setExpanded((prev) => !prev)}
+          >
+            {expanded ? (
+              <>
+                <ChevronUp aria-hidden='true' className='size-3.5' />
+                {t('Show fewer alerts')}
+              </>
+            ) : (
+              <>
+                <ChevronDown aria-hidden='true' className='size-3.5' />
+                {hiddenCount === 1
+                  ? t('Show 1 more alert')
+                  : t('Show {{count}} more alerts', { count: hiddenCount })}
+              </>
+            )}
+          </Button>
+        </div>
+      ) : null}
     </section>
   )
 }

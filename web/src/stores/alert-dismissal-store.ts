@@ -30,6 +30,10 @@ type AlertDismissalState = {
   /** Keys from getAlertDismissKey: one per dismissed alert version. */
   dismissedKeys: string[]
   dismiss: (key: string) => void
+  /** Restore a dismissed alert so it pins back to the top banner. */
+  restore: (key: string) => void
+  /** Restore all dismissed alerts to the top banner. */
+  restoreAll: () => void
   /** Keep only the keys of alert versions the server still returns as live. */
   prune: (liveKeys: string[]) => void
 }
@@ -47,6 +51,15 @@ export const useAlertDismissalStore = create<AlertDismissalState>()(
         const keys = get().dismissedKeys
         if (keys.includes(key)) return
         set({ dismissedKeys: [...keys, key] })
+      },
+      restore: (key) => {
+        const keys = get().dismissedKeys
+        if (!keys.includes(key)) return
+        set({ dismissedKeys: keys.filter((existing) => existing !== key) })
+      },
+      restoreAll: () => {
+        if (get().dismissedKeys.length === 0) return
+        set({ dismissedKeys: [] })
       },
       prune: (liveKeys) => {
         const keys = get().dismissedKeys

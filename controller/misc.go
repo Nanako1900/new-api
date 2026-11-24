@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -198,10 +199,18 @@ func GetNotice(c *gin.Context) {
 	serveRevalidatedJSON(c, notice)
 }
 
-// GetAlerts returns the console alerts that are live right now.
+// GetAlerts returns the console alerts that are live right now, or all
+// published (live + expired) alerts when include_expired is true.
 func GetAlerts(c *gin.Context) {
+	includeExpired, _ := strconv.ParseBool(c.Query("include_expired"))
+	now := time.Now()
 	common.OptionMapRWMutex.RLock()
-	alerts := console_setting.GetActiveAlerts(time.Now())
+	var alerts []console_setting.Alert
+	if includeExpired {
+		alerts = console_setting.GetPublishedAlerts(now)
+	} else {
+		alerts = console_setting.GetActiveAlerts(now)
+	}
 	common.OptionMapRWMutex.RUnlock()
 	common.ApiSuccess(c, alerts)
 }
