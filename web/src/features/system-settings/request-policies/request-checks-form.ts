@@ -50,6 +50,7 @@ export const CONTENT_SAFETY_INT_LIMITS = {
   async_queue_size: { min: 10, max: 100000 },
   async_rate_per_minute: { min: 1, max: 10000 },
   review_sample_percent: { min: 1, max: 100 },
+  review_budget_per_minute: { min: 0, max: 100000 },
   pass_log_percent: { min: 0, max: 100 },
   sync_new_user_days: { min: 0, max: 365 },
   cache_ttl_seconds: { min: 0, max: 604800 },
@@ -117,6 +118,7 @@ export function createRequestChecksSchema(
         async_queue_size: integerWithin('async_queue_size'),
         async_rate_per_minute: integerWithin('async_rate_per_minute'),
         review_sample_percent: integerWithin('review_sample_percent'),
+        review_budget_per_minute: integerWithin('review_budget_per_minute'),
         pass_log_percent: integerWithin('pass_log_percent'),
         sync_all: z.boolean(),
         sync_new_user_days: integerWithin('sync_new_user_days'),
@@ -188,6 +190,8 @@ export function requestChecksFormValues(
         settings['content_safety_setting.async_rate_per_minute'],
       review_sample_percent:
         settings['content_safety_setting.review_sample_percent'],
+      review_budget_per_minute:
+        settings['content_safety_setting.review_budget_per_minute'],
       pass_log_percent: settings['content_safety_setting.pass_log_percent'],
       sync_all: settings['content_safety_setting.sync_all'],
       sync_new_user_days: settings['content_safety_setting.sync_new_user_days'],

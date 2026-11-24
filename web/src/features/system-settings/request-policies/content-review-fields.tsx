@@ -420,7 +420,14 @@ function ReviewOptionFields(props: {
           name='review_sample_percent'
           label={t('Shadow review sample (%)')}
           description={t(
-            "Share of an account's new text that shadow mode reviews. Its text is always in or out of the sample, so resent history is not drawn again. Enforce mode reviews everything."
+            "Share of an account's new text that shadow mode always reviews. Its text is always in or out of the sample, so resent history is not drawn again. Enforce mode reviews everything."
+          )}
+        />
+        <ReviewNumberField
+          name='review_budget_per_minute'
+          label={t('Shadow review budget per minute (pieces)')}
+          description={t(
+            'When the sample is below 100%, shadow mode also reviews text out of the sample until this many pieces a minute, counted over all accounts (and nodes, with Redis). Quiet minutes are reviewed in full, busy ones keep to the sample. 0 turns it off.'
           )}
         />
         <ReviewNumberField

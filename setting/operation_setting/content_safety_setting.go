@@ -12,7 +12,8 @@ import (
 // Content review modes. Shadow reviews new messages in the background and
 // never blocks; enforce reviews the same way but holds the requests of
 // accounts that need a synchronous review until the reviewer answers.
-// Shadow reviews read the review_sample_percent sample of new text.
+// Shadow reviews read the review_sample_percent sample of new text, and the
+// rest while review_budget_per_minute lasts.
 const (
 	ContentReviewModeOff     = "off"
 	ContentReviewModeShadow  = "shadow"
@@ -45,14 +46,18 @@ type ContentSafetySetting struct {
 	AsyncQueueSize           int    `json:"async_queue_size"`
 	AsyncRatePerMinute       int    `json:"async_rate_per_minute"`
 	PassLogPercent           int    `json:"pass_log_percent"`
-	// ReviewSamplePercent is the share of new text a shadow review reads;
-	// enforced reviews read all of it (see contentsafety.SampledForReview).
-	ReviewSamplePercent int    `json:"review_sample_percent"`
-	SyncAll             bool   `json:"sync_all"`
-	SyncNewUserDays     int    `json:"sync_new_user_days"`
-	SyncGroups          string `json:"sync_groups"`
-	CacheTTLSeconds     int    `json:"cache_ttl_seconds"`
-	LogRetentionDays    int    `json:"log_retention_days"`
+	// ReviewSamplePercent is the share of new text a shadow review always
+	// reads; enforced reviews read all of it (see contentsafety.SampledForReview).
+	ReviewSamplePercent int `json:"review_sample_percent"`
+	// ReviewBudgetPerMinute, when above 0, has shadow reviews read the text
+	// out of the sample too while the minute's budget of pieces lasts: all
+	// of it off-peak, the sample and the budget at peak.
+	ReviewBudgetPerMinute int    `json:"review_budget_per_minute"`
+	SyncAll               bool   `json:"sync_all"`
+	SyncNewUserDays       int    `json:"sync_new_user_days"`
+	SyncGroups            string `json:"sync_groups"`
+	CacheTTLSeconds       int    `json:"cache_ttl_seconds"`
+	LogRetentionDays      int    `json:"log_retention_days"`
 	// ReviewEngine reads ReviewModel's replies. EscalateModel, when set, is
 	// asked again with llm_json through EscalateGroup about every unit the
 	// first reviewer found controversial or refused, and its verdict wins.
@@ -138,6 +143,7 @@ var contentSafetyIntOptions = []contentSafetyIntOption{
 	{"async_rate_per_minute", 1, 10000, func(s *ContentSafetySetting) *int { return &s.AsyncRatePerMinute }},
 	{"pass_log_percent", 0, 100, func(s *ContentSafetySetting) *int { return &s.PassLogPercent }},
 	{"review_sample_percent", 1, 100, func(s *ContentSafetySetting) *int { return &s.ReviewSamplePercent }},
+	{"review_budget_per_minute", 0, 100000, func(s *ContentSafetySetting) *int { return &s.ReviewBudgetPerMinute }},
 	{"sync_new_user_days", 0, 365, func(s *ContentSafetySetting) *int { return &s.SyncNewUserDays }},
 	{"cache_ttl_seconds", 0, 604800, func(s *ContentSafetySetting) *int { return &s.CacheTTLSeconds }},
 	{"log_retention_days", 1, 3650, func(s *ContentSafetySetting) *int { return &s.LogRetentionDays }},
