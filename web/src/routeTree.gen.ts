@@ -56,6 +56,7 @@ import { Route as AuthenticatedTaskPluginsIndexRouteImport } from './routes/_aut
 import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authenticated/usage-logs/index'
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedUsageLogsAuditRouteImport } from './routes/_authenticated/usage-logs/audit'
+import { Route as AuthenticatedUsageLogsContentRiskRouteImport } from './routes/_authenticated/usage-logs/content-risk'
 import { Route as AuthenticatedUsageLogsContentSafetyRouteImport } from './routes/_authenticated/usage-logs/content-safety'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
@@ -331,6 +332,12 @@ const AuthenticatedUsageLogsAuditRoute =
     path: '/usage-logs/audit',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedUsageLogsContentRiskRoute =
+  AuthenticatedUsageLogsContentRiskRouteImport.update({
+    id: '/usage-logs/content-risk',
+    path: '/usage-logs/content-risk',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedUsageLogsContentSafetyRoute =
   AuthenticatedUsageLogsContentSafetyRouteImport.update({
     id: '/usage-logs/content-safety',
@@ -487,6 +494,7 @@ export interface FileRoutesByFullPath {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/usage-logs/content-risk': typeof AuthenticatedUsageLogsContentRiskRoute
   '/usage-logs/content-safety': typeof AuthenticatedUsageLogsContentSafetyRoute
   '/cache-subsidies/': typeof AuthenticatedCacheSubsidiesIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
@@ -554,6 +562,7 @@ export interface FileRoutesByTo {
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/usage-logs/content-risk': typeof AuthenticatedUsageLogsContentRiskRoute
   '/usage-logs/content-safety': typeof AuthenticatedUsageLogsContentSafetyRoute
   '/cache-subsidies': typeof AuthenticatedCacheSubsidiesIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
@@ -625,6 +634,7 @@ export interface FileRoutesById {
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/usage-logs/audit': typeof AuthenticatedUsageLogsAuditRoute
+  '/_authenticated/usage-logs/content-risk': typeof AuthenticatedUsageLogsContentRiskRoute
   '/_authenticated/usage-logs/content-safety': typeof AuthenticatedUsageLogsContentSafetyRoute
   '/_authenticated/cache-subsidies/': typeof AuthenticatedCacheSubsidiesIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
@@ -695,6 +705,7 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/usage-logs/content-risk'
     | '/usage-logs/content-safety'
     | '/cache-subsidies/'
     | '/channels/'
@@ -762,6 +773,7 @@ export interface FileRouteTypes {
     | '/models/$section'
     | '/usage-logs/$section'
     | '/usage-logs/audit'
+    | '/usage-logs/content-risk'
     | '/usage-logs/content-safety'
     | '/cache-subsidies'
     | '/channels'
@@ -832,6 +844,7 @@ export interface FileRouteTypes {
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/usage-logs/audit'
+    | '/_authenticated/usage-logs/content-risk'
     | '/_authenticated/usage-logs/content-safety'
     | '/_authenticated/cache-subsidies/'
     | '/_authenticated/channels/'
@@ -1220,6 +1233,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedUsageLogsAuditRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/usage-logs/content-risk': {
+      id: '/_authenticated/usage-logs/content-risk'
+      path: '/usage-logs/content-risk'
+      fullPath: '/usage-logs/content-risk'
+      preLoaderRoute: typeof AuthenticatedUsageLogsContentRiskRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/usage-logs/content-safety': {
       id: '/_authenticated/usage-logs/content-safety'
       path: '/usage-logs/content-safety'
@@ -1470,6 +1490,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedUsageLogsAuditRoute: typeof AuthenticatedUsageLogsAuditRoute
+  AuthenticatedUsageLogsContentRiskRoute: typeof AuthenticatedUsageLogsContentRiskRoute
   AuthenticatedUsageLogsContentSafetyRoute: typeof AuthenticatedUsageLogsContentSafetyRoute
   AuthenticatedCacheSubsidiesIndexRoute: typeof AuthenticatedCacheSubsidiesIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
@@ -1500,6 +1521,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedUsageLogsAuditRoute: AuthenticatedUsageLogsAuditRoute,
+  AuthenticatedUsageLogsContentRiskRoute:
+    AuthenticatedUsageLogsContentRiskRoute,
   AuthenticatedUsageLogsContentSafetyRoute:
     AuthenticatedUsageLogsContentSafetyRoute,
   AuthenticatedCacheSubsidiesIndexRoute: AuthenticatedCacheSubsidiesIndexRoute,

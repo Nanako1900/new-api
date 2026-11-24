@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 // Verdict levels. Controversial is the band between: the text is let through
@@ -20,7 +21,7 @@ const (
 
 // Categories are the policy areas a non-safe verdict names. They follow what
 // gets an AI provider account banned; anything else is "other".
-var Categories = []string{"sexual_minors", "weapons", "terrorism", "self_harm", "cyber_attack", "fraud", "sexual", "other"}
+var Categories = operation_setting.ContentSafetyCategories
 
 // DefaultReviewPrompt is used when the review_prompt option is blank.
 const DefaultReviewPrompt = `You are a content safety reviewer for an AI API gateway that forwards requests to AI model providers. Decide whether forwarding the text could get the gateway's provider accounts banned for violating their usage policies.
@@ -43,7 +44,8 @@ var ErrUnparseable = errors.New("content review reply is not a complete verdict"
 // from a malformed request or a server failure.
 func IsDecisionErrorCode(code string) bool {
 	switch types.ErrorCode(code) {
-	case types.ErrorCodeSensitiveWordsDetected, types.ErrorCodeContentReviewRejected, types.ErrorCodeContentReviewUnavailable:
+	case types.ErrorCodeSensitiveWordsDetected, types.ErrorCodeContentReviewRejected, types.ErrorCodeContentReviewUnavailable,
+		types.ErrorCodeContentRiskBlocked, types.ErrorCodeContentRiskThrottled:
 		return true
 	}
 	return false

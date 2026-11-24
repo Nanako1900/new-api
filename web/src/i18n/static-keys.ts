@@ -979,6 +979,33 @@ export const STATIC_I18N_KEYS = [
   'Content safety log cleanup',
   'Invalid content safety log query',
   'Invalid content safety stats query',
+  'Invalid content risk profile query',
+  // Account risk: verdict category labels (constants), level labels, and the
+  // confirmation copy of the risk profile row actions.
+  'Sexual content involving minors',
+  'Weapons',
+  'Terrorism',
+  'Self-harm',
+  'Cyber attacks',
+  'Fraud',
+  'Sexual content',
+  'Other',
+  'Normal',
+  'Watched',
+  'Restricted',
+  'Blocked',
+  'Reset score and unblock?',
+  'The risk score of {{username}} returns to 0 and a block is lifted, so the account can use the API again. The verdict counts are kept.',
+  'Reset score and unblock',
+  'Risk score reset',
+  'Trust this account?',
+  '{{username}} will never be reviewed first, throttled or blocked. Its requests are still reviewed in the background and logged.',
+  'Trust account',
+  'Account trusted',
+  'Stop trusting this account?',
+  'The risk level of {{username}} takes effect again.',
+  'Stop trusting',
+  'Account no longer trusted',
   // Cache subsidy campaigns: status, grant and skip-reason labels, row
   // actions, confirmation copy, form messages, the calculation task label, and
   // backend messages shown on the admin page and the dashboard card.

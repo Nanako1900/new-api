@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/contentsafety"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -89,7 +90,7 @@ func setupResponsesWSRequestTest(t *testing.T) (*model.User, *model.Token) {
 		setting.ModelRequestRateLimitMutex.Unlock()
 		require.NoError(t, sqlDB.Close())
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.UserRiskProfile{}))
 	// The shared in-memory limiter outlives each database fixture. Give every
 	// user a separate quota bucket, including when the tests run with -count.
 	user := &model.User{Id: 5062000 + int(responsesWSTestUserSequence.Add(1)), Username: "responses-ws-user", Status: common.UserStatusEnabled, Group: "default", Quota: 1000, AuthVersion: 1}
@@ -188,9 +189,11 @@ func TestResponsesWSRequestRunnerRefreshesBillingContextAndCleansBody(t *testing
 }
 
 func TestResponsesWSRequestRunnerRejectsRevokedCredentials(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	for _, tc := range []struct {
 		name   string
 		status int
+		code   types.ErrorCode
 		update func(*testing.T, *model.User, *model.Token)
 	}{
 		{name: "disabled token", status: http.StatusUnauthorized, update: func(t *testing.T, _ *model.User, token *model.Token) {
@@ -211,6 +214,18 @@ func TestResponsesWSRequestRunnerRejectsRevokedCredentials(t *testing.T) {
 		{name: "changed IP restriction", status: http.StatusForbidden, update: func(t *testing.T, _ *model.User, token *model.Token) {
 			require.NoError(t, model.DB.Model(token).Update("allow_ips", "198.51.100.0/24").Error)
 		}},
+		// Every response.create event passes the content risk gate, so an
+		// account blocked during the connection loses it at the next event.
+		{name: "account blocked by its content risk", status: http.StatusForbidden, code: types.ErrorCodeContentRiskBlocked, update: func(t *testing.T, user *model.User, _ *model.Token) {
+			cfg := operation_setting.GetContentSafetySetting()
+			previousMode := cfg.ReviewMode
+			cfg.ReviewMode = operation_setting.ContentReviewModeEnforce
+			t.Cleanup(func() { cfg.ReviewMode = previousMode })
+			_, err := model.RecordRiskEvent(model.RiskEvent{UserId: user.Id, Unsafe: true, Points: 40, ZeroTolerance: true, Category: "sexual_minors",
+				Now: time.Now().Unix(), Thresholds: contentsafety.RiskThresholds(cfg.Bounded())})
+			require.NoError(t, err)
+			contentsafety.ForgetRiskState(user.Id)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			user, token := setupResponsesWSRequestTest(t)
@@ -224,6 +239,9 @@ func TestResponsesWSRequestRunnerRejectsRevokedCredentials(t *testing.T) {
 			})
 			require.NotNil(t, apiError)
 			assert.Equal(t, tc.status, apiError.StatusCode)
+			if tc.code != "" {
+				assert.Equal(t, tc.code, apiError.GetErrorCode())
+			}
 			assert.False(t, called)
 			assert.NotContains(t, apiError.Error(), token.Key)
 		})

@@ -8,45 +8,22 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/model"
 	"github.com/samber/hot"
 )
 
-const (
-	accountAgeCacheTTL = 10 * time.Minute
-	// sightingTTL is how long a user's earlier sight of a flagged unit is
-	// remembered, so history resent on every turn is recorded once.
-	sightingTTL = 7 * 24 * time.Hour
-)
+// sightingTTL is how long a user's earlier sight of a flagged unit is
+// remembered, so history resent on every turn is recorded once.
+const sightingTTL = 7 * 24 * time.Hour
 
 var (
-	accountOnce      sync.Once
-	accountCreatedAt *hot.HotCache[int, int64]
-	userSightings    *hot.HotCache[string, bool]
+	accountOnce   sync.Once
+	userSightings *hot.HotCache[string, bool]
 )
 
 func accountCaches() {
 	accountOnce.Do(func() {
-		accountCreatedAt = hot.NewHotCache[int, int64](hot.LRU, 100000).WithTTL(accountAgeCacheTTL).WithJanitor().Build()
 		userSightings = hot.NewHotCache[string, bool](hot.LRU, 200000).WithTTL(sightingTTL).WithJanitor().Build()
 	})
-}
-
-// AccountCreatedAt is when userId registered, in Unix seconds, or 0 when the
-// account has no registration time, which callers read as an established
-// account. It never changes, so each node reads it once per
-// accountAgeCacheTTL.
-func AccountCreatedAt(userId int) (int64, error) {
-	accountCaches()
-	if createdAt, ok, _ := accountCreatedAt.Get(userId); ok {
-		return createdAt, nil
-	}
-	var createdAt int64
-	if err := model.DB.Model(&model.User{}).Where("id = ?", userId).Select("COALESCE(created_at, 0)").Scan(&createdAt).Error; err != nil {
-		return 0, err
-	}
-	accountCreatedAt.Set(userId, createdAt)
-	return createdAt, nil
 }
 
 // FirstSighting reports whether userId sends the unit with key for the first

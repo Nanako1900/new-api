@@ -20,6 +20,7 @@ import { createSectionRegistry } from '../utils/section-registry'
 import { ChannelHealthSection } from './channel-health-section'
 import type { RequestPolicySettings } from './defaults'
 import { RequestChecksSection } from './request-checks-section'
+import { RiskSection } from './risk-section'
 import { RoutingPolicySection } from './routing-section'
 
 const POLICY_SECTIONS = [
@@ -28,6 +29,13 @@ const POLICY_SECTIONS = [
     titleKey: 'Request checks',
     build: (settings: RequestPolicySettings) => (
       <RequestChecksSection defaultValues={settings} />
+    ),
+  },
+  {
+    id: 'risk',
+    titleKey: 'Risk control',
+    build: (settings: RequestPolicySettings) => (
+      <RiskSection defaultValues={settings} />
     ),
   },
   {

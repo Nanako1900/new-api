@@ -16,8 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useNavigate } from '@tanstack/react-router'
 import type { Row } from '@tanstack/react-table'
 import {
+  Gauge,
   Pencil,
   Trash2,
   Power,
@@ -49,8 +51,14 @@ import {
 import { AffiliateAdminDialog } from '@/features/affiliate/components/affiliate-admin-dialog'
 import type { AdminUserManageAction } from '@/features/auth/secure-verification'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
 import { handleServerError } from '@/lib/handle-server-error'
 import { AuthOperationError } from '@/lib/secure-verification'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
 import {
@@ -75,6 +83,28 @@ interface DataTableRowActionsProps {
   row: Row<User>
 }
 
+// Opens the account risk page filtered to this user. Rendered only for
+// viewers with the audit read permission that the risk page requires.
+function RiskProfileMenuItem(props: { userId: number }) {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  return (
+    <DropdownMenuItem
+      onClick={() =>
+        void navigate({
+          to: '/usage-logs/content-risk',
+          search: { user_id: props.userId },
+        })
+      }
+    >
+      {t('Risk profile')}
+      <DropdownMenuShortcut>
+        <Gauge size={16} />
+      </DropdownMenuShortcut>
+    </DropdownMenuItem>
+  )
+}
+
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
@@ -90,6 +120,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [affiliateDialogOpen, setAffiliateDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const canViewRisk = useAuthStore((state) =>
+    hasPermission(
+      state.auth.user,
+      ADMIN_PERMISSION_RESOURCES.AUDIT,
+      ADMIN_PERMISSION_ACTIONS.READ
+    )
+  )
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -280,6 +317,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         <DropdownMenuItem onClick={() => setAffiliateDialogOpen(true)}>
           {t('Manage referrals')}
         </DropdownMenuItem>
+
+        {/* Root accounts are never scored. */}
+        {canViewRisk && !isRoot && <RiskProfileMenuItem userId={user.id} />}
 
         <DropdownMenuSeparator />
 

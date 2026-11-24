@@ -46,28 +46,44 @@ export const CONTENT_SAFETY_INT_LIMITS = {
   sync_new_user_days: { min: 0, max: 365 },
   cache_ttl_seconds: { min: 0, max: 604800 },
   log_retention_days: { min: 1, max: 3650 },
+  // Risk control section.
+  risk_half_life_hours: { min: 1, max: 8760 },
+  risk_points_unsafe: { min: 0, max: 1000 },
+  risk_points_controversial: { min: 0, max: 1000 },
+  risk_watch_threshold: { min: 1, max: 100000 },
+  risk_restrict_threshold: { min: 1, max: 100000 },
+  risk_block_threshold: { min: 1, max: 100000 },
+  risk_restrict_rpm: { min: 1, max: 10000 },
 } as const
 
 export type ContentSafetyIntField = keyof typeof CONTENT_SAFETY_INT_LIMITS
 
 export type RequestChecksSettings = FilteringSettings & ContentSafetySettings
 
+/** An integer within the backend bounds of a content safety option. */
+export function contentSafetyIntegerSchema(
+  t: TFunction,
+  locale: string | undefined,
+  field: ContentSafetyIntField
+) {
+  const limits = CONTENT_SAFETY_INT_LIMITS[field]
+  const message = t('Enter an integer from {{min}} to {{max}}', {
+    min: formatNumber(limits.min, locale),
+    max: formatNumber(limits.max, locale),
+  })
+  return z
+    .number()
+    .int(message)
+    .min(limits.min, message)
+    .max(limits.max, message)
+}
+
 export function createRequestChecksSchema(
   t: TFunction,
   locale: string | undefined
 ) {
-  const integerWithin = (field: ContentSafetyIntField) => {
-    const limits = CONTENT_SAFETY_INT_LIMITS[field]
-    const message = t('Enter an integer from {{min}} to {{max}}', {
-      min: formatNumber(limits.min, locale),
-      max: formatNumber(limits.max, locale),
-    })
-    return z
-      .number()
-      .int(message)
-      .min(limits.min, message)
-      .max(limits.max, message)
-  }
+  const integerWithin = (field: ContentSafetyIntField) =>
+    contentSafetyIntegerSchema(t, locale, field)
   return z.object({
     CheckSensitiveEnabled: z.boolean(),
     CheckSensitiveOnPromptEnabled: z.boolean(),

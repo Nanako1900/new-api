@@ -22,6 +22,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/contentsafety"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -1408,4 +1410,108 @@ func TestGetContentSafetyStatsSumsDecisionsForAuditors(t *testing.T) {
 		assert.False(t, result.Success, query)
 		assert.Equal(t, "Invalid content safety stats query", result.MessageKey, query)
 	}
+}
+
+// newContentRiskTestRouter mirrors the production chain of the risk profile
+// routes.
+func newContentRiskTestRouter() *gin.Engine {
+	router := gin.New()
+	risk := router.Group("/api/content_safety/risk_profiles", middleware.DisableCache(), middleware.AdminAuth(), middleware.RequirePermission(authz.AuditRead))
+	risk.GET("", GetContentRiskProfiles)
+	risk.GET("/:user_id", GetContentRiskProfile)
+	risk.POST("/:user_id/reset", ResetContentRiskProfile)
+	risk.POST("/:user_id/trust", TrustContentRiskProfile)
+	return router
+}
+
+// Administrators with the audit read permission see the risk of every
+// account below root and reset or trust accounts below their own role. A
+// write drops the cached risk state the content risk gate reads.
+func TestContentRiskProfilesForAuditors(t *testing.T) {
+	admin, pat := setupAccessTokenAudit(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.UserRiskProfile{}))
+	thresholds := contentsafety.RiskThresholds(operation_setting.GetContentSafetySetting().Bounded())
+	block := func(userId int) {
+		_, err := model.RecordRiskEvent(model.RiskEvent{UserId: userId, Unsafe: true, Points: 40, ZeroTolerance: true, Category: "sexual_minors", Now: time.Now().Unix(), Thresholds: thresholds})
+		require.NoError(t, err)
+		contentsafety.ForgetRiskState(userId)
+	}
+	rootToken := "root-risk-token"
+	base := 8000000 + int(time.Now().UnixMicro()%100000)*10
+	root := &model.User{Id: base + 1, Username: "root-risk", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &rootToken, AffCode: "root-risk"}
+	member := &model.User{Id: base + 2, Username: "member-risk", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "member-risk"}
+	peer := &model.User{Id: base + 3, Username: "peer-risk", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "peer-risk"}
+	quiet := &model.User{Id: base + 4, Username: "quiet-risk", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, AuthVersion: 1, AffCode: "quiet-risk"}
+	for _, user := range []*model.User{root, member, peer, quiet} {
+		require.NoError(t, model.DB.Create(user).Error)
+	}
+	block(root.Id)
+	block(member.Id)
+	block(peer.Id)
+	router := newContentRiskTestRouter()
+	const path = "/api/content_safety/risk_profiles"
+
+	assert.Equal(t, http.StatusForbidden, auditRequest(router, "GET", path, pat).Code)
+	grantAuditRead(t, admin.Id)
+	var list struct {
+		Success    bool
+		MessageKey string `json:"message_key"`
+		Data       struct {
+			Items []contentRiskProfileItem
+			Total int
+		}
+	}
+	require.NoError(t, common.Unmarshal(auditRequest(router, "GET", path+"?level=blocked", pat).Body.Bytes(), &list))
+	require.True(t, list.Success)
+	names := []string{}
+	for _, item := range list.Data.Items {
+		names = append(names, item.Username)
+	}
+	assert.ElementsMatch(t, []string{"member-risk", "peer-risk"}, names, "root accounts are hidden from administrators")
+	assert.Equal(t, model.RiskLevelBlocked, list.Data.Items[0].Level)
+	assert.Equal(t, "zero_tolerance:sexual_minors", list.Data.Items[0].BlockedReason)
+	assert.Equal(t, 40.0, list.Data.Items[0].Score)
+	require.NoError(t, common.Unmarshal(auditRequest(router, "GET", path+"?level=blocked", rootToken).Body.Bytes(), &list))
+	assert.Equal(t, 3, list.Data.Total, "root sees every account")
+	for _, query := range []string{"level=bogus", "view=both", "trusted=yes", "user_id=0", "user_id=x", "username=" + strings.Repeat("u", 65)} {
+		list.MessageKey = ""
+		require.NoError(t, common.Unmarshal(auditRequest(router, "GET", path+"?"+query, pat).Body.Bytes(), &list))
+		assert.False(t, list.Success, query)
+		assert.Equal(t, "Invalid content risk profile query", list.MessageKey, query)
+	}
+
+	var one struct {
+		Success    bool
+		MessageKey string `json:"message_key"`
+		Data       contentRiskProfileItem
+	}
+	require.NoError(t, common.Unmarshal(auditRequest(router, "GET", fmt.Sprintf("%s/%d", path, quiet.Id), pat).Body.Bytes(), &one))
+	require.True(t, one.Success)
+	assert.Equal(t, contentRiskProfileItem{UserId: quiet.Id, Username: "quiet-risk", Level: model.RiskLevelNormal, ShadowLevel: model.RiskLevelNormal}, one.Data, "an account without a profile has a zero one")
+	for _, target := range []string{fmt.Sprint(root.Id), fmt.Sprint(base + 9)} {
+		require.NoError(t, common.Unmarshal(auditRequest(router, "GET", path+"/"+target, pat).Body.Bytes(), &one))
+		assert.Equal(t, "User does not exist", one.MessageKey, target)
+	}
+	require.NoError(t, common.Unmarshal(accessTokenRequest(router, "POST", fmt.Sprintf("%s/%d/reset", path, peer.Id), pat, "", "").Body.Bytes(), &one))
+	assert.Equal(t, "No permission to update users of same or higher permission level", one.MessageKey)
+	require.NoError(t, common.Unmarshal(accessTokenRequest(router, "POST", fmt.Sprintf("%s/%d/trust", path, member.Id), pat, "", `{}`).Body.Bytes(), &one))
+	assert.Equal(t, "Invalid parameters", one.MessageKey)
+
+	for _, trusted := range []bool{true, false} {
+		require.NoError(t, common.Unmarshal(accessTokenRequest(router, "POST", fmt.Sprintf("%s/%d/trust", path, member.Id), pat, "", fmt.Sprintf(`{"trusted":%t}`, trusted)).Body.Bytes(), &one))
+		require.True(t, one.Success)
+		assert.Equal(t, trusted, one.Data.Trusted)
+	}
+
+	state, err := contentsafety.LoadRiskState(member.Id)
+	require.NoError(t, err)
+	require.True(t, state.Blocked)
+	require.NoError(t, common.Unmarshal(accessTokenRequest(router, "POST", fmt.Sprintf("%s/%d/reset", path, member.Id), pat, "", "").Body.Bytes(), &one))
+	require.True(t, one.Success)
+	assert.Equal(t, model.RiskLevelNormal, one.Data.Level)
+	assert.False(t, one.Data.Blocked)
+	assert.Equal(t, 1, one.Data.UnsafeCount, "a reset keeps the counts")
+	state, err = contentsafety.LoadRiskState(member.Id)
+	require.NoError(t, err)
+	assert.False(t, state.Blocked, "the gate reads the reset on the next request")
 }

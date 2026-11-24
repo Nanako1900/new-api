@@ -85,6 +85,10 @@ type ContentSafetyLog struct {
 	UnitCount       int    `json:"unit_count"`
 	Truncated       bool   `json:"truncated"`
 	Weight          int    `json:"weight"`
+	// RiskDelta is the risk points the decision added to the account, and
+	// RiskScore the account's rounded score after them.
+	RiskDelta int `json:"risk_delta"`
+	RiskScore int `json:"risk_score"`
 }
 
 type ContentSafetyLogFilter struct {
@@ -311,7 +315,8 @@ func MigrateContentSafetyLogs() error {
 		request_path String, decision String, failure_reason String, hit_words String, snippets String,
 		ai_category String, ai_reason String, review_channel_id Int64, review_model String,
 		latency_ms Int64, review_tokens Int64, cache_hit UInt8,
-		mode String, unit_count Int64, truncated UInt8, weight Int64 DEFAULT 1
+		mode String, unit_count Int64, truncated UInt8, weight Int64 DEFAULT 1,
+		risk_delta Int64, risk_score Int64
 	) ENGINE = MergeTree()
 	PARTITION BY toYYYYMM(toDateTime(created_at))
 	ORDER BY (created_at, event_id)`).Error; err != nil {
@@ -319,7 +324,7 @@ func MigrateContentSafetyLogs() error {
 	}
 	// Tables created before these columns get them; IF NOT EXISTS makes a
 	// second start a no-op.
-	for _, column := range []string{"mode String", "unit_count Int64", "truncated UInt8", "weight Int64 DEFAULT 1"} {
+	for _, column := range []string{"mode String", "unit_count Int64", "truncated UInt8", "weight Int64 DEFAULT 1", "risk_delta Int64", "risk_score Int64"} {
 		if err := LOG_DB.Exec("ALTER TABLE content_safety_logs ADD COLUMN IF NOT EXISTS " + column).Error; err != nil {
 			return err
 		}

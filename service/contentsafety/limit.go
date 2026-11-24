@@ -28,6 +28,7 @@ var (
 	limiterOnce  sync.Once
 	syncLimiter  common.InMemoryRateLimiter
 	asyncLimiter common.InMemoryRateLimiter
+	riskLimiter  common.InMemoryRateLimiter
 
 	forceSyncOnce  sync.Once
 	forceSyncUsers *hot.HotCache[int, bool]
@@ -104,6 +105,12 @@ func AllowReview(ctx context.Context, userId, perMinute, units int) bool {
 	return allowPerMinute(ctx, "content_safety:review_rate", &syncLimiter, userId, perMinute, units)
 }
 
+// AllowRiskRequest counts one request of a restricted account against
+// perMinute. Without Redis, or while Redis fails, the count is per node.
+func AllowRiskRequest(ctx context.Context, userId, perMinute int) bool {
+	return allowPerMinute(ctx, "content_safety:risk_rate", &riskLimiter, userId, perMinute, 1)
+}
+
 // AllowEnqueue counts units background reviews of userId against perMinute,
 // so one account cannot fill the shared queue.
 func AllowEnqueue(ctx context.Context, userId, perMinute, units int) bool {
@@ -126,6 +133,7 @@ func allowPerMinute(ctx context.Context, prefix string, local *common.InMemoryRa
 	limiterOnce.Do(func() {
 		syncLimiter.Init(5 * time.Minute)
 		asyncLimiter.Init(5 * time.Minute)
+		riskLimiter.Init(5 * time.Minute)
 	})
 	for range units {
 		if !local.Request(strconv.Itoa(userId), perMinute, 60) {
