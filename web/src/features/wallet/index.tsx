@@ -42,6 +42,7 @@ import {
   useCreemPayment,
   useWaffoPayment,
   useWaffoPancakePayment,
+  useNanakoPayPayment,
 } from './hooks'
 import {
   getDefaultPaymentType,
@@ -105,6 +106,8 @@ export function Wallet(props: WalletProps) {
   const { processing: waffoProcessing, processWaffoPayment } = useWaffoPayment()
   const { processing: pancakeProcessing, processWaffoPancakePayment } =
     useWaffoPancakePayment()
+  const { processing: nanakoPayProcessing, processNanakoPayPayment } =
+    useNanakoPayPayment()
 
   // Fetch and refresh user data
   const fetchUser = useCallback(async () => {
@@ -233,6 +236,7 @@ export function Wallet(props: WalletProps) {
         regular: processPayment,
         waffo: processWaffoPayment,
         waffoPancake: processWaffoPancakePayment,
+        nanakoPay: processNanakoPayPayment,
       }
     )
 
@@ -364,6 +368,7 @@ export function Wallet(props: WalletProps) {
                   enableWaffoPancakeTopup={
                     topupInfo?.enable_waffo_pancake_topup
                   }
+                  enableNanakoPayTopup={topupInfo?.enable_nanako_pay_topup}
                 />
               </div>
 
@@ -397,7 +402,12 @@ export function Wallet(props: WalletProps) {
         paymentAmount={paymentAmount}
         paymentMethod={selectedPaymentMethod}
         calculating={calculating}
-        processing={processing || waffoProcessing || pancakeProcessing}
+        processing={
+          processing ||
+          waffoProcessing ||
+          pancakeProcessing ||
+          nanakoPayProcessing
+        }
         discountRate={discountRate}
         promotion={promotion}
         stripeQuote={stripeQuote}
@@ -405,6 +415,7 @@ export function Wallet(props: WalletProps) {
         stripeFeeEnabled={topupInfo?.stripe_fee_enabled}
         stripeFeePercent={topupInfo?.stripe_fee_percent}
         stripeFeeFixedCNY={topupInfo?.stripe_fee_fixed_cny}
+        nanakoPayCurrency={topupInfo?.nanako_pay_currency}
       />
 
       <TransferDialog

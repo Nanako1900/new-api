@@ -70,6 +70,35 @@ describe('payment amount routing', () => {
     expect(amount).toBe(18.75)
     expect(calls).toEqual(['waffo:120'])
   })
+
+  test('uses the dedicated Nanako Pay amount calculator', async () => {
+    const calls: string[] = []
+    const amount = await requestPaymentAmount(10, PAYMENT_TYPES.NANAKO_PAY, {
+      regular: async () => {
+        calls.push('regular')
+        return { success: true, data: '1' }
+      },
+      stripe: async () => {
+        calls.push('stripe')
+        return { success: true, data: '2' }
+      },
+      waffo: async () => {
+        calls.push('waffo')
+        return { success: true, data: '3' }
+      },
+      waffoPancake: async () => {
+        calls.push('pancake')
+        return { success: true, data: '4' }
+      },
+      nanakoPay: async (request) => {
+        calls.push(`nanakoPay:${request.amount}`)
+        return { success: true, data: '68.00' }
+      },
+    })
+
+    expect(amount).toBe(68)
+    expect(calls).toEqual(['nanakoPay:10'])
+  })
 })
 
 const gbpQuote = {

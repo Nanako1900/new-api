@@ -98,12 +98,33 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
+	enableNanakoPay := isNanakoPayTopUpEnabled()
+	if enableNanakoPay {
+		hasNanakoPay := false
+		for _, method := range payMethods {
+			if method["type"] == model.PaymentMethodNanakoPay {
+				hasNanakoPay = true
+				break
+			}
+		}
+
+		if !hasNanakoPay {
+			payMethods = append(payMethods, map[string]string{
+				"name":      "Nanako Pay",
+				"type":      model.PaymentMethodNanakoPay,
+				"color":     "#0EA5E9",
+				"min_topup": strconv.Itoa(setting.NanakoPayMinTopUp),
+			})
+		}
+	}
+
 	data := gin.H{
 		"enable_online_topup":              isEpayTopUpEnabled(),
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
 		"enable_waffo_pancake_topup":       enableWaffoPancake,
+		"enable_nanako_pay_topup":          enableNanakoPay,
 		"enable_redemption":                complianceConfirmed,
 		"payment_compliance_confirmed":     complianceConfirmed,
 		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
@@ -126,6 +147,8 @@ func GetTopUpInfo(c *gin.Context) {
 		"stripe_fee_fixed_cny":     operation_setting.GetPaymentSetting().StripeFeeFixedCNY,
 		"waffo_min_topup":          setting.WaffoMinTopUp,
 		"waffo_pancake_min_topup":  setting.WaffoPancakeMinTopUp,
+		"nanako_pay_min_topup":     setting.NanakoPayMinTopUp,
+		"nanako_pay_currency":      setting.GetNanakoPayCurrency(),
 		"amount_options":           operation_setting.GetPaymentSetting().AmountOptions,
 		"promotion_tiers":          operation_setting.TopUpPromotionTiers(),
 		"discount":                 operation_setting.GetPaymentSetting().AmountDiscount,

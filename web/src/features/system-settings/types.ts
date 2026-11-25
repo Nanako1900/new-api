@@ -368,6 +368,15 @@ export type BillingSettings = {
   // section (saved via /api/option/waffo-pancake/save).
   WaffoPancakeStoreID: string
   WaffoPancakeProductID: string
+  NanakoPayBaseURL: string
+  NanakoPayAppID: string
+  NanakoPayApiSecret: string
+  NanakoPayWebhookSecret: string
+  NanakoPayMode: string
+  NanakoPayCurrency: string
+  NanakoPayUnitPrice: number
+  NanakoPayMinTopUp: number
+  NanakoPayReturnURL: string
   'checkin_setting.enabled': boolean
   'checkin_setting.min_quota': number
   'checkin_setting.max_quota': number

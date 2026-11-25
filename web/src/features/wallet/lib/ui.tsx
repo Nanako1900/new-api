@@ -154,6 +154,13 @@ export function getPaymentIcon(
           />
         </span>
       )
+    case PAYMENT_TYPES.NANAKO_PAY:
+      return (
+        <CreditCard
+          className={className}
+          style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.NANAKO_PAY] }}
+        />
+      )
     default:
       return <CreditCard className={className} />
   }

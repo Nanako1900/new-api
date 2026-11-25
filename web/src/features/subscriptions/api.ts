@@ -155,6 +155,13 @@ export async function paySubscriptionWaffoPancake(
   return res.data
 }
 
+export async function paySubscriptionNanakoPay(
+  data: SubscriptionPayRequest
+): Promise<SubscriptionPayResponse> {
+  const res = await api.post('/api/subscription/nanako-pay/pay', data)
+  return res.data
+}
+
 export async function paySubscriptionBalance(
   data: SubscriptionPayRequest
 ): Promise<SubscriptionPayResponse> {

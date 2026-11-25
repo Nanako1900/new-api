@@ -139,7 +139,7 @@ func TestAffiliateDatabaseMatrix(t *testing.T) {
 }
 
 func testAffiliatePayments(t *testing.T) {
-	providers := []string{PaymentProviderEpay, PaymentProviderStripe, PaymentProviderCreem, PaymentProviderWaffo, PaymentProviderWaffoPancake}
+	providers := []string{PaymentProviderEpay, PaymentProviderStripe, PaymentProviderCreem, PaymentProviderWaffo, PaymentProviderWaffoPancake, PaymentProviderNanakoPay}
 	for _, provider := range providers {
 		t.Run(provider, func(t *testing.T) {
 			order := TopUp{UserId: 101, Amount: 2, Money: 20, TradeNo: "cashback-" + provider, PaymentProvider: provider, PaymentMethod: provider, Status: common.TopUpStatusPending, AffiliateCurrency: "USD"}
@@ -170,6 +170,8 @@ func testAffiliatePayments(t *testing.T) {
 				pay = func(p AffiliatePayment) error { return RechargeCreem(order.TradeNo, "", "", "", p) }
 			case PaymentProviderWaffo:
 				pay = func(p AffiliatePayment) error { return RechargeWaffo(order.TradeNo, "", p) }
+			case PaymentProviderNanakoPay:
+				pay = func(p AffiliatePayment) error { _, err := RechargeNanakoPay(order.TradeNo, "", p); return err }
 			default:
 				pay = func(p AffiliatePayment) error { return RechargeWaffoPancake(order.TradeNo, p) }
 			}

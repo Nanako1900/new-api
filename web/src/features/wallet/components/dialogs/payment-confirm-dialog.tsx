@@ -30,6 +30,7 @@ import {
   formatCurrency,
   formatTopupCredit,
   getPaymentIcon,
+  isNanakoPayPayment,
   isStripePayment,
 } from '../../lib'
 import type {
@@ -54,6 +55,7 @@ interface PaymentConfirmDialogProps {
   stripeFeeEnabled?: boolean
   stripeFeePercent?: number
   stripeFeeFixedCNY?: number
+  nanakoPayCurrency?: string
 }
 
 export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
@@ -61,6 +63,17 @@ export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   useSystemConfigStore((state) => state.config.currency)
   const isStripe = isStripePayment(props.paymentMethod?.type || '')
+  const isNanakoPay = isNanakoPayPayment(props.paymentMethod?.type || '')
+  const formatPayAmount = (value: number) => {
+    if (isNanakoPay && props.nanakoPayCurrency) {
+      const zeroDecimal = props.nanakoPayCurrency === 'JPY'
+      return formatCurrencyAmount(value, props.nanakoPayCurrency, {
+        locale,
+        ...(zeroDecimal ? { digitsLarge: 0, digitsSmall: 0 } : {}),
+      })
+    }
+    return formatCurrency(value)
+  }
   const discountRate = props.discountRate ?? DEFAULT_DISCOUNT_RATE
   const hasDiscount =
     !isStripe && discountRate > 0 && discountRate < 1 && props.paymentAmount > 0
@@ -125,11 +138,11 @@ export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
             ) : (
               <div className='flex items-baseline gap-2'>
                 <span className='text-2xl font-semibold'>
-                  {formatCurrency(props.paymentAmount)}
+                  {formatPayAmount(props.paymentAmount)}
                 </span>
                 {hasDiscount && (
                   <span className='text-muted-foreground text-sm line-through'>
-                    {formatCurrency(originalAmount)}
+                    {formatPayAmount(originalAmount)}
                   </span>
                 )}
               </div>
@@ -192,7 +205,7 @@ export function PaymentConfirmDialog(props: PaymentConfirmDialogProps) {
             <div className='flex items-center justify-between text-sm'>
               <span className='text-muted-foreground'>{t('You save')}</span>
               <span className='font-semibold text-green-600'>
-                {formatCurrency(discountAmount)}
+                {formatPayAmount(discountAmount)}
               </span>
             </div>
           </div>

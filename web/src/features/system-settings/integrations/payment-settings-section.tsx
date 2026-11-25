@@ -231,6 +231,23 @@ const paymentSchema = z.object({
   WaffoPancakeMerchantID: z.string(),
   WaffoPancakePrivateKey: z.string(),
   WaffoPancakeReturnURL: z.string(),
+  NanakoPayBaseURL: z.string().refine((value) => {
+    const trimmed = value.trim()
+    if (!trimmed) return true
+    return /^https?:\/\//.test(trimmed)
+  }, 'Provide a valid URL starting with http:// or https://'),
+  NanakoPayAppID: z.string(),
+  NanakoPayApiSecret: z.string(),
+  NanakoPayWebhookSecret: z.string(),
+  NanakoPayMode: z.enum(['live', 'test']),
+  NanakoPayCurrency: z.enum(['CNY', 'USD', 'EUR', 'GBP', 'HKD', 'JPY']),
+  NanakoPayUnitPrice: z.coerce.number().min(0),
+  NanakoPayMinTopUp: z.coerce.number().min(1),
+  NanakoPayReturnURL: z.string().refine((value) => {
+    const trimmed = value.trim()
+    if (!trimmed) return true
+    return /^https?:\/\//.test(trimmed)
+  }, 'Provide a valid URL starting with http:// or https://'),
 })
 
 type PaymentFormValues = z.infer<typeof paymentSchema>
@@ -534,6 +551,15 @@ export function PaymentSettingsSection({
       WaffoPancakeReturnURL: removeTrailingSlash(
         values.WaffoPancakeReturnURL.trim()
       ),
+      NanakoPayBaseURL: removeTrailingSlash(values.NanakoPayBaseURL.trim()),
+      NanakoPayAppID: values.NanakoPayAppID.trim(),
+      NanakoPayApiSecret: values.NanakoPayApiSecret.trim(),
+      NanakoPayWebhookSecret: values.NanakoPayWebhookSecret.trim(),
+      NanakoPayMode: values.NanakoPayMode,
+      NanakoPayCurrency: values.NanakoPayCurrency,
+      NanakoPayUnitPrice: values.NanakoPayUnitPrice,
+      NanakoPayMinTopUp: values.NanakoPayMinTopUp,
+      NanakoPayReturnURL: values.NanakoPayReturnURL.trim(),
     }
 
     const initial = {
@@ -590,6 +616,17 @@ export function PaymentSettingsSection({
       WaffoPancakeReturnURL: removeTrailingSlash(
         initialRef.current.WaffoPancakeReturnURL.trim()
       ),
+      NanakoPayBaseURL: removeTrailingSlash(
+        initialRef.current.NanakoPayBaseURL.trim()
+      ),
+      NanakoPayAppID: initialRef.current.NanakoPayAppID.trim(),
+      NanakoPayApiSecret: initialRef.current.NanakoPayApiSecret.trim(),
+      NanakoPayWebhookSecret: initialRef.current.NanakoPayWebhookSecret.trim(),
+      NanakoPayMode: initialRef.current.NanakoPayMode,
+      NanakoPayCurrency: initialRef.current.NanakoPayCurrency,
+      NanakoPayUnitPrice: initialRef.current.NanakoPayUnitPrice,
+      NanakoPayMinTopUp: initialRef.current.NanakoPayMinTopUp,
+      NanakoPayReturnURL: initialRef.current.NanakoPayReturnURL.trim(),
     }
 
     const updates: Array<{ key: string; value: string | number | boolean }> = []
@@ -836,6 +873,69 @@ export function PaymentSettingsSection({
       updates.push({ key: 'WaffoPayMethods', value: sanitized.WaffoPayMethods })
     }
 
+    if (sanitized.NanakoPayBaseURL !== initial.NanakoPayBaseURL) {
+      updates.push({
+        key: 'NanakoPayBaseURL',
+        value: sanitized.NanakoPayBaseURL,
+      })
+    }
+
+    if (sanitized.NanakoPayAppID !== initial.NanakoPayAppID) {
+      updates.push({ key: 'NanakoPayAppID', value: sanitized.NanakoPayAppID })
+    }
+
+    if (
+      sanitized.NanakoPayApiSecret &&
+      sanitized.NanakoPayApiSecret !== initial.NanakoPayApiSecret
+    ) {
+      updates.push({
+        key: 'NanakoPayApiSecret',
+        value: sanitized.NanakoPayApiSecret,
+      })
+    }
+
+    if (
+      sanitized.NanakoPayWebhookSecret &&
+      sanitized.NanakoPayWebhookSecret !== initial.NanakoPayWebhookSecret
+    ) {
+      updates.push({
+        key: 'NanakoPayWebhookSecret',
+        value: sanitized.NanakoPayWebhookSecret,
+      })
+    }
+
+    if (sanitized.NanakoPayMode !== initial.NanakoPayMode) {
+      updates.push({ key: 'NanakoPayMode', value: sanitized.NanakoPayMode })
+    }
+
+    if (sanitized.NanakoPayCurrency !== initial.NanakoPayCurrency) {
+      updates.push({
+        key: 'NanakoPayCurrency',
+        value: sanitized.NanakoPayCurrency,
+      })
+    }
+
+    if (sanitized.NanakoPayUnitPrice !== initial.NanakoPayUnitPrice) {
+      updates.push({
+        key: 'NanakoPayUnitPrice',
+        value: sanitized.NanakoPayUnitPrice,
+      })
+    }
+
+    if (sanitized.NanakoPayMinTopUp !== initial.NanakoPayMinTopUp) {
+      updates.push({
+        key: 'NanakoPayMinTopUp',
+        value: sanitized.NanakoPayMinTopUp,
+      })
+    }
+
+    if (sanitized.NanakoPayReturnURL !== initial.NanakoPayReturnURL) {
+      updates.push({
+        key: 'NanakoPayReturnURL',
+        value: sanitized.NanakoPayReturnURL,
+      })
+    }
+
     const hasWaffoPancakeChanges =
       sanitized.WaffoPancakeMerchantID !== initial.WaffoPancakeMerchantID ||
       sanitized.WaffoPancakePrivateKey.length > 0 ||
@@ -1015,13 +1115,14 @@ export function PaymentSettingsSection({
           />
           <Tabs defaultValue='general' className='min-w-0'>
             <div className='overflow-x-auto pb-1'>
-              <TabsList className='grid min-w-[44rem] grid-cols-6'>
+              <TabsList className='grid min-w-[52rem] grid-cols-7'>
                 <TabsTrigger value='general'>{t('General')}</TabsTrigger>
                 <TabsTrigger value='epay'>Epay</TabsTrigger>
                 <TabsTrigger value='stripe'>{t('Stripe')}</TabsTrigger>
                 <TabsTrigger value='creem'>Creem</TabsTrigger>
                 <TabsTrigger value='waffo-pancake'>Waffo Pancake</TabsTrigger>
                 <TabsTrigger value='waffo'>Waffo</TabsTrigger>
+                <TabsTrigger value='nanako-pay'>Nanako Pay</TabsTrigger>
               </TabsList>
             </div>
 
@@ -2090,6 +2191,276 @@ export function PaymentSettingsSection({
                 payMethods={waffoPayMethods}
                 onPayMethodsChange={setWaffoPayMethods}
               />
+            </TabsContent>
+
+            <TabsContent
+              value='nanako-pay'
+              className={paymentTabContentClassName}
+            >
+              <div className='space-y-4'>
+                <div>
+                  <h3 className='text-lg font-medium'>Nanako Pay</h3>
+                  <p className='text-muted-foreground text-sm'>
+                    {t(
+                      'Configure Nanako Pay credentials and checkout settings. Webhook URL: <ServerAddress>/api/nanako-pay/webhook'
+                    )}
+                  </p>
+                </div>
+
+                <div className='grid gap-6 md:grid-cols-2'>
+                  <FormField
+                    control={form.control}
+                    name='NanakoPayAppID'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('App ID')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder='papp_...'
+                            {...field}
+                            onChange={(event) =>
+                              field.onChange(event.target.value)
+                            }
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'App ID issued by Nanako Pay, starting with papp_'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='NanakoPayMode'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Mode')}</FormLabel>
+                        <Select
+                          value={field.value}
+                          onValueChange={(value) => {
+                            if (value) field.onChange(value)
+                          }}
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              <SelectItem value='live'>
+                                {t('Live mode')}
+                              </SelectItem>
+                              <SelectItem value='test'>
+                                {t('Test mode')}
+                              </SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {t(
+                            'Must match the mode of the Nanako Pay app (live or test)'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='NanakoPayApiSecret'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('API Secret')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            type='password'
+                            placeholder={t('Enter API secret')}
+                            autoComplete='new-password'
+                            {...field}
+                            onChange={(event) =>
+                              field.onChange(event.target.value)
+                            }
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Nanako Pay API signing secret (leave blank unless updating)'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='NanakoPayWebhookSecret'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Webhook Secret')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            type='password'
+                            placeholder={t('Enter webhook secret')}
+                            autoComplete='new-password'
+                            {...field}
+                            onChange={(event) =>
+                              field.onChange(event.target.value)
+                            }
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Webhook signing secret (leave blank unless updating; comma-separated secrets supported during rotation)'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='NanakoPayCurrency'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Currency')}</FormLabel>
+                        <Select
+                          value={field.value}
+                          onValueChange={(value) => {
+                            if (value) field.onChange(value)
+                          }}
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              <SelectItem value='CNY'>CNY</SelectItem>
+                              <SelectItem value='USD'>USD</SelectItem>
+                              <SelectItem value='EUR'>EUR</SelectItem>
+                              <SelectItem value='GBP'>GBP</SelectItem>
+                              <SelectItem value='HKD'>HKD</SelectItem>
+                              <SelectItem value='JPY'>JPY</SelectItem>
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {t(
+                            'Settlement currency for Nanako Pay orders (Alipay accepts CNY only; Stripe accepts all six)'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='NanakoPayUnitPrice'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          {t('Unit price (currency / USD)')}
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            type='number'
+                            step='0.01'
+                            min={0}
+                            {...safeNumberFieldProps(field)}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Price per base credit unit in the selected Nanako Pay currency'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='NanakoPayMinTopUp'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Minimum Top-up')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            type='number'
+                            min={1}
+                            {...safeNumberFieldProps(field)}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t('Minimum top-up amount for Nanako Pay')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='NanakoPayBaseURL'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('API Base URL')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder='https://api.nanako.org/api/v1/pay'
+                            {...field}
+                            onChange={(event) =>
+                              field.onChange(event.target.value)
+                            }
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Nanako Pay API base URL (defaults to https://api.nanako.org/api/v1/pay)'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name='NanakoPayReturnURL'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Return URL')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder='https://example.com/wallet?show_history=true'
+                          {...field}
+                          onChange={(event) =>
+                            field.onChange(event.target.value)
+                          }
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          'Optional return URL after checkout (must match an allowed return origin on your Nanako Pay app)'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </TabsContent>
           </Tabs>
         </SettingsForm>

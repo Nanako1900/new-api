@@ -60,6 +60,15 @@ const defaults: PaymentValues = {
   CreemWebhookSecret: '',
   CreemTestMode: false,
   CreemProducts: '[]',
+  NanakoPayBaseURL: 'https://api.nanako.org/api/v1/pay',
+  NanakoPayAppID: '',
+  NanakoPayApiSecret: '',
+  NanakoPayWebhookSecret: '',
+  NanakoPayMode: 'live',
+  NanakoPayCurrency: 'CNY',
+  NanakoPayUnitPrice: 1,
+  NanakoPayMinTopUp: 1,
+  NanakoPayReturnURL: '',
 }
 
 function PaymentFixture(props: { values: PaymentValues }) {
@@ -237,6 +246,28 @@ it('requires an exchange rate and saves GBP conversion settings before enabling 
     { key: 'payment_setting.stripe_gbp_exchange_rate', value: 8.4 },
     { key: 'payment_setting.stripe_fee_enabled', value: true },
     { key: 'payment_setting.stripe_gbp_enabled', value: true },
+  ])
+})
+
+it('saves Nanako Pay credentials and checkout settings from its tab', async () => {
+  const request = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const user = await openEpayTab()
+  await user.click(screen.getByRole('tab', { name: 'Nanako Pay' }))
+  await user.type(
+    screen.getByRole('textbox', { name: 'App ID' }),
+    'papp_06e8gq3vh1b2r9kd5x7n4tmwc0'
+  )
+  await user.type(screen.getByLabelText('API Secret'), 'api_secret_123')
+  await user.type(screen.getByLabelText('Webhook Secret'), 'wh_secret_456')
+  await user.click(screen.getByRole('button', { name: 'Save all settings' }))
+
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(3))
+  expect(request.mock.calls.map((call) => call[1])).toEqual([
+    { key: 'NanakoPayAppID', value: 'papp_06e8gq3vh1b2r9kd5x7n4tmwc0' },
+    { key: 'NanakoPayApiSecret', value: 'api_secret_123' },
+    { key: 'NanakoPayWebhookSecret', value: 'wh_secret_456' },
   ])
 })
 

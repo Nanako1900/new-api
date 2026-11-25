@@ -166,6 +166,23 @@ const BILLING_SECTIONS = [
           CreemWebhookSecret: settings.CreemWebhookSecret,
           CreemTestMode: settings.CreemTestMode,
           CreemProducts: settings.CreemProducts,
+          NanakoPayBaseURL:
+            settings.NanakoPayBaseURL || 'https://api.nanako.org/api/v1/pay',
+          NanakoPayAppID: settings.NanakoPayAppID ?? '',
+          NanakoPayApiSecret: settings.NanakoPayApiSecret ?? '',
+          NanakoPayWebhookSecret: settings.NanakoPayWebhookSecret ?? '',
+          NanakoPayMode: settings.NanakoPayMode === 'test' ? 'test' : 'live',
+          NanakoPayCurrency:
+            settings.NanakoPayCurrency === 'USD' ||
+            settings.NanakoPayCurrency === 'EUR' ||
+            settings.NanakoPayCurrency === 'GBP' ||
+            settings.NanakoPayCurrency === 'HKD' ||
+            settings.NanakoPayCurrency === 'JPY'
+              ? settings.NanakoPayCurrency
+              : 'CNY',
+          NanakoPayUnitPrice: settings.NanakoPayUnitPrice ?? 1,
+          NanakoPayMinTopUp: settings.NanakoPayMinTopUp ?? 1,
+          NanakoPayReturnURL: settings.NanakoPayReturnURL ?? '',
         }}
         waffoDefaultValues={{
           WaffoEnabled: settings.WaffoEnabled ?? false,

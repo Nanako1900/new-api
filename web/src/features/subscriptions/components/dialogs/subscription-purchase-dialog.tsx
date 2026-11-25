@@ -37,6 +37,7 @@ import {
   paySubscriptionCreem,
   paySubscriptionEpay,
   paySubscriptionWaffoPancake,
+  paySubscriptionNanakoPay,
   paySubscriptionBalance,
 } from '../../api'
 import { formatDuration, formatResetPeriod } from '../../lib'
@@ -54,6 +55,7 @@ interface Props {
   enableStripe?: boolean
   enableCreem?: boolean
   enableWaffoPancake?: boolean
+  enableNanakoPay?: boolean
   enableOnlineTopUp?: boolean
   epayMethods?: PaymentMethod[]
   purchaseLimit?: number
@@ -83,9 +85,12 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const hasCreem = props.enableCreem && !!plan.creem_product_id
   const hasWaffoPancake =
     props.enableWaffoPancake && !!plan.waffo_pancake_product_id
+  const hasNanakoPay =
+    !!props.enableNanakoPay && Number(plan.price_amount) >= 0.01
   const hasEpay =
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
-  const hasAnyPayment = hasStripe || hasCreem || hasWaffoPancake || hasEpay
+  const hasAnyPayment =
+    hasStripe || hasCreem || hasWaffoPancake || hasNanakoPay || hasEpay
   const totalAmount = Number(plan.total_amount || 0)
   const price = Number(plan.price_amount || 0).toFixed(2)
   const quotaPerUnit =
@@ -146,6 +151,35 @@ export function SubscriptionPurchaseDialog(props: Props) {
     try {
       const res = await paySubscriptionWaffoPancake({ plan_id: plan.id })
       if (res.message === 'success' && res.data?.checkout_url) {
+        toast.success(t('Redirecting to payment page...'))
+        window.location.href = res.data.checkout_url
+      } else {
+        handleServerError(res, t('Payment request failed'))
+      }
+    } catch (error) {
+      handleServerError(error, t('Payment request failed'))
+    } finally {
+      setPaying(false)
+    }
+  }
+
+  const handlePayNanakoPay = async () => {
+    setPaying(true)
+    try {
+      const res = await paySubscriptionNanakoPay({ plan_id: plan.id })
+      if (res.message === 'success' && res.data?.checkout_url) {
+        let validRedirect = false
+        try {
+          const parsed = new URL(res.data.checkout_url.trim())
+          validRedirect =
+            parsed.protocol === 'http:' || parsed.protocol === 'https:'
+        } catch {
+          validRedirect = false
+        }
+        if (!validRedirect) {
+          toast.error(t('Invalid payment redirect URL'))
+          return
+        }
         toast.success(t('Redirecting to payment page...'))
         window.location.href = res.data.checkout_url
       } else {
@@ -337,7 +371,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
             <p className='text-muted-foreground text-xs'>
               {t('Select payment method')}
             </p>
-            {(hasStripe || hasCreem || hasWaffoPancake) && (
+            {(hasStripe || hasCreem || hasWaffoPancake || hasNanakoPay) && (
               <div className='grid grid-cols-2 gap-2 sm:flex'>
                 {hasStripe && (
                   <Button
@@ -367,6 +401,16 @@ export function SubscriptionPurchaseDialog(props: Props) {
                     disabled={paying || limitReached}
                   >
                     Waffo Pancake
+                  </Button>
+                )}
+                {hasNanakoPay && (
+                  <Button
+                    variant='outline'
+                    className='flex-1'
+                    onClick={handlePayNanakoPay}
+                    disabled={paying || limitReached}
+                  >
+                    Nanako Pay
                   </Button>
                 )}
               </div>
