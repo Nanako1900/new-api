@@ -22,17 +22,20 @@ import { PAYMENT_TYPES } from '../constants'
 import {
   dispatchSelectedPayment,
   getDefaultPaymentType,
+  isNanakoPayPayment,
   isStripePayment,
   isWaffoPayment,
   isWaffoPancakePayment,
 } from './payment'
 
 describe('payment type classification', () => {
-  test('keeps Waffo and Waffo Pancake on their dedicated flows', () => {
+  test('keeps Waffo, Waffo Pancake, and Nanako Pay on their dedicated flows', () => {
     expect(isWaffoPayment(PAYMENT_TYPES.WAFFO)).toBe(true)
     expect(isWaffoPayment(PAYMENT_TYPES.WAFFO_PANCAKE)).toBe(false)
     expect(isWaffoPancakePayment(PAYMENT_TYPES.WAFFO_PANCAKE)).toBe(true)
     expect(isWaffoPancakePayment(PAYMENT_TYPES.WAFFO)).toBe(false)
+    expect(isNanakoPayPayment(PAYMENT_TYPES.NANAKO_PAY)).toBe(true)
+    expect(isNanakoPayPayment(PAYMENT_TYPES.STRIPE)).toBe(false)
     expect(isStripePayment(PAYMENT_TYPES.STRIPE)).toBe(true)
   })
 })
@@ -82,6 +85,27 @@ describe('payment dispatch', () => {
 
     expect(success).toBe(false)
     expect(called).toBe(false)
+  })
+
+  test('dispatches Nanako Pay through its dedicated processor', async () => {
+    const calls: string[] = []
+    const success = await dispatchSelectedPayment(
+      { name: 'Nanako Pay', type: PAYMENT_TYPES.NANAKO_PAY },
+      68,
+      null,
+      {
+        regular: async () => false,
+        waffo: async () => false,
+        waffoPancake: async () => false,
+        nanakoPay: async (amount) => {
+          calls.push(`nanakoPay:${amount}`)
+          return true
+        },
+      }
+    )
+
+    expect(success).toBe(true)
+    expect(calls).toEqual(['nanakoPay:68'])
   })
 })
 

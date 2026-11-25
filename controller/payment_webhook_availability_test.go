@@ -157,6 +157,39 @@ func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.False(t, isWaffoPancakeWebhookEnabled())
 }
 
+func TestNanakoPayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	origAppID := setting.NanakoPayAppID
+	origAPISecret := setting.NanakoPayApiSecret
+	origWebhookSecret := setting.NanakoPayWebhookSecret
+	origMode := setting.NanakoPayMode
+	origCurrency := setting.NanakoPayCurrency
+	t.Cleanup(func() {
+		setting.NanakoPayAppID = origAppID
+		setting.NanakoPayApiSecret = origAPISecret
+		setting.NanakoPayWebhookSecret = origWebhookSecret
+		setting.NanakoPayMode = origMode
+		setting.NanakoPayCurrency = origCurrency
+	})
+
+	setting.NanakoPayAppID = "papp_test"
+	setting.NanakoPayApiSecret = "api_secret"
+	setting.NanakoPayWebhookSecret = ""
+	setting.NanakoPayMode = setting.NanakoPayModeTest
+	setting.NanakoPayCurrency = "CNY"
+	require.False(t, isNanakoPayWebhookEnabled())
+
+	setting.NanakoPayWebhookSecret = "wh_secret"
+	require.True(t, isNanakoPayWebhookEnabled())
+
+	setting.NanakoPayMode = "invalid"
+	require.False(t, isNanakoPayWebhookEnabled())
+
+	setting.NanakoPayMode = setting.NanakoPayModeLive
+	setting.NanakoPayCurrency = "BTC"
+	require.False(t, isNanakoPayWebhookEnabled())
+}
+
 func TestEpayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalPayAddress := operation_setting.PayAddress

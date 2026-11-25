@@ -3,7 +3,9 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strconv"
@@ -270,6 +272,37 @@ func UpdateOption(c *gin.Context) {
 	case "GeetestCheckMode":
 		if option.Value != common.GeetestCheckModeAlways && option.Value != common.GeetestCheckModeRisk {
 			common.ApiErrorT(c, "Invalid GeeTest verification mode")
+			return
+		}
+	case "NanakoPayMode":
+		if !setting.IsValidNanakoPayMode(option.Value.(string)) {
+			common.ApiErrorT(c, "Nanako Pay mode must be live or test")
+			return
+		}
+	case "NanakoPayCurrency":
+		if !setting.IsValidNanakoPayCurrency(option.Value.(string)) {
+			common.ApiErrorT(c, "Unsupported Nanako Pay currency")
+			return
+		}
+	case "NanakoPayBaseURL", "NanakoPayReturnURL":
+		rawURL := strings.TrimSpace(option.Value.(string))
+		if rawURL != "" {
+			parsed, parseErr := url.Parse(rawURL)
+			if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+				common.ApiErrorT(c, "Invalid parameters")
+				return
+			}
+		}
+	case "NanakoPayUnitPrice":
+		unitPrice, parseErr := strconv.ParseFloat(strings.TrimSpace(option.Value.(string)), 64)
+		if parseErr != nil || math.IsNaN(unitPrice) || math.IsInf(unitPrice, 0) || unitPrice < 0 {
+			common.ApiErrorT(c, "Invalid parameters")
+			return
+		}
+	case "NanakoPayMinTopUp":
+		minTopUp, parseErr := strconv.Atoi(strings.TrimSpace(option.Value.(string)))
+		if parseErr != nil || minTopUp < 1 {
+			common.ApiErrorT(c, "Invalid parameters")
 			return
 		}
 	case "TelegramOAuthEnabled":

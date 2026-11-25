@@ -103,6 +103,21 @@ func TestRechargeWaffoPancake_RejectsMismatchedPaymentMethod(t *testing.T) {
 	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 101))
 }
 
+func TestRechargeNanakoPay_RejectsMismatchedPaymentMethod(t *testing.T) {
+	truncateTables(t)
+
+	insertUserForPaymentGuardTest(t, 102, 0)
+	insertTopUpForPaymentGuardTest(t, "nanako-pay-guard", 102, PaymentProviderStripe)
+
+	_, err := RechargeNanakoPay("nanako-pay-guard", "127.0.0.1")
+	require.ErrorIs(t, err, ErrPaymentMethodMismatch)
+
+	topUp := GetTopUpByTradeNo("nanako-pay-guard")
+	require.NotNil(t, topUp)
+	assert.Equal(t, common.TopUpStatusPending, topUp.Status)
+	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 102))
+}
+
 func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentProvider(t *testing.T) {
 	testCases := []struct {
 		name                    string

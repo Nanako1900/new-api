@@ -132,6 +132,15 @@ func InitOptionMap() {
 	common.OptionMap["WaffoPancakeMinTopUp"] = strconv.Itoa(setting.WaffoPancakeMinTopUp)
 	common.OptionMap["WaffoPancakeStoreID"] = setting.WaffoPancakeStoreID
 	common.OptionMap["WaffoPancakeProductID"] = setting.WaffoPancakeProductID
+	common.OptionMap["NanakoPayBaseURL"] = setting.NanakoPayBaseURL
+	common.OptionMap["NanakoPayAppID"] = setting.NanakoPayAppID
+	common.OptionMap["NanakoPayApiSecret"] = setting.NanakoPayApiSecret
+	common.OptionMap["NanakoPayWebhookSecret"] = setting.NanakoPayWebhookSecret
+	common.OptionMap["NanakoPayMode"] = setting.NanakoPayMode
+	common.OptionMap["NanakoPayCurrency"] = setting.NanakoPayCurrency
+	common.OptionMap["NanakoPayUnitPrice"] = strconv.FormatFloat(setting.NanakoPayUnitPrice, 'f', -1, 64)
+	common.OptionMap["NanakoPayMinTopUp"] = strconv.Itoa(setting.NanakoPayMinTopUp)
+	common.OptionMap["NanakoPayReturnURL"] = setting.NanakoPayReturnURL
 	common.OptionMap["TopUpPromotions"] = "[]"
 	common.OptionMap["TopupGroupRatio"] = common.TopupGroupRatio2JSONString()
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
@@ -681,6 +690,28 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.WaffoPancakeUnitPrice, _ = strconv.ParseFloat(value, 64)
 	case "WaffoPancakeMinTopUp":
 		setting.WaffoPancakeMinTopUp, _ = strconv.Atoi(value)
+	case "NanakoPayBaseURL":
+		setting.NanakoPayBaseURL = strings.TrimRight(strings.TrimSpace(value), "/")
+	case "NanakoPayAppID":
+		setting.NanakoPayAppID = strings.TrimSpace(value)
+	case "NanakoPayApiSecret":
+		setting.NanakoPayApiSecret = strings.TrimSpace(value)
+	case "NanakoPayWebhookSecret":
+		setting.NanakoPayWebhookSecret = strings.TrimSpace(value)
+	case "NanakoPayMode":
+		if setting.IsValidNanakoPayMode(value) {
+			setting.NanakoPayMode = strings.ToLower(strings.TrimSpace(value))
+		}
+	case "NanakoPayCurrency":
+		if setting.IsValidNanakoPayCurrency(value) {
+			setting.NanakoPayCurrency = strings.ToUpper(strings.TrimSpace(value))
+		}
+	case "NanakoPayUnitPrice":
+		setting.NanakoPayUnitPrice, _ = strconv.ParseFloat(value, 64)
+	case "NanakoPayMinTopUp":
+		setting.NanakoPayMinTopUp, _ = strconv.Atoi(value)
+	case "NanakoPayReturnURL":
+		setting.NanakoPayReturnURL = strings.TrimSpace(value)
 	case "TopUpPromotions":
 		err = operation_setting.SetTopUpPromotions(value)
 	case "TopupGroupRatio":

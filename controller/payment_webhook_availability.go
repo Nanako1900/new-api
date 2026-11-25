@@ -113,3 +113,24 @@ func isEpayWebhookConfigured() bool {
 func isEpayWebhookEnabled() bool {
 	return isEpayTopUpEnabled()
 }
+
+func isNanakoPayTopUpEnabled() bool {
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
+	return strings.TrimSpace(setting.NanakoPayAppID) != "" &&
+		strings.TrimSpace(setting.NanakoPayApiSecret) != "" &&
+		strings.TrimSpace(setting.NanakoPayWebhookSecret) != "" &&
+		setting.IsValidNanakoPayMode(setting.NanakoPayMode) &&
+		setting.IsValidNanakoPayCurrency(setting.NanakoPayCurrency)
+}
+
+func isNanakoPayWebhookConfigured() bool {
+	return strings.TrimSpace(setting.NanakoPayAppID) != "" &&
+		strings.TrimSpace(setting.NanakoPayApiSecret) != "" &&
+		strings.TrimSpace(setting.NanakoPayWebhookSecret) != ""
+}
+
+func isNanakoPayWebhookEnabled() bool {
+	return isNanakoPayTopUpEnabled()
+}

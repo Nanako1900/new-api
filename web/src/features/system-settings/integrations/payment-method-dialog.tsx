@@ -68,6 +68,7 @@ type PaymentMethodDialogProps = {
 
 const PAYMENT_TYPE_ICON_NAMES: Record<string, string> = {
   alipay: 'SiAlipay',
+  nanako_pay: 'LuCreditCard',
   stripe: 'SiStripe',
   waffo_pancake: 'LuCreditCard',
   wxpay: 'SiWechat',
@@ -108,6 +109,12 @@ export function PaymentMethodDialog({
       label: 'Waffo Pancake (waffo_pancake)',
       name: 'Waffo Pancake',
       value: 'waffo_pancake',
+    },
+    {
+      iconName: 'LuCreditCard',
+      label: 'Nanako Pay (nanako_pay)',
+      name: 'Nanako Pay',
+      value: 'nanako_pay',
     },
   ]
   const getPaymentTypeOption = (value: string) =>
