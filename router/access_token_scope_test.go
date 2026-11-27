@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,11 +13,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // accessTokenExemptRoutes are /api routes that never reach dashboard
@@ -171,6 +176,78 @@ func TestAccessTokenRouteRulesCoverEveryDashboardRoute(t *testing.T) {
 		require.True(t, ok, key)
 		assert.Equal(t, "scope", rule.Kind(), key)
 		assert.Equal(t, service.AccessTokenScopeOf(permission), rule.Scope(), key)
+	}
+}
+
+func TestSelfAffiliateInviteesRequireWalletReadAndUseAuthenticatedOwner(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "affiliate-auth.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	oldDB, oldLogDB, oldRedis, oldType := model.DB, model.LOG_DB, common.RedisEnabled, common.MainDatabaseType()
+	model.DB, model.LOG_DB, common.RedisEnabled = db, db, false
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB, common.RedisEnabled = oldDB, oldLogDB, oldRedis
+		common.SetMainDatabaseType(oldType)
+		require.NoError(t, sqlDB.Close())
+	})
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserAccessToken{}, &model.AffiliateOrder{}, &model.AuditLog{}))
+	users := []model.User{
+		{Id: 801, Username: "owner", AffCode: "owner", Role: common.RoleCommonUser, Status: common.UserStatusEnabled},
+		{Id: 802, Username: "buyer-private-login", DisplayName: "Own invitee", Email: "test@example.invalid", AffCode: "own", InviterId: 801},
+		{Id: 803, Username: "other-owner", AffCode: "other-owner"},
+		{Id: 804, Username: "other-buyer", DisplayName: "Other invitee", AffCode: "other", InviterId: 803},
+	}
+	require.NoError(t, db.Create(&users).Error)
+	require.NoError(t, db.Create(&model.AffiliateOrder{TradeNo: "own-paid", BuyerID: 802, InviterID: 801, Currency: "CNY", PaidCents: 505, SettledAt: 100}).Error)
+
+	engine := newAccessTokenScopeTestEngine(t)
+	for _, tc := range []struct {
+		name, scope, path string
+		status            int
+	}{
+		{"anonymous", "", "/api/user/affiliate/invitees", http.StatusUnauthorized},
+		{"missing wallet scope", "profile:read", "/api/user/affiliate/invitees", http.StatusForbidden},
+		{"other owner's admin route", "wallet:read", "/api/user/803/affiliate/invitees", http.StatusForbidden},
+		{"wallet scope ignores supplied owner", "wallet:read", "/api/user/affiliate/invitees?user_id=803&inviter_id=803", http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			if tc.scope != "" {
+				suffix, err := common.GenerateRandomCharsKey(43)
+				require.NoError(t, err)
+				raw := model.AccessTokenPrefix + suffix
+				credential := &model.UserAccessToken{Name: tc.name, TokenHash: model.AccessTokenFingerprint(raw), TokenHint: model.AccessTokenHint(raw)}
+				require.NoError(t, credential.SetScopes([]string{tc.scope}))
+				require.NoError(t, model.CreateUserAccessToken(801, credential, service.AccessTokenMaxPerUser))
+				req.Header.Set("Authorization", "Bearer "+raw)
+			}
+			resp := httptest.NewRecorder()
+			engine.ServeHTTP(resp, req)
+			require.Equal(t, tc.status, resp.Code, resp.Body.String())
+			if tc.status != http.StatusOK {
+				assert.NotContains(t, resp.Body.String(), "Own invitee")
+				assert.NotContains(t, resp.Body.String(), "Other invitee")
+				return
+			}
+			assert.Contains(t, resp.Header().Get("Cache-Control"), "no-store")
+			var response struct {
+				Success bool `json:"success"`
+				Data    struct {
+					Total int              `json:"total"`
+					Items []map[string]any `json:"items"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(resp.Body.Bytes(), &response))
+			assert.True(t, response.Success)
+			assert.Equal(t, 1, response.Data.Total)
+			require.Len(t, response.Data.Items, 1)
+			assert.Equal(t, "Own invitee", response.Data.Items[0]["display_name"])
+			assert.Equal(t, []any{map[string]any{"currency": "CNY", "paid_cents": "505"}}, response.Data.Items[0]["topup_totals"])
+			assert.NotContains(t, response.Data.Items[0], "username")
+			assert.NotContains(t, response.Data.Items[0], "email")
+		})
 	}
 }
 

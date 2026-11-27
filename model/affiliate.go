@@ -2,7 +2,9 @@ package model
 
 import (
 	"errors"
+	"maps"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -55,6 +57,32 @@ type AffiliateEntry struct {
 	OperatorID   int    `json:"operator_id"`
 	Note         string `json:"note" gorm:"type:varchar(500)"`
 	CreatedAt    int64  `json:"created_at"`
+}
+
+type AffiliateHistoryEntry struct {
+	AffiliateEntry
+	BuyerName        string `json:"buyer_name,omitempty" gorm:"-"`
+	BuyerDisplayName string `json:"-" gorm:"->"`
+	BuyerUsername    string `json:"-" gorm:"->"`
+}
+
+type AffiliateInvitee struct {
+	ID          int    `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+}
+
+type AffiliateTopUpTotal struct {
+	Currency  string `json:"currency"`
+	PaidCents string `json:"paid_cents"`
+}
+
+type AffiliateInviteeTopUps struct {
+	ID            int                   `json:"id"`
+	DisplayName   string                `json:"display_name"`
+	TopUpCount    int64                 `json:"topup_count"`
+	TopUpTotals   []AffiliateTopUpTotal `json:"topup_totals"`
+	LastSettledAt *int64                `json:"last_settled_at"`
 }
 
 type AffiliateChange struct {
@@ -465,13 +493,110 @@ func ReverseAffiliateOrder(userID, operatorID, operatorRole int, tradeNo, note s
 	})
 }
 
-func GetAffiliateEntries(userID, offset, limit int) ([]AffiliateEntry, int64, error) {
-	entries := make([]AffiliateEntry, 0)
+func GetAffiliateEntries(userID, offset, limit int, includeBuyerName bool) ([]AffiliateHistoryEntry, int64, error) {
+	entries := make([]AffiliateHistoryEntry, 0)
 	var count int64
-	query := DB.Model(&AffiliateEntry{}).Where("user_id = ?", userID)
+	query := DB.Model(&AffiliateEntry{}).Where("affiliate_entries.user_id = ?", userID)
 	if err := query.Count(&count).Error; err != nil {
 		return nil, 0, err
 	}
-	err := query.Order("id desc").Offset(max(0, offset)).Limit(min(max(1, limit), 100)).Find(&entries).Error
-	return entries, count, err
+	query = query.Select("affiliate_entries.*")
+	if includeBuyerName {
+		query = query.Select("affiliate_entries.*, buyer.display_name AS buyer_display_name, buyer.username AS buyer_username").
+			Joins("LEFT JOIN users AS buyer ON buyer.id = affiliate_entries.buyer_id AND buyer.deleted_at IS NULL AND affiliate_entries.kind IN ?", []string{"credit", "reversal"})
+	}
+	if err := query.Order("affiliate_entries.id desc").Offset(max(0, offset)).Limit(min(max(1, limit), 100)).Find(&entries).Error; err != nil {
+		return nil, 0, err
+	}
+	for i := range entries {
+		entries[i].BuyerName = affiliateDisplayName(entries[i].BuyerDisplayName, entries[i].BuyerUsername)
+	}
+	return entries, count, nil
+}
+
+func affiliateDisplayName(displayName, username string) string {
+	if name := strings.TrimSpace(displayName); name != "" {
+		return name
+	}
+	return username
+}
+
+func GetAffiliateInvitees(inviterID int, page *common.PageInfo) ([]AffiliateInvitee, int64, error) {
+	page.Page = max(1, page.Page)
+	page.PageSize = min(max(1, page.PageSize), 100)
+	invitees := make([]AffiliateInvitee, 0)
+	var total int64
+	query := DB.Model(&User{}).Where("inviter_id = ?", inviterID)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if total == 0 || int64(page.Page-1) > (total-1)/int64(page.PageSize) {
+		return invitees, total, nil
+	}
+	err := query.Select("id", "username", "display_name").Order("id desc").
+		Offset(page.GetStartIdx()).Limit(page.PageSize).Find(&invitees).Error
+	return invitees, total, err
+}
+
+func GetAffiliateInviteeTopUps(inviterID int, page *common.PageInfo) ([]AffiliateInviteeTopUps, int64, error) {
+	invitees, total, err := GetAffiliateInvitees(inviterID, page)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := make([]AffiliateInviteeTopUps, len(invitees))
+	if len(invitees) == 0 {
+		return result, total, nil
+	}
+	buyerIDs := make([]int, len(invitees))
+	indexByBuyer := make(map[int]int, len(invitees))
+	for i, invitee := range invitees {
+		result[i] = AffiliateInviteeTopUps{
+			ID:          invitee.ID,
+			DisplayName: affiliateDisplayName(invitee.DisplayName, invitee.Username),
+			TopUpTotals: []AffiliateTopUpTotal{},
+		}
+		buyerIDs[i] = invitee.ID
+		indexByBuyer[invitee.ID] = i
+	}
+
+	// Group identical amounts before adding them exactly; SQLite SUM of BIGINT can overflow.
+	rows, err := DB.Model(&AffiliateOrder{}).
+		Where("inviter_id = ? AND buyer_id IN ? AND settled_at > 0 AND reversed_at = 0", inviterID, buyerIDs).
+		Select("buyer_id, currency, paid_cents, COUNT(*), MAX(settled_at)").
+		Group("buyer_id, currency, paid_cents").Rows()
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	byCurrency := make([]map[string]decimal.Decimal, len(result))
+	for rows.Next() {
+		var buyerID int
+		var currency string
+		var paidCents, count, settledAt int64
+		if err := rows.Scan(&buyerID, &currency, &paidCents, &count, &settledAt); err != nil {
+			return nil, 0, err
+		}
+		i := indexByBuyer[buyerID]
+		summary := &result[i]
+		summary.TopUpCount += count
+		if summary.LastSettledAt == nil || settledAt > *summary.LastSettledAt {
+			summary.LastSettledAt = &settledAt
+		}
+		if byCurrency[i] == nil {
+			byCurrency[i] = make(map[string]decimal.Decimal)
+		}
+		amount := decimal.NewFromInt(paidCents).Mul(decimal.NewFromInt(count))
+		byCurrency[i][currency] = byCurrency[i][currency].Add(amount)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	for i, totals := range byCurrency {
+		for _, currency := range slices.Sorted(maps.Keys(totals)) {
+			result[i].TopUpTotals = append(result[i].TopUpTotals, AffiliateTopUpTotal{
+				Currency: currency, PaidCents: totals[currency].String(),
+			})
+		}
+	}
+	return result, total, nil
 }

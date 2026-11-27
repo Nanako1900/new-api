@@ -125,6 +125,7 @@ func TestAffiliateDatabaseMatrix(t *testing.T) {
 				t.Run("competing payouts", testAffiliateConcurrentPayout)
 				t.Run("deleted inviter", testAffiliateDeletedInviter)
 				t.Run("duplicate payout after concurrent commit", testAffiliatePayoutConcurrentRetry)
+				t.Run("invitee recharge reporting", testAffiliateInviteeReporting)
 				var inviter User
 				require.NoError(t, db.First(&inviter, 100).Error)
 				assert.Equal(t, 900, inviter.Quota, "cashback never changes consumption quota")
@@ -136,6 +137,78 @@ func TestAffiliateDatabaseMatrix(t *testing.T) {
 			})
 		}
 	}
+}
+
+func testAffiliateInviteeReporting(t *testing.T) {
+	for _, user := range []User{
+		{Id: 701, Username: "report-inviter", AffCode: "report-v1"},
+		{Id: 702, Username: "report-other", AffCode: "report-v2"},
+		{Id: 703, Username: "payer", DisplayName: "  Paid user  ", AffCode: "report-v3", InviterId: 701},
+		{Id: 704, Username: "reversed-payer", DisplayName: "\u3000\t", AffCode: "report-v4", InviterId: 701},
+		{Id: 705, Username: "deleted-payer", AffCode: "report-v5", InviterId: 701},
+	} {
+		require.NoError(t, DB.Create(&user).Error)
+	}
+	require.NoError(t, DB.Delete(&User{}, 705).Error)
+	orders := []AffiliateOrder{
+		{TradeNo: "report-cny", BuyerID: 703, InviterID: 701, Currency: "CNY", PaidCents: 525, BaseCents: 400, SettledAt: 100},
+		{TradeNo: "report-gbp", BuyerID: 703, InviterID: 701, Currency: "GBP", PaidCents: common.MaxWalletQuota, SettledAt: 300},
+		{TradeNo: "report-gbp-second", BuyerID: 703, InviterID: 701, Currency: "GBP", PaidCents: 10, SettledAt: 200},
+		{TradeNo: "report-pending", BuyerID: 703, InviterID: 701, Currency: "USD"},
+		{TradeNo: "report-reversed", BuyerID: 704, InviterID: 701, Currency: "CNY", PaidCents: 7000, SettledAt: 400, ReversedAt: 500},
+		{TradeNo: "report-other", BuyerID: 703, InviterID: 702, Currency: "GBP", PaidCents: 160, SettledAt: 600},
+		{TradeNo: "report-deleted", BuyerID: 705, InviterID: 701, Currency: "CNY", PaidCents: 1000, SettledAt: 100},
+	}
+	require.NoError(t, DB.Create(&orders).Error)
+	require.NoError(t, DB.Create(&TopUp{TradeNo: "report-no-snapshot", UserId: 704, Money: 20, Status: common.TopUpStatusSuccess}).Error)
+
+	first, total, err := GetAffiliateInviteeTopUps(701, &common.PageInfo{Page: 1, PageSize: 1})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	assert.Equal(t, []AffiliateInviteeTopUps{{ID: 704, DisplayName: "reversed-payer", TopUpTotals: []AffiliateTopUpTotal{}}}, first)
+	second, total, err := GetAffiliateInviteeTopUps(701, &common.PageInfo{Page: 2, PageSize: 1})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, total)
+	lastSettled := int64(300)
+	assert.Equal(t, []AffiliateInviteeTopUps{{
+		ID: 703, DisplayName: "Paid user", TopUpCount: 3, LastSettledAt: &lastSettled,
+		TopUpTotals: []AffiliateTopUpTotal{{Currency: "CNY", PaidCents: "525"}, {Currency: "GBP", PaidCents: "9007199254741001"}},
+	}}, second)
+	empty, total, err := GetAffiliateInviteeTopUps(702, &common.PageInfo{Page: 1, PageSize: 1})
+	require.NoError(t, err)
+	assert.Zero(t, total)
+	assert.Equal(t, []AffiliateInviteeTopUps{}, empty)
+
+	require.NoError(t, SetAffiliateSettings(703, 702, 0, 1, common.RoleRootUser))
+	current, total, err := GetAffiliateInviteeTopUps(702, &common.PageInfo{Page: 1, PageSize: 1})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	require.Len(t, current, 1)
+	assert.Equal(t, 703, current[0].ID)
+	assert.EqualValues(t, 1, current[0].TopUpCount)
+	assert.Equal(t, []AffiliateTopUpTotal{{Currency: "GBP", PaidCents: "160"}}, current[0].TopUpTotals)
+	missingPage, total, err := GetAffiliateInviteeTopUps(701, &common.PageInfo{Page: 2, PageSize: 1})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, total)
+	assert.Empty(t, missingPage)
+
+	ledger := []AffiliateEntry{
+		{EventKey: "credit:report-cny", TradeNo: "report-cny", UserID: 701, Kind: "credit", BuyerID: 703},
+		{EventKey: "reverse:report-reversed", TradeNo: "report-reversed", UserID: 701, Kind: "reversal", BuyerID: 704},
+		{EventKey: "payout:report", UserID: 701, Kind: "withdrawal"},
+		{EventKey: "credit:report-deleted", TradeNo: "report-deleted", UserID: 701, Kind: "credit", BuyerID: 705},
+		{EventKey: "credit:report-other", TradeNo: "report-other", UserID: 702, Kind: "credit", BuyerID: 703},
+	}
+	require.NoError(t, DB.Create(&ledger).Error)
+	history, total, err := GetAffiliateEntries(701, 0, 10, true)
+	require.NoError(t, err)
+	assert.EqualValues(t, 4, total)
+	require.Len(t, history, 4)
+	assert.Equal(t, []string{"", "", "reversed-payer", "Paid user"}, []string{history[0].BuyerName, history[1].BuyerName, history[2].BuyerName, history[3].BuyerName})
+	adminHistory, _, err := GetAffiliateEntries(701, 0, 10, false)
+	require.NoError(t, err)
+	require.Len(t, adminHistory, 4)
+	assert.Empty(t, adminHistory[3].BuyerName)
 }
 
 func testAffiliatePayments(t *testing.T) {

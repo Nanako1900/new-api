@@ -25,18 +25,24 @@ import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getAffiliate } from '../api'
 import { AffiliateHistory } from './affiliate-history'
+import { AffiliateInvitees } from './affiliate-invitees'
 import { AffiliateOverview } from './affiliate-overview'
 
 export function AffiliateCard() {
   const { t } = useTranslation()
+  const accountId = useAuthStore((state) => state.auth.user?.id)
   const [historyOpen, setHistoryOpen] = useState(false)
   const query = useQuery({
-    queryKey: ['affiliate', 'self'],
+    queryKey: ['affiliate', 'self', accountId],
+    enabled: accountId !== undefined,
     queryFn: () => getAffiliate(),
   })
+  if (accountId === undefined) return null
+
   return (
     <Card>
       <CardHeader className='flex flex-row items-center justify-between gap-3'>
@@ -49,10 +55,14 @@ export function AffiliateCard() {
           {t('Cashback history')}
         </Button>
       </CardHeader>
-      <CardContent>
+      <CardContent className='space-y-6'>
         {query.isPending && <LoadingState />}
         {query.isError && <ErrorState onRetry={() => void query.refetch()} />}
         {query.data && <AffiliateOverview summary={query.data} />}
+        <section className='space-y-3'>
+          <h3 className='text-sm font-semibold'>{t('Invited users')}</h3>
+          <AffiliateInvitees key={accountId} />
+        </section>
       </CardContent>
       <Dialog
         open={historyOpen}
@@ -60,7 +70,7 @@ export function AffiliateCard() {
         title={t('Cashback history')}
         contentClassName='sm:max-w-5xl'
       >
-        {historyOpen && <AffiliateHistory />}
+        {historyOpen && <AffiliateHistory key={accountId} />}
       </Dialog>
     </Card>
   )

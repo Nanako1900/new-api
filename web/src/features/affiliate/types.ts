@@ -33,6 +33,7 @@ export interface AffiliateEntry {
   kind: 'credit' | 'withdrawal' | 'reversal'
   trade_no: string
   buyer_id: number
+  buyer_name?: string
   rate_bps: number
   base_cents: number
   amount_cents: number
@@ -67,4 +68,10 @@ export interface Invitee {
   id: number
   username: string
   display_name: string
+}
+
+export interface InviteeTopUps extends Pick<Invitee, 'id' | 'display_name'> {
+  topup_count: number
+  topup_totals: { currency: string; paid_cents: string }[]
+  last_settled_at: number | null
 }

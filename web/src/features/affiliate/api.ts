@@ -25,9 +25,12 @@ import type {
   AffiliatePage,
   AffiliateSummary,
   Invitee,
+  InviteeTopUps,
 } from './types'
 
 type Response<T> = { success: boolean; message: string; data: T }
+
+export const AFFILIATE_PAGE_SIZE = 10
 
 export async function getAffiliate(userId?: number): Promise<AffiliateSummary> {
   const path =
@@ -48,19 +51,22 @@ export async function getAffiliateHistory(
       : `/api/user/${userId}/affiliate/history`
   const response = await api.get<Response<AffiliatePage<AffiliateEntry>>>(
     path,
-    { params: { p: page, page_size: 10 } }
+    { params: { p: page, page_size: AFFILIATE_PAGE_SIZE } }
   )
   return requireServerSuccess(response.data).data
 }
 
 export async function getInvitees(
-  userId: number,
+  userId: number | undefined,
   page: number
-): Promise<AffiliatePage<Invitee>> {
-  const response = await api.get<Response<AffiliatePage<Invitee>>>(
-    `/api/user/${userId}/affiliate/invitees`,
-    { params: { p: page, page_size: 10 } }
-  )
+): Promise<AffiliatePage<Invitee | InviteeTopUps>> {
+  const path =
+    userId === undefined
+      ? '/api/user/affiliate/invitees'
+      : `/api/user/${userId}/affiliate/invitees`
+  const response = await api.get<
+    Response<AffiliatePage<Invitee | InviteeTopUps>>
+  >(path, { params: { p: page, page_size: AFFILIATE_PAGE_SIZE } })
   return requireServerSuccess(response.data).data
 }
 
