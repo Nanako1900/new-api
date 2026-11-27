@@ -27,8 +27,9 @@ import { Button } from '@/components/ui/button'
 import { toIntlLocale } from '@/i18n/languages'
 import { formatCurrencyAmount } from '@/lib/currency'
 import { formatNumber, formatTimestampToDate } from '@/lib/format'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getAffiliateHistory } from '../api'
+import { AFFILIATE_PAGE_SIZE, getAffiliateHistory } from '../api'
 import type { AffiliateEntry } from '../types'
 
 export function AffiliateHistory(props: {
@@ -37,11 +38,17 @@ export function AffiliateHistory(props: {
 }) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const accountId = useAuthStore((state) => state.auth.user?.id)
+  const self = props.userId === undefined
   const [page, setPage] = useState(1)
   const query = useQuery({
-    queryKey: ['affiliate', props.userId ?? 'self', 'history', page],
+    queryKey: self
+      ? ['affiliate', 'self', accountId, 'history', page]
+      : ['affiliate', props.userId, 'history', page],
+    enabled: !self || accountId !== undefined,
     queryFn: () => getAffiliateHistory(props.userId, page),
   })
+  if (self && accountId === undefined) return null
   if (query.isPending) return <LoadingState />
   if (query.isError) return <ErrorState onRetry={() => void query.refetch()} />
   return (
@@ -70,6 +77,18 @@ export function AffiliateHistory(props: {
             header: t('Order number'),
             cell: (entry) => entry.trade_no || '—',
           },
+          ...(self
+            ? [
+                {
+                  id: 'payer',
+                  header: t('Paid by'),
+                  cell: (entry: AffiliateEntry) =>
+                    entry.kind === 'withdrawal'
+                      ? '—'
+                      : entry.buyer_name || t('Payer unavailable'),
+                },
+              ]
+            : []),
           {
             id: 'base',
             header: t('Cashback basis (CNY)'),
@@ -136,7 +155,9 @@ export function AffiliateHistory(props: {
         <Button
           variant='outline'
           size='sm'
-          disabled={page * 10 >= query.data.total || query.isFetching}
+          disabled={
+            page * AFFILIATE_PAGE_SIZE >= query.data.total || query.isFetching
+          }
           onClick={() => setPage(page + 1)}
         >
           {t('Next')}

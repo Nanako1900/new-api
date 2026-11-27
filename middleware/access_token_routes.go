@@ -85,6 +85,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/user/passkey":                     accessTokenScopeRule("account_security:write"),
 	"GET /api/user/affiliate":                      accessTokenScopeRule("wallet:read"),
 	"GET /api/user/affiliate/history":              accessTokenScopeRule("wallet:read"),
+	"GET /api/user/affiliate/invitees":             accessTokenScopeRule("wallet:read"),
 	"GET /api/user/aff":                            accessTokenScopeRule("wallet:read"),
 	"GET /api/user/topup/info":                     accessTokenScopeRule("wallet:read"),
 	"GET /api/user/topup/self":                     accessTokenScopeRule("wallet:read"),

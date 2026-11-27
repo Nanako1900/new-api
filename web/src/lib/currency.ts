@@ -658,3 +658,28 @@ export function formatCurrencyAmount(
     }
   )
 }
+
+/** Formats exact minor units without rounding through a JavaScript number. */
+export function formatCurrencyCents(
+  cents: string,
+  currency: string,
+  locale?: Intl.LocalesArgument
+): string {
+  const amount = BigInt(cents)
+  const whole = amount / 100n
+  const remainder = (amount < 0n ? -amount : amount) % 100n
+  const fraction = new Intl.NumberFormat(locale, {
+    useGrouping: false,
+    minimumIntegerDigits: 2,
+  }).format(remainder)
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    currencyDisplay: 'code',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+    .formatToParts(amount < 0n && whole === 0n ? -0 : whole)
+    .map((part) => (part.type === 'fraction' ? fraction : part.value))
+    .join('')
+}

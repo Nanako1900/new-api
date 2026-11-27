@@ -53,7 +53,7 @@ func GetAffiliateHistory(c *gin.Context) {
 		return
 	}
 	page := common.GetPageQuery(c)
-	entries, total, err := model.GetAffiliateEntries(id, page.GetStartIdx(), page.GetPageSize())
+	entries, total, err := model.GetAffiliateEntries(id, page.GetStartIdx(), page.GetPageSize(), c.Param("id") == "")
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -69,22 +69,29 @@ func GetAffiliateInvitees(c *gin.Context) {
 		return
 	}
 	page := common.GetPageQuery(c)
-	var total int64
-	users := make([]struct {
-		ID          int    `json:"id"`
-		Username    string `json:"username"`
-		DisplayName string `json:"display_name"`
-	}, 0)
-	query := model.DB.Model(&model.User{}).Where("inviter_id = ?", id)
-	if err := query.Count(&total).Error; err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if err := query.Select("id", "username", "display_name").Order("id desc").Offset(page.GetStartIdx()).Limit(page.GetPageSize()).Find(&users).Error; err != nil {
+	users, total, err := model.GetAffiliateInvitees(id, page)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	page.SetItems(users)
+	page.SetTotal(int(total))
+	common.ApiSuccess(c, page)
+}
+
+func GetSelfAffiliateInvitees(c *gin.Context) {
+	id := c.GetInt("id")
+	if id <= 0 {
+		common.ApiErrorStatus(c, http.StatusUnauthorized, common.NewMessage("Unauthorized, invalid user info"))
+		return
+	}
+	page := common.GetPageQuery(c)
+	invitees, total, err := model.GetAffiliateInviteeTopUps(id, page)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	page.SetItems(invitees)
 	page.SetTotal(int(total))
 	common.ApiSuccess(c, page)
 }
