@@ -12,7 +12,7 @@ import (
 )
 
 // GetMonitorGlobalOverview returns the site-wide usage of the requested
-// window (1h, 3h or 24h; 3h when omitted) for the root user's console.
+// window (1h, 3h or 24h; 3h when omitted).
 func GetMonitorGlobalOverview(c *gin.Context) {
 	window := c.DefaultQuery("window", "3h")
 	overview, err := service.GetMonitorGlobalOverview(window)
@@ -28,9 +28,9 @@ func GetMonitorGlobalOverview(c *gin.Context) {
 }
 
 // GetMonitorGlobalLogs lists every user's request rows (consume and error)
-// for the root user's console, newest first, within the site's longest log
-// time range. Rows are the site-wide view (model.FormatGlobalLogView) with
-// display ids; the total stops at model.GlobalLogCountLimit.
+// newest first, within the site's longest log time range. Rows are the
+// site-wide view (model.FormatGlobalLogView) with display ids; the total
+// stops at model.GlobalLogCountLimit.
 func GetMonitorGlobalLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	// GetPageQuery passes a negative page size through, which drops the LIMIT.

@@ -103,10 +103,10 @@ func MonitorAuth() gin.HandlerFunc {
 	}
 }
 
-// MonitorRootOnly limits the site-wide monitor endpoints to the root user.
+// RequireMonitorGlobal limits the site-wide monitor endpoints to administrators.
 // MonitorAuth reads the role again on every request, so a demoted user is
 // refused at once.
-func MonitorRootOnly() gin.HandlerFunc {
+func RequireMonitorGlobal() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !AllowMonitorGlobal(c) {
 			return
@@ -118,11 +118,12 @@ func MonitorRootOnly() gin.HandlerFunc {
 // AllowMonitorGlobal reports whether the monitor user may see the whole site.
 // When not, it logs the attempt and answers 403 MONITOR_FORBIDDEN.
 func AllowMonitorGlobal(c *gin.Context) bool {
-	if c.GetInt("role") >= common.RoleRootUser {
+	role := c.GetInt("role")
+	if service.CanViewMonitorGlobal(role) {
 		return true
 	}
 	logger.LogWarn(c.Request.Context(), common.LogText("monitor global access rejected: user=%d role=%d ip=%s",
-		c.GetInt("id"), c.GetInt("role"), c.ClientIP()))
+		c.GetInt("id"), role, c.ClientIP()))
 	abortMonitor(c, http.StatusForbidden, "MONITOR_FORBIDDEN")
 	return false
 }

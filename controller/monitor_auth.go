@@ -178,7 +178,7 @@ func monitorUserData(user *model.User) gin.H {
 		"used_quota":    user.UsedQuota,
 		"request_count": user.RequestCount,
 		"avatar":        user.GetSetting().Avatar,
-		"global_view":   user.Role >= common.RoleRootUser,
+		"global_view":   service.CanViewMonitorGlobal(user.Role),
 	}
 }
 

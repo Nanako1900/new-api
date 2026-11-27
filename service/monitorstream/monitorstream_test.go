@@ -394,7 +394,7 @@ func TestGlobalStreamCapsEachBatchAndCountsWhatItLeftOut(t *testing.T) {
 	})
 }
 
-func TestGlobalStreamIsRevokedWhenTheUserIsNoLongerRoot(t *testing.T) {
+func TestGlobalStreamIsRevokedWhenTheUserLosesAccess(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := startStreamWith(t, true, 0, nil)
 

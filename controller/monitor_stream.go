@@ -19,7 +19,7 @@ const monitorStreamWriteTimeout = 10 * time.Second
 
 // MonitorStream serves the live event stream (SSE) of the signed-in monitor
 // user: new log rows, balance changes and session lifecycle events. With
-// scope=global it streams every user's request rows to the root user instead.
+// scope=global it streams every user's request rows to an administrator instead.
 func MonitorStream(c *gin.Context) {
 	identity, ok := middleware.GetMonitorIdentity(c)
 	hub := monitorstream.ActiveHub()
@@ -68,7 +68,7 @@ func MonitorStream(c *gin.Context) {
 		SessionState: func() monitorstream.SessionState {
 			_, user, err := service.ValidateMonitorAccess(identity)
 			switch {
-			case err == nil && global && user.Role < common.RoleRootUser:
+			case err == nil && global && !service.CanViewMonitorGlobal(user.Role):
 				return monitorstream.SessionForbidden
 			case err == nil:
 				return monitorstream.SessionActive

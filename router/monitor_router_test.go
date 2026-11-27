@@ -548,7 +548,7 @@ func (env *monitorTestEnv) setUserRole(t *testing.T, role int) {
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", env.user.Id).Update("role", role).Error)
 }
 
-func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
+func TestMonitorGlobalViewIsForAdministrators(t *testing.T) {
 	env := setupMonitorRouterTest(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}))
 	require.NoError(t, model.DB.Create(&model.Channel{Id: 8, Name: "upstream-8", Key: "k8"}).Error)
@@ -560,7 +560,8 @@ func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
 	self := get("/api/monitor/self")
 	require.Equal(t, http.StatusOK, self.Code, self.Body.String())
 	assert.Equal(t, false, responseJSON(t, self)["data"].(map[string]any)["global_view"])
-	for _, path := range []string{"/api/monitor/global/overview", "/api/monitor/global/logs"} {
+	globalPaths := []string{"/api/monitor/global/overview", "/api/monitor/global/logs"}
+	for _, path := range globalPaths {
 		response := get(path)
 		assert.Equal(t, http.StatusForbidden, response.Code, path)
 		assert.Equal(t, "MONITOR_FORBIDDEN", responseJSON(t, response)["code"], path)
@@ -577,8 +578,9 @@ func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
 		{UserId: 900, Username: "busy-user", Type: model.LogTypeTopup, CreatedAt: now - 20, Quota: 5000, RequestId: "req-global-3"},
 	}).Error)
 
-	env.setUserRole(t, common.RoleRootUser)
+	env.setUserRole(t, common.RoleAdminUser)
 	self = get("/api/monitor/self")
+	require.Equal(t, http.StatusOK, self.Code, self.Body.String())
 	assert.Equal(t, true, responseJSON(t, self)["data"].(map[string]any)["global_view"])
 
 	overview := get("/api/monitor/global/overview?window=3h")
@@ -628,8 +630,21 @@ func TestMonitorGlobalViewIsForTheRootUserOnly(t *testing.T) {
 	require.Equal(t, http.StatusOK, adminLogs.Code, adminLogs.Body.String())
 	assert.EqualValues(t, common.ItemsPerPage, responseJSON(t, adminLogs)["data"].(map[string]any)["page_size"], "nor of the admin log list")
 
-	env.setUserRole(t, common.RoleAdminUser)
-	assert.Equal(t, http.StatusForbidden, get("/api/monitor/global/logs").Code, "a demoted user loses the site-wide view at once")
+	env.setUserRole(t, common.RoleRootUser)
+	self = get("/api/monitor/self")
+	require.Equal(t, http.StatusOK, self.Code, self.Body.String())
+	assert.Equal(t, true, responseJSON(t, self)["data"].(map[string]any)["global_view"])
+	for _, path := range globalPaths {
+		assert.Equal(t, http.StatusOK, get(path).Code, path)
+	}
+
+	env.setUserRole(t, common.RoleCommonUser)
+	self = get("/api/monitor/self")
+	require.Equal(t, http.StatusOK, self.Code, "a demoted user keeps the personal view: %s", self.Body.String())
+	assert.Equal(t, false, responseJSON(t, self)["data"].(map[string]any)["global_view"])
+	for _, path := range globalPaths {
+		assert.Equal(t, http.StatusForbidden, get(path).Code, "a demoted user loses access to %s at once", path)
+	}
 }
 
 func TestMonitorGlobalStreamCarriesEveryUsersRequestRows(t *testing.T) {
@@ -640,10 +655,10 @@ func TestMonitorGlobalStreamCarriesEveryUsersRequestRows(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	refused := openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream?scope=global")
-	assert.Equal(t, http.StatusForbidden, refused.StatusCode, "only the root user streams the whole site")
+	assert.Equal(t, http.StatusForbidden, refused.StatusCode, "an ordinary user cannot stream the whole site")
 	assert.Equal(t, http.StatusBadRequest, openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream?scope=everyone").StatusCode)
 
-	env.setUserRole(t, common.RoleRootUser)
+	env.setUserRole(t, common.RoleAdminUser)
 	response := openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream?scope=global")
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	reader := bufio.NewReader(response.Body)
@@ -688,4 +703,12 @@ func TestMonitorGlobalStreamCarriesEveryUsersRequestRows(t *testing.T) {
 	assert.Contains(t, row["other"], "admin_info")
 	assert.NotContains(t, data, "secret-diagnostics")
 	assert.NotContains(t, data, "another user's top-up")
+
+	env.setUserRole(t, common.RoleRootUser)
+	rootStream := openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream?scope=global")
+	require.Equal(t, http.StatusOK, rootStream.StatusCode, "root can still stream the whole site")
+
+	env.setUserRole(t, common.RoleCommonUser)
+	assert.Equal(t, http.StatusForbidden, openMonitorStreamAt(t, ctx, server, accessToken, "/api/monitor/stream?scope=global").StatusCode,
+		"the same monitor token no longer grants a site-wide stream after demotion")
 }

@@ -19,8 +19,7 @@ import (
 const (
 	// monitorGlobalCacheTTL is how stale the site-wide overview may be. The
 	// console polls every 30 s, so a node reads the log table (and quota_data
-	// for cache use) at most twice a minute per window however many root
-	// consoles are open.
+	// for cache use) at most twice a minute per window.
 	monitorGlobalCacheTTL = 30 * time.Second
 	monitorGlobalTopLimit = 10
 	monitorGlobalRateSpan = 60 * time.Second
@@ -54,7 +53,12 @@ var MonitorGlobalWindows = map[string]time.Duration{
 // MonitorGlobalWindows.
 var ErrMonitorGlobalWindow = errors.New("monitor global window is invalid")
 
-// MonitorGlobalOverview is the root user's site-wide usage of one window.
+// CanViewMonitorGlobal reports whether this role may read site-wide monitor data.
+func CanViewMonitorGlobal(role int) bool {
+	return role >= common.RoleAdminUser
+}
+
+// MonitorGlobalOverview is the site-wide usage of one window.
 type MonitorGlobalOverview struct {
 	Window      string `json:"window"`
 	Start       int64  `json:"start"`

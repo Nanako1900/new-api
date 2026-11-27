@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Site-wide usage for the root user's monitor console, read from the log
+// Site-wide usage for the monitor console, read from the log
 // table, except the prompt cache use (GetGlobalCacheUsage), which comes from
 // quota_data in the main database. Aliases never repeat a column name:
 // ClickHouse resolves aliases before columns, so `MAX(username) AS username`

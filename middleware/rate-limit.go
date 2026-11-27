@@ -217,7 +217,7 @@ func MonitorPreferencesRateLimit() func(c *gin.Context) {
 	return userRateLimitFactory(monitorPreferencesRateLimitNum, monitorPreferencesRateLimitDuration, "MP")
 }
 
-// MonitorGlobalRateLimit bounds the root user's site-wide monitor reads: the
+// MonitorGlobalRateLimit bounds site-wide monitor reads: the
 // console polls each window every 30 s, and the overview is cached for that
 // long, so 60 a minute leaves room for a few tabs. Keyed by user; must run
 // after MonitorAuth.

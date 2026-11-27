@@ -77,7 +77,7 @@ const (
 	// cannot verify.
 	SessionUnknown
 	// SessionForbidden means the session is valid but may no longer read this
-	// stream (a site-wide stream of a user who is no longer the root user).
+	// stream (a site-wide stream of a user who has lost administrator access).
 	SessionForbidden
 )
 

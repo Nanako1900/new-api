@@ -9,12 +9,12 @@ import (
 
 // SetMonitorRouter registers the monitor console API: read-only except for
 // the console's own preferences (layout, widget settings, theme), with a
-// site-wide view for the root user only (/global and stream scope=global,
-// checked again on every request). It is a
-// separate group from /api so that it carries its own exact-origin CORS and
-// monitor-session authentication; dashboard credentials are not accepted here
-// and monitor credentials are not accepted anywhere else. It must be
-// registered before SetRelayRouter installs the wildcard CORS middleware.
+// site-wide view for administrators (/global and stream scope=global, checked
+// on every request). It is a separate group from /api so that it carries
+// its own exact-origin CORS and monitor-session authentication; dashboard
+// credentials are not accepted here and monitor credentials are not
+// accepted anywhere else. It must be registered before SetRelayRouter
+// installs the wildcard CORS middleware.
 func SetMonitorRouter(router *gin.Engine) {
 	monitorRoute := router.Group("/api/monitor")
 	monitorRoute.Use(middleware.RouteTag("monitor"), middleware.MonitorCORS(), middleware.MonitorEnabled(), middleware.GlobalAPIRateLimit())
@@ -46,9 +46,9 @@ func SetMonitorRouter(router *gin.Engine) {
 		readRoute.GET("/preferences", controller.GetMonitorPreferences)
 	}
 
-	// The root user's site-wide view. The stream's scope=global is checked in
-	// the stream handler, which has no group of its own.
-	globalRoute := monitorRoute.Group("/global", middleware.MonitorAuth(), middleware.MonitorRootOnly(), middleware.MonitorGlobalRateLimit(),
+	// The site-wide view. The stream's scope=global is checked in the stream
+	// handler, which has no group of its own.
+	globalRoute := monitorRoute.Group("/global", middleware.MonitorAuth(), middleware.RequireMonitorGlobal(), middleware.MonitorGlobalRateLimit(),
 		middleware.DisableCache(), gzip.Gzip(gzip.DefaultCompression))
 	{
 		globalRoute.GET("/overview", controller.GetMonitorGlobalOverview)

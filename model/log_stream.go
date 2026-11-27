@@ -41,7 +41,7 @@ func GetUserLogsSince(userID int, since int64, limit int) ([]*Log, error) {
 	return logsSince(LOG_DB.Where("user_id = ?", userID), since, limit)
 }
 
-// GlobalLogTypes are the rows the root user's site-wide monitor view shows:
+// GlobalLogTypes are the rows the site-wide monitor view shows:
 // requests (consume and error rows), never top-ups, logins or admin actions.
 var GlobalLogTypes = []int{LogTypeConsume, LogTypeError}
 
@@ -73,7 +73,7 @@ func logsSince(tx *gorm.DB, since int64, limit int) ([]*Log, error) {
 }
 
 // FormatGlobalLogView returns the copy of a request row (GlobalLogTypes) the
-// root user's site-wide monitor view shows: what an administrator sees,
+// site-wide monitor view shows: what an administrator sees,
 // without the client IP. The caller fills in the channel name.
 func FormatGlobalLogView(log Log) Log {
 	log.Ip = ""

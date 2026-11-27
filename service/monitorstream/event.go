@@ -5,7 +5,7 @@
 // open stream on this node are delivered through the in-process Hub, and when
 // Redis is enabled rows of users streaming on another node are forwarded over
 // Redis pub/sub. A row leaves the node that stored it only as its owner's view
-// (no admin or channel details), plus the site-wide view while the root user
+// (no admin or channel details), plus the site-wide view while an administrator
 // streams the whole site (scope=global) on another node. Bridge messages are
 // signed, not encrypted: the Redis server must be trusted infrastructure.
 package monitorstream
